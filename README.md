@@ -19,3 +19,7 @@ ln -sfn ~/Workspace/claude-config/skills/pr ~/.claude/skills/pr
 ```
 
 Project-level skills with the same name (e.g. in galileon-solver-api) take precedence over these global ones.
+
+## License
+
+[MIT](LICENSE)
