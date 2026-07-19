@@ -20,6 +20,11 @@ These rules apply in every repository unless the project's own CLAUDE.md says ot
 - **Follow existing patterns.** Before designing something new, check how the same problem is solved elsewhere in the codebase and match it. If diverging, say why.
 - Scoped verification during development: run only tests related to the change; full suite only at final verification.
 
+## Verification before claims
+
+- **Verify against source before asserting.** Before claiming code is missing, unimplemented, unchanged, or behaves a certain way, check the actual source and generated types (Read/Grep) and cite the file:line verified against. Never assert absence of a handler/field without checking parent components, callers, and type definitions.
+- **No security reasoning from assumptions.** Never give a security or authorization justification without first reading the relevant guard/middleware/auth code and quoting it.
+
 ## Documentation hygiene
 
 - Keep READMEs and CLAUDE.md files lean: current state only, no change history, no session logs.
