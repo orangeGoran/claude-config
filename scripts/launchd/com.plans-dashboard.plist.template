@@ -6,8 +6,11 @@
   no PATH lookup. See "Running it at login" in the README for the one command
   that fills them in and installs the result.
 
-  Runs the dashboard at login, restarts it if it crashes, and reloads it when the
-  script file changes (node --watch).
+  Runs the dashboard at login and restarts it if it crashes.
+
+  Deliberately not run under node’s watch flag: it restarts the server on every
+  edit to the script, which kills in-flight requests and leaves the browser showing
+  an empty dashboard. Restart by hand after editing (bootout, then bootstrap).
 
   __NODE__    absolute path to the node binary   (command -v node)
   __SCRIPT__  absolute path to plans-dashboard.mjs
@@ -23,7 +26,6 @@
   <key>ProgramArguments</key>
   <array>
     <string>__NODE__</string>
-    <string>--watch</string>
     <string>__SCRIPT__</string>
   </array>
   <key>EnvironmentVariables</key>

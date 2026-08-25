@@ -827,6 +827,10 @@ const PAGE = /* html */ `<!doctype html>
   .mdc hr { border:0; border-top:1px solid var(--line); margin:16px 0; }
   .plink { cursor:pointer; color:var(--link); }
   .plink:hover { text-decoration:underline; }
+  .hdwarn { font-size:12px; color:var(--warn); }
+  .copycmd { cursor:pointer; color:var(--warn); font-weight:700;
+             text-decoration:underline dotted; text-underline-offset:2px; }
+  .copycmd:hover { text-decoration:underline; }
   .launchbar { border-top:1px solid var(--line); background:var(--panel); padding:10px 20px;
                display:flex; gap:14px; align-items:center; flex-shrink:0; }
   .dim { color:var(--dim); } .laststep { font-size:12px; color:var(--dim); margin-top:6px; }
@@ -874,6 +878,7 @@ const PAGE = /* html */ `<!doctype html>
 <header><h1>🗂 Plans</h1><span class="hdrun" id="hdrun" style="display:none"></span>
   <span class="hdok" id="hdok" style="display:none"></span>
   <span class="dim" id="clock"></span>
+  <span class="hdwarn" id="connmsg" style="display:none"></span>
   <span class="dim" style="margin-left:auto">auto-refresh 5s · summaries generate in background</span>
   <button id="settingsbtn" title="projects & settings">⚙ Settings</button>
   <button id="themeBtn" title="toggle light/dark">🌙</button></header>
@@ -1573,11 +1578,14 @@ async function openSuggest(projName) {
     h += '<p><b>Recommended batch:</b></p><ul>';
     for (const p of d.recommendedBatch) {
       const v = p.validation || {};
+      // the skill takes the plan file as its argument, so bake it into the copied command
+      const vcmd = '/skill-auto-validate ' + (p.file || '.plans/' + p.slug + '.md');
       h += '<li><code class="plink" data-open="' + esc(K(p.slug)) + '">' + esc(p.slug) + '</code><br><span class="dim">areas: ' +
         esc((p.areas || []).join(', ') || '—') +
         ((v.claude || v.codex)
           ? ' · validated ' + (v.claude || 0) + '×claude / ' + (v.codex || 0) + '×codex'
-          : ' · <b style="color:var(--warn)">not validated — run /skill-auto-validate first</b>') +
+          : ' · <b class="copycmd" data-copy="' + escA(vcmd) + '" title="click to copy: ' + escA(vcmd) + '">'
+            + 'not validated — click to copy /skill-auto-validate</b>') +
         '</span></li>';
     }
     h += '</ul><button class="primary" id="queueBatch">✓ Queue this batch</button>';
@@ -1601,6 +1609,20 @@ async function openSuggest(projName) {
       const k = el.dataset.open;
       if (!find(k)) return; // e.g. archived plans no longer listed
       selected = k; renderList(); renderDetail(true); // drawer stays open for browsing
+    }));
+  byId('logbody').querySelectorAll('[data-copy]').forEach((el) =>
+    el.addEventListener('click', async () => {
+      if (el.dataset.busy) return;
+      const was = el.textContent, cmd = el.dataset.copy;
+      el.dataset.busy = '1';
+      const ok = await copyText(cmd);
+      if (ok) el.textContent = '✓ copied';
+      else {
+        el.textContent = cmd;               // show the real command so ⌘C grabs it
+        const r = document.createRange(); r.selectNodeContents(el);
+        const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      }
+      setTimeout(() => { el.textContent = was; delete el.dataset.busy; }, 1600);
     }));
   const qb = document.getElementById('queueBatch');
   if (qb) qb.addEventListener('click', () => {
@@ -1631,17 +1653,55 @@ byId('collapseAll').addEventListener('click', () => {
 STATUSES.forEach((s) => {
   const o = document.createElement('option'); o.textContent = s; byId('statusFilter').appendChild(o);
 });
-let lastStateRaw = '';
+let lastStateRaw = '', firstPaint = false, ticking = false;
+const connMsg = (m) => {
+  const el = byId('connmsg');
+  el.textContent = m || '';
+  el.style.display = m ? '' : 'none';
+};
+// A cold /api/state builds every plan in every project and can take ~9s — far longer
+// than the 5s tick. Without this guard the ticks pile up and their responses can land
+// out of order, repainting the list from a stale payload.
 async function refresh() {
-  const raw = await (await fetch('/api/state')).text();
+  if (ticking) return;
+  ticking = true;
+  try { await refreshOnce(); } finally { ticking = false; }
+}
+async function refreshOnce() {
+  // This used to be a bare unguarded await on fetch('/api/state'). A rejected
+  // fetch (the server restarts under launchd --watch) or any non-200 made the very
+  // first refresh() throw, so renderList() never ran even once and the page sat on
+  // its static markup — an empty sidebar that looks exactly like "no plans".
+  let raw;
+  try {
+    const res = await fetch('/api/state');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    raw = await res.text();
+  } catch (e) {
+    connMsg('⚠️ reconnecting… ' + String((e && e.message) || e));
+    if (!firstPaint) byId('side').innerHTML =
+      '<div class="dim" style="padding:14px">waiting for the server…</div>';
+    return; // leave lastStateRaw alone: a failed tick must not suppress the next good one
+  }
   byId('clock').textContent = new Date().toLocaleTimeString();
   // Most ticks carry a byte-identical payload, and repainting one of those is
   // pure destruction: it rebuilds the whole list and detail pane and throws away
   // the user's selection. Repaint only on a real change, and if something is
   // selected right now, leave it alone and take the change on a later tick.
-  if (raw !== lastStateRaw && !selectionLive()) {
-    lastStateRaw = raw;
-    state = JSON.parse(raw);
+  // The very first paint always goes through — there is nothing to protect yet,
+  // and a stray selection must not be able to leave the dashboard blank.
+  if (raw !== lastStateRaw && (!firstPaint || !selectionLive())) {
+    let next;
+    try {
+      next = JSON.parse(raw);
+      if (!Array.isArray(next)) throw new Error('expected an array of projects');
+    } catch (e) {
+      // e.g. the 500 path returning {error}. Report it and keep lastStateRaw unset,
+      // so a later good payload still repaints instead of being deduped away.
+      connMsg('⚠️ bad /api/state payload — ' + String((e && e.message) || e));
+      return;
+    }
+    state = next;
     plans = state.flatMap((proj) => proj.plans.map((p) => ({
       ...p, project: proj.name, client: proj.client,
       hasPipeline: proj.hasPipeline, launchers: proj.launchers, issuesUrl: proj.issuesUrl,
@@ -1652,10 +1712,14 @@ async function refresh() {
     renderList();
     if (selected && !typing) renderDetail(false);
     renderBar();
+    lastStateRaw = raw;   // only once a full repaint has actually landed
+    firstPaint = true;
   }
+  connMsg('');
   if (logKey) loadLog();
 }
 selected = new URLSearchParams(location.search).get('sel') || null;
+byId('side').innerHTML = '<div class="dim" style="padding:14px">loading plans…</div>';
 refresh(); setInterval(refresh, 5000);
 if (new URLSearchParams(location.search).get('settings')) openSettings();
 </script>`;
