@@ -940,6 +940,39 @@ const modes = {};         // per key: 'verify'|'full' (pipeline) or launcher ind
 const modeOf = (p) => modes[p.key] ?? (p.hasPipeline ? 'verify' : 0);
 const esc = (x) => (x || '').replace(/[&<>]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const byId = (i) => document.getElementById(i);
+// Every repaint assigns innerHTML, which replaces the nodes a selection is
+// anchored in and so silently drops whatever the user had highlighted. These
+// let a repaint hold off until the selection is released.
+const selectionIn = (el) => {
+  const s = window.getSelection();
+  if (!el || !s || !s.rangeCount || s.isCollapsed) return false;
+  return !!s.anchorNode && el.contains(s.anchorNode);
+};
+const selectionLive = () =>
+  ['detail', 'side', 'logbody', 'runstrip'].some((id) => selectionIn(byId(id)));
+// navigator.clipboard exists only in a secure context. 127.0.0.1 and *.localhost
+// qualify; a vanity domain like http://plans.test does not — and that is the URL
+// this server prefers when /etc/hosts has it. Fall back to the legacy path there.
+async function copyText(text) {
+  try {
+    if (window.isSecureContext && navigator.clipboard) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:-1000px;left:0;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch { return false; }
+}
 const find = (key) => plans.find((p) => p.key === key);
 const OKRE = /^(VERIFIED|REVIEWED|COMMITTED|FINISHED)/i;
 const BADRE = /^(BLOCKED|FAILED|ENDED)/i;
@@ -1275,9 +1308,11 @@ async function renderDetail(loadPlan) {
       inp.style.font = '12px ui-monospace,monospace';
       inp.addEventListener('focus', () => inp.select());
       const b = document.createElement('button'); b.textContent = 'copy';
-      b.addEventListener('click', () => {
-        navigator.clipboard.writeText(cmd);
-        b.textContent = '✓'; setTimeout(() => (b.textContent = 'copy'), 1200);
+      b.addEventListener('click', async () => {
+        const ok = await copyText(cmd);
+        b.textContent = ok ? '✓' : 'press ⌘C';
+        if (!ok) { inp.focus(); inp.select(); }   // leave it selected to copy by hand
+        setTimeout(() => (b.textContent = 'copy'), 1600);
       });
       row.appendChild(inp); row.appendChild(b); box.appendChild(row);
     };
@@ -1371,6 +1406,7 @@ async function loadLog() {
   byId('logtitle').textContent = logKind + ': [' + p.project + '] ' + p.slug;
   const t = await (await fetch('/api/' + logKind + '?project=' + p.project + '&slug=' + p.slug)).text();
   const el = byId('logbody');
+  if (el.textContent === t || selectionIn(el)) return;
   const stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
   el.textContent = t;
   if (stick) el.scrollTop = el.scrollHeight;
@@ -1595,19 +1631,28 @@ byId('collapseAll').addEventListener('click', () => {
 STATUSES.forEach((s) => {
   const o = document.createElement('option'); o.textContent = s; byId('statusFilter').appendChild(o);
 });
+let lastStateRaw = '';
 async function refresh() {
-  state = await (await fetch('/api/state')).json();
-  plans = state.flatMap((proj) => proj.plans.map((p) => ({
-    ...p, project: proj.name, client: proj.client,
-    hasPipeline: proj.hasPipeline, launchers: proj.launchers, issuesUrl: proj.issuesUrl,
-  })));
-  // don't clobber the pane (and steal focus) while the user is typing in it
-  const typing = byId('detail').contains(document.activeElement)
-    && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
-  renderList();
-  if (selected && !typing) renderDetail(false);
-  renderBar();
+  const raw = await (await fetch('/api/state')).text();
   byId('clock').textContent = new Date().toLocaleTimeString();
+  // Most ticks carry a byte-identical payload, and repainting one of those is
+  // pure destruction: it rebuilds the whole list and detail pane and throws away
+  // the user's selection. Repaint only on a real change, and if something is
+  // selected right now, leave it alone and take the change on a later tick.
+  if (raw !== lastStateRaw && !selectionLive()) {
+    lastStateRaw = raw;
+    state = JSON.parse(raw);
+    plans = state.flatMap((proj) => proj.plans.map((p) => ({
+      ...p, project: proj.name, client: proj.client,
+      hasPipeline: proj.hasPipeline, launchers: proj.launchers, issuesUrl: proj.issuesUrl,
+    })));
+    // don't clobber the pane (and steal focus) while the user is typing in it
+    const typing = byId('detail').contains(document.activeElement)
+      && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
+    renderList();
+    if (selected && !typing) renderDetail(false);
+    renderBar();
+  }
   if (logKey) loadLog();
 }
 selected = new URLSearchParams(location.search).get('sel') || null;

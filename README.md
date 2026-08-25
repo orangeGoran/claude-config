@@ -127,9 +127,15 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.plans-dashboard.plis
 Remove it with `launchctl bootout gui/$(id -u)/com.plans-dashboard`. Logs go to
 `~/.claude/pipeline-dashboard/server.log`.
 
-For `http://plans.test` with no port suffix: add `127.0.0.1 plans.test` to `/etc/hosts`
-and set `DASH_PORT` to `80` in the plist. That claims port 80 for the whole machine, so
-skip it if anything else there serves HTTP.
+For a bare hostname with no port suffix, set `DASH_PORT` to `80` in the plist. That claims
+port 80 for the whole machine, so skip it if anything else there serves HTTP.
+
+Prefer `http://plans.localhost` — Chrome and Firefox resolve `*.localhost` to loopback with
+no `/etc/hosts` entry, and they treat it as a secure context, so browser APIs that require
+one (clipboard, notifications) work. A vanity domain such as `plans.test` needs a hosts
+entry *and* is not a secure context; the dashboard falls back to a legacy copy path there,
+but `plans.localhost` is the smoother option. Safari resolves neither automatically — add
+`127.0.0.1 plans.localhost` to `/etc/hosts` if you use it.
 
 ### Environment
 
