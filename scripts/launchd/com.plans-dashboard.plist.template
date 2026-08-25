@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template — not usable as-is. The three __PLACEHOLDERS__ below must be replaced
+  with absolute paths, because launchd resolves nothing itself: no ~, no $HOME,
+  no PATH lookup. See "Running it at login" in the README for the one command
+  that fills them in and installs the result.
+
+  Runs the dashboard at login, restarts it if it crashes, and reloads it when the
+  script file changes (node --watch).
+
+  __NODE__    absolute path to the node binary   (command -v node)
+  __SCRIPT__  absolute path to plans-dashboard.mjs
+  __LOG__     absolute path to the log file, in a directory that already exists
+
+  If you manage node with nvm, __NODE__ points into a versioned directory —
+  after switching node versions, regenerate this file and re-bootstrap.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.plans-dashboard</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>--watch</string>
+    <string>__SCRIPT__</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DASH_NO_OPEN</key>
+    <string>1</string>
+    <key>DASH_PORT</key>
+    <string>4899</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>__LOG__</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG__</string>
+</dict>
+</plist>

@@ -1,0 +1,28 @@
+{
+  "projects": [
+    {
+      "name": "solver-api",
+      "client": "Galileon",
+      "root": "~/Workspace/galileon/v1/galileon-solver-api",
+      "plansDir": "~/Workspace/galileon/v1/galileon-solver-api/.plans",
+      "launchers": []
+    },
+    {
+      "name": "docs-site",
+      "client": "Acme",
+      "root": "~/Workspace/acme/docs-site",
+      "plansDir": "~/Workspace/acme/wiki/plans",
+      "doneDir": "~/Workspace/acme/wiki/plans/done",
+      "launchers": [
+        {
+          "label": "Implement only",
+          "cmd": "claude -p \"Read the plan at {plan} and implement it in this repository. Follow the repo conventions. Do not push, do not create PRs.\" --permission-mode acceptEdits --verbose --output-format stream-json"
+        },
+        {
+          "label": "Implement + test",
+          "cmd": "bash .claude/scripts/implement-plan.sh {plan}"
+        }
+      ]
+    }
+  ]
+}
