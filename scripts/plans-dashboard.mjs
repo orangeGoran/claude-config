@@ -708,6 +708,7 @@ const server = http.createServer(async (req, res) => {
 const PAGE = /* html */ `<!doctype html>
 <meta charset="utf-8">
 <title>Plans</title>
+<link rel="icon" id="favicon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Ctext%20x%3D%2232%22%20y%3D%2246%22%20font-size%3D%2256%22%20text-anchor%3D%22middle%22%3E%F0%9F%98%B4%3C%2Ftext%3E%3C%2Fsvg%3E">
 <style>
   :root { --bg:#101218; --panel:#151823; --card:#1b1f2c; --line:#2b3040; --fg:#e7eaf1;
           --dim:#98a1b4; --ok:#4ade80; --run:#60a5fa; --warn:#fbbf24; --bad:#f87171;
@@ -1088,6 +1089,23 @@ function modeLabel(p) {
   const l = (p.launchers || [])[+modeOf(p)];
   return l ? (l.label || 'launcher ' + (+modeOf(p) + 1)) : 'no launcher';
 }
+// ---- favicon mood ring ----
+// the 16px tab should answer "is the fleet working, or does it want me?" on its own.
+// running/waiting = machine's turn; dead/done = your turn, most urgent first.
+const MOODS = [['live', '\u{1F3C3}'], ['inflight', '\u{23F3}'], ['bad', '\u{1F480}'],
+               ['ready', '\u2705'], ['idle', '\u{1F634}']];
+let lastMood = '';
+function setMood(counts) {
+  const [key, face] = MOODS.find(([k]) => k === 'idle' || counts[k]);
+  const n = counts[key] || 0;
+  const mood = face + n;
+  if (mood === lastMood) return;   // the 5s poll must not churn the DOM
+  lastMood = mood;
+  byId('favicon').href = 'data:image/svg+xml,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+    '<text x="32" y="46" font-size="56" text-anchor="middle">' + face + '</text></svg>');
+  document.title = (n ? '(' + n + ') ' : '') + 'Plans';
+}
 function renderList() {
   // pinned "running now" strip + header counters — running must be unmissable
   const live = plans.filter((p) => p.live);
@@ -1095,6 +1113,8 @@ function renderList() {
   const inflight = plans.filter((p) =>
     !p.live && p.run && !OKRE.test(p.run.status) && !BADRE.test(p.run.status));
   const ready = plans.filter((p) => !p.live && p.run && OKRE.test(p.run.status));
+  const bad = plans.filter((p) => !p.live && p.run && BADRE.test(p.run.status));
+  setMood({ live: live.length, inflight: inflight.length, bad: bad.length, ready: ready.length });
   const rs = byId('runstrip');
   rs.className = 'runstrip' + (live.length || inflight.length || ready.length ? ' on' : '');
   let sh = '';
