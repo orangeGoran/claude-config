@@ -7,6 +7,8 @@ Version-controlled global Claude Code configuration. Symlinked into `~/.claude/`
 - `CLAUDE.md` — global standing rules loaded in every project
 - `skills/commit-message/` — `/commit-message`: copy-paste Conventional Commits message
 - `skills/pr/` — `/pr`: create a PR against a target branch
+- `skills/hand-review/` — `/hand-review`: walk a human through a diff file by file,
+  one at a time, with what to check and where to disagree
 - `scripts/plans-dashboard.mjs` — local web dashboard for plan files across projects
 
 ## Setup on a new machine
@@ -18,6 +20,7 @@ ln -sf "$PWD/CLAUDE.md" ~/.claude/CLAUDE.md
 mkdir -p ~/.claude/skills
 ln -sfn "$PWD/skills/commit-message" ~/.claude/skills/commit-message
 ln -sfn "$PWD/skills/pr" ~/.claude/skills/pr
+ln -sfn "$PWD/skills/hand-review" ~/.claude/skills/hand-review
 ```
 
 Project-level skills with the same name take precedence over these global ones.
