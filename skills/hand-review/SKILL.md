@@ -1,8 +1,8 @@
 ---
 name: hand-review
-description: Guide a human through a diff one unit at a time — bundling files into themed groups for large changes — waiting for confirmation between each. Follows one real request end to end through the change, in the order the code runs, one stop per message, opening each in words a twelve-year-old could follow. Criticisms are collected and delivered at the end rather than interrupting the story. Use when the user asks to be walked through changes, guided through a review by hand, or says "guide me file by file" / "bundle these" / invokes /hand-review. This is a human-led guided tour, not the automated audit that /code-review performs.
-argument-hint: "[optional target: nothing (working tree), a branch, a commit range, or a PR number]"
-allowed-tools: Bash, Read, Grep, Glob, Edit, Write
+description: Guide a human through a diff one unit at a time — bundling files into themed groups for large changes — waiting for confirmation between each. Follows one real request end to end through the change, in the order the code runs, one stop per message, opening each in words a twelve-year-old could follow. Criticisms are collected and delivered at the end rather than interrupting the story. Every stop ends in a question the reviewer answers, so the tour cannot run ahead of them. Use when the user asks to be walked through changes, guided through a review by hand, after a plan's phases have finished, or when they say "guide me file by file" / "bundle these" / invoke /hand-review. This is a human-led guided tour, not the automated audit that /code-review performs.
+argument-hint: "[optional target: nothing (working tree), a branch, a commit range, a PR number, or the plan file whose phases just finished]"
+allowed-tools: Bash, Read, Grep, Glob, Edit, Write, AskUserQuestion
 ---
 
 Walk the user through this diff by hand: $ARGUMENTS
@@ -20,6 +20,11 @@ Two different situations, and conflating them is the main way this skill goes wr
   and the code say. **Do not reconstruct motives from a plausible story.** Say "the commit
   message says X", "this comment claims Y", or "I cannot tell why this was done". Replace
   "where you could push back on me" with **"questions to ask the author"**.
+
+- **A plan file was handed to you** (its phases just ran, in this session or another). The plan
+  is **stated intent, not established fact**: it says what someone meant to build, and the diff
+  says what exists. Quote it as *"phase 3 of the plan asked for X"*, then check the code against
+  it. Where they disagree, that gap is itself a finding — say which side you verified.
 
 Never carry claims from a previous session as if they were established here. If context is
 missing, say so and read the code.
@@ -85,11 +90,46 @@ So:
 - **It has to be true.** A simplification that misleads is worse than jargon. If the metaphor
   breaks down somewhere load-bearing, say where, in one clause.
 
+## Rule 3 — the stop gate (this is what makes the pacing hold)
+
+Prose pacing does not hold. "Say **next**" is a request the reviewer can ignore and, worse, one
+*you* can ignore — running three stops together is the most common way this skill fails. The
+reliable version is a tool call.
+
+**End every stop, every bundle, the journey plan and the wrap-up with `AskUserQuestion`.** The
+turn cannot continue until the reviewer answers, so a stop physically cannot run into the next.
+
+The first option is always the next stop, named in plain words — never "Next" alone:
+
+- **`Next — stop 4: where the flag is read`** — the one-line teaser, as an option
+- **`Simpler`** — throw the explanation away and re-tell it from the top in fewer words (Rule 1)
+- **`Senior version`** — the same point in full engineering register (Rule 2)
+- **`I found a problem`** — go to Step 3
+- **`Wrap up`** — jump to Step 5
+
+Pick the first plus the two or three that fit *this* stop; four is the maximum. The harness adds
+**Other** on its own, which is where "terser", "skip to 7", "bundle the rest" and any real
+question arrive — treat free text as the answer and follow it, not the options you offered.
+
+- **One gate per turn.** Never ask, answer yourself, and carry on.
+- **Never gate a question you should just answer.** A tangent (Step 4) gets a real answer first,
+  then the gate returns, re-stating where the tour is.
+- **Fixes gate too.** Before editing anything in Step 3, confirm the change through the gate —
+  it is the last cheap moment to catch a misunderstanding.
+- If `AskUserQuestion` is unavailable, fall back to *"say **next** for stop N+1"* and say once
+  that pacing is now on the honour system.
+
 ## Step 0 — scope and calibration (one short message, then start)
 
 1. **Resolve the target.** No argument → uncommitted working tree (staged + unstaged +
    untracked). Otherwise a branch, commit range, or PR number as given. If the working tree
    is clean and no argument was passed, diff the branch against its base and say so.
+   **If the argument is a plan file** — the usual case when a plan's phases have just
+   finished — read it, then review the diff of everything those phases produced: the working
+   tree if it is dirty, otherwise the commits back to the plan's base. Say in one line which
+   you chose. Read the phases for intent (Rule 0), and name the phase a stop came from when it
+   helps; **do not let the phase order replace execution order** — the journey still follows
+   the request through the code.
 2. **Detect the languages** in the diff.
 3. **Pick the bridge language.** Default to **Node.js / TypeScript / NestJS** unless the user
    has said otherwise or the diff is already in it. State it in one line and move on — do not
@@ -97,7 +137,8 @@ So:
 4. **Measure the comment-to-code ratio** before writing anything (see **How big it
    really is**, Step 2). In a
    comment-heavy repo this reframes the whole review.
-5. Mention they can say "terser", "bundle the rest", "skip to N" or "wrap up" at any point.
+5. Say that every stop ends in a question with the next step as the first option, and that
+   "Other" takes anything — "terser", "bundle the rest", "skip to N", or a question of their own.
 
 ## Step 1 — the journey (the default flow)
 
@@ -117,7 +158,9 @@ whether the review lands.
 4. **Name the one pretend thing, once.** If the story needs something not yet true — an
    annotation a later stage adds, a flag that ships off — say so plainly at the stop where it
    first matters, then carry on. Never let the narrative quietly assume it.
-5. Mention they can say "terser", "skip to N", **"senior version"** or "wrap up" at any point.
+5. **Gate the plan itself** (Rule 3) before stop 1 — offer *start the tour*, *skip to a stop*,
+   *bundle it tighter*. This is where a reviewer redirects a tour that is aimed wrong, and it
+   is much cheaper here than at stop 5.
 
 6. **Publish a coverage ledger with the stop list.** A journey visits some files more than
    once, which costs the reviewer the one thing a file-ordered tour gave them for free: knowing
@@ -183,8 +226,8 @@ nothing else:
 - **One code block per stop**, unless the second is three lines showing a contrast.
 - **If a stop runs past roughly 40 lines of prose, split it.**
 
-End with: *"say **next** for stop N+1 — <one plain-words line on what it holds>"*. **Then stop
-and wait.** One stop per turn unless asked for more.
+End with the gate (Rule 3), its first option naming stop N+1 in plain words. **The tool call is
+the last thing in the turn** — no trailing prose after it, and never more than one stop per turn.
 
 ### Fallback: the per-unit shape (use with Step 1b only)
 
@@ -214,14 +257,15 @@ something else, that is a headline, not a footnote.
 Claims of absence ("nothing else references this") must be checked — and say so when a check
 nearly misled you.
 
-End with: *"say **next** for bundle N+1 — <one line on what it holds>"*. **Then stop and wait.**
-One unit per turn unless asked for more.
+End with the gate (Rule 3), its first option naming bundle N+1 in plain words. One unit per
+turn, and the tool call is the last thing in the turn.
 
 ## Step 3 — when the reviewer flags something
 
 Fix it immediately, then continue the tour:
 
-1. Confirm what you understood them to mean, in one sentence.
+1. Confirm what you understood them to mean, in one sentence — **through the gate** (Rule 3),
+   offering *that is it, fix it* / *not quite, here is what I meant* / *note it, do not fix now*.
 2. Make the change. If it is behavioural and the repo has tests, add or update one — and if it
    is a bug fix, **make the test fail first and show the red output**.
 3. Say in one line what you changed, and add it to the running findings list.
@@ -252,11 +296,13 @@ correct it** rather than defending it.
 - **Still open** — deliberately not addressed, and who owns it
 - **What the tour did not cover** — bundles skipped, checks not run, claims resting on reading
   rather than execution
-- Offer the next step: run the tests, produce a commit message, write findings into a plan
+- Offer the next step **through the gate**: run the tests, produce a commit message, write the
+  findings into a plan, or go back to a stop that is still unsettled
 
 ## Rules
 
-1. **One stop per turn. Wait.** The pacing is the point.
+1. **One stop per turn, ended by an `AskUserQuestion` gate** (Rule 3). The pacing is the point,
+   and the tool call is what makes it hold.
 1b. **Follow a request, not a file listing** (Step 1) unless the diff has no runtime path.
 2. **Track position** — "Stop 4 of 10" in every heading, so a long review survives a break.
    Above ~8 units, offer once to write the map and findings to a scratch file so the tour can
