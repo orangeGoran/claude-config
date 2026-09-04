@@ -229,12 +229,40 @@ const genericRunInfo = (proj, slug) => {
 // claude stores headless transcripts under ~/.claude/projects/<encoded-cwd>/
 const transcriptDirFor = (cwd) =>
   path.join(HOME, '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
-const sessionsIn = (dir) => {
+// Every generic run of every plan shares one transcript dir — the repo root's —
+// so listing it whole attributed all 92 sessions ever run in that repo, the
+// interactive ones included, to each individual plan, and pointed the "reopen
+// the latest session" command at whatever the user happened to do there last.
+// A plan's own captured log names the sessions that really belong to it: claude
+// stamps session_id on every stream-json event, and the log is appended across
+// runs, so a second run adds to the list rather than replacing it.
+// Cached on the log's size+mtime — /api/state is polled every 5s per plan.
+const sessionIdCache = {};
+const sessionIdsInLog = (proj, slug) => {
+  const f = path.join(proj.logsDir, slug + '.log');
   try {
-    return readdirSync(dir).filter((f) => f.endsWith('.jsonl')).map((f) => {
-      const st = statSync(path.join(dir, f));
-      return { id: f.replace('.jsonl', ''), mtime: st.mtimeMs, size: st.size };
-    }).sort((a, b) => a.mtime - b.mtime);
+    const st = statSync(f);
+    const key = st.mtimeMs + ':' + st.size;
+    const hit = sessionIdCache[f];
+    if (hit && hit.key === key) return hit.ids;
+    const ids = new Set(
+      [...readFileSync(f, 'utf8').matchAll(/"session_id"\s*:\s*"([^"]+)"/g)].map((m) => m[1]),
+    );
+    sessionIdCache[f] = { key, ids };
+    return ids;
+  } catch { return new Set(); }
+};
+// `only` limits the listing to those ids. Omitted for the auto-pipeline flavor,
+// whose transcript dir is the plan's own worktree and so is already per-plan.
+const sessionsIn = (dir, only) => {
+  try {
+    return readdirSync(dir).filter((f) => f.endsWith('.jsonl'))
+      .map((f) => f.replace(/\.jsonl$/, ''))
+      .filter((id) => !only || only.has(id))
+      .map((id) => {
+        const st = statSync(path.join(dir, id + '.jsonl'));
+        return { id, mtime: st.mtimeMs, size: st.size };
+      }).sort((a, b) => a.mtime - b.mtime);
   } catch { return []; }
 };
 
@@ -246,7 +274,7 @@ const listPlans = async (proj) => {
       const slug = f.replace(/\.md$/, '');
       const key = proj.name + '/' + slug;
       const content = readFileSync(path.join(proj.plansDir, f), 'utf8');
-      let run, live, wtPath, transcriptDir;
+      let run, live, wtPath, transcriptDir, sessionFilter;
       if (proj.hasPipeline) {
         run = pipelineRunInfo(proj, slug);
         live = await pipelineLive(slug);
@@ -256,6 +284,7 @@ const listPlans = async (proj) => {
         ({ run, live } = genericRunInfo(proj, slug));
         wtPath = proj.root;
         transcriptDir = transcriptDirFor(proj.root);
+        sessionFilter = sessionIdsInLog(proj, slug);
       }
       return {
         slug, file: f, key,
@@ -268,7 +297,7 @@ const listPlans = async (proj) => {
         status: meta[slug]?.status || null,
         tags: meta[slug]?.tags || [],
         wtPath, transcriptDir,
-        sessions: sessionsIn(transcriptDir),
+        sessions: sessionsIn(transcriptDir, sessionFilter),
       };
     }),
   );

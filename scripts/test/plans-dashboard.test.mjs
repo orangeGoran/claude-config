@@ -123,6 +123,26 @@ test('records a generic run exit code, and keeps it after a restart', async () =
   assert.equal(after.live, false);
 });
 
+test("counts only the plan's own sessions, not every session in the repo", async () => {
+  // claude writes transcripts to one dir per working directory, shared by every plan
+  // in a generic project — the plan's own captured log is what tells them apart
+  const transcripts = path.join(home, '.claude', 'projects', repo.replace(/[^a-zA-Z0-9]/g, '-'));
+  mkdirSync(transcripts, { recursive: true });
+  writeFileSync(path.join(transcripts, 'ses-unrelated.jsonl'), '{}\n');
+  writeFileSync(path.join(transcripts, 'ses-mine.jsonl'), '{}\n');
+
+  assert.deepEqual(await post('/api/launchers', {
+    project: 'demo',
+    launchers: [{ label: 'emits a session id', cmd: `echo '{"type":"system","session_id":"ses-mine"}'` }],
+  }), { ok: true });
+  assert.deepEqual(await post('/api/launch-generic', { project: 'demo', slug: 'demo-plan', launcher: 0 }), { ok: true });
+
+  const deadline = Date.now() + 20000;
+  let p;
+  do { await sleep(200); p = await onlyPlan(); } while (Date.now() < deadline && (!p.run || p.live));
+  assert.deepEqual(p.sessions.map((x) => x.id), ['ses-mine'], 'the unrelated session is not attributed to this plan');
+});
+
 test('archives a plan and puts it back', async () => {
   assert.equal((await post('/api/clear-run', { project: 'demo', slug: 'demo-plan' })).ok, true);
   assert.equal((await post('/api/archive', { project: 'demo', slug: 'demo-plan' })).ok, true);
