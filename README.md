@@ -10,6 +10,7 @@ Version-controlled global Claude Code configuration. Symlinked into `~/.claude/`
 - `skills/hand-review/` — `/hand-review`: walk a human through a diff one stop at a
   time, following one request through the code, pausing on a question after each
 - `scripts/plans-dashboard.mjs` — local web dashboard for plan files across projects
+- `scripts/launcher-template.sh` — starting point for a repo's dashboard launcher
 
 ## Setup on a new machine
 
@@ -66,7 +67,10 @@ Then look at THIS repository and work out:
 3. For a generic project, one launcher command that would implement a plan in
    this repo. Base it on what this repo actually has — its .claude/skills, its
    .claude/scripts, its real test and build commands. Use {plan} where the plan
-   file path goes.
+   file path goes. Prefer a small wrapper script under .claude/scripts over a
+   bare `claude -p` command — copy scripts/launcher-template.sh from the
+   dashboard repo and edit its two marked spots. See "How a plan gets launched"
+   for why a headless run needs its permissions on the command line.
 
 Show me the proposed registry entry and, in one plain sentence, what the
 launcher command would run. Change nothing yet.
@@ -105,11 +109,34 @@ Two modes, picked automatically per project:
   `{plan}`, `{root}` and `{slug}` are substituted. The ⚙ setup dialog pre-fills commands
   from the repo's own `.claude/skills` and `.claude/scripts`.
 
+A launcher that calls `claude -p` needs its tool permissions **on the command line**. Rules
+in `.claude/settings.json` are not honoured in a headless session, and a denied call is not
+a pause — it fails, and the run reports problems that never happened (`git status` "failed",
+a test suite "missing"). The fix that keeps one source of truth is a wrapper script that
+reads the repo's own allowlist and replays it onto `--allowedTools`, so interactive and
+launched runs get the same rules from the same file.
+[`scripts/launcher-template.sh`](scripts/launcher-template.sh) is that script with two
+spots to edit — copy it to `.claude/scripts/run-skill.sh` in the repo being registered.
+
 ![Launcher setup drawer: the project's saved launcher commands, a generic headless-Claude starting point, and the command box where the command is edited before saving](docs/plans-dashboard-launchers.png)
 
 Generic run state (pid, exit code, log) lives under `~/.claude/pipeline-dashboard/`.
 Statuses and tags are written to `<plansDir>/plan-meta.json` when the repo already tracks
 that file, otherwise centrally.
+
+### AI session history
+
+A plan's panel lists the Claude sessions that belong to that plan, with copy-ready commands
+to resume the latest one, or to hand a fresh reviewer the diff and the transcript to
+cross-check.
+
+For generic projects the sessions are read out of the plan's own captured log, so the panel
+lists **only runs launched from the dashboard**, and only that plan's. Two consequences
+worth knowing: a launcher that does not emit `--output-format stream-json` leaves no session
+ids behind and the panel stays empty; and sessions you ran by hand in that repo never
+appear, because claude stores transcripts per working directory and nothing records which
+plan one was about. Pipeline projects give each plan its own worktree, so their transcript
+folder is already plan-specific and is listed whole.
 
 ### Running it at login (macOS)
 
