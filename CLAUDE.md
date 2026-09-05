@@ -7,6 +7,7 @@ These rules apply in every repository unless the project's own CLAUDE.md says ot
 - **TLDR first, simple English.** Start every explanation with a 1–3 sentence TLDR in plain language, then details. When explaining how something works, always include one concrete end-to-end example (real values, real flow). Avoid jargon-dense walls of text.
 - **Copyable handoff blocks.** When output is meant for another person or agent (backend team, frontend team, QA, CEO, another AI session), put it in a single fenced code block, self-contained and plain-language, with no preamble inside the block.
 - **Ask, don't guess.** When requirements are ambiguous, ask clarifying questions using the AskUserQuestion tool with a recommended option — before writing code. Never invent fields, shapes, or behavior that an external spec should define.
+- **Plain-language setup before every decision question.** Before asking me any decision question: write 2–3 sentences of plain-language setup with a concrete example of what each option means for a real user or a real request. Only then present the options, and put the technical term in parentheses after the plain description. If you can't explain the tradeoff without jargon, you don't understand it well enough to ask yet.
 
 ## Git
 
