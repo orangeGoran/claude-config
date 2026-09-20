@@ -1,6 +1,6 @@
 ---
 name: hand-review
-description: Guide a human through a diff one unit at a time — bundling files into themed groups for large changes — waiting for confirmation between each. Follows one real request end to end through the change, in the order the code runs, one stop per message, opening each in words a twelve-year-old could follow. Criticisms are collected and delivered at the end rather than interrupting the story. Every stop ends in a question the reviewer answers, so the tour cannot run ahead of them. Use when the user asks to be walked through changes, guided through a review by hand, after a plan's phases have finished, or when they say "guide me file by file" / "bundle these" / invoke /hand-review. This is a human-led guided tour, not the automated audit that /code-review performs.
+description: Guide a human through a diff one unit at a time — bundling files into themed groups for large changes — waiting for confirmation between each. Follows one real request end to end through the change, in the order the code runs, one stop per message, opening each on a concrete trace through the real code rather than an invented analogy. Criticisms are collected and delivered at the end rather than interrupting the story. Every stop ends in a question the reviewer answers, so the tour cannot run ahead of them. Use when the user asks to be walked through changes, guided through a review by hand, after a plan's phases have finished, or when they say "guide me file by file" / "bundle these" / invoke /hand-review. This is a human-led guided tour, not the automated audit that /code-review performs.
 argument-hint: "[optional target: nothing (working tree), a branch, a commit range, a PR number, or the plan file whose phases just finished]"
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write, AskUserQuestion
 ---
@@ -41,8 +41,9 @@ capable engineer who does not know **this codebase**.
 - **Short sentences, one idea each.** If a sentence has three clauses and two pieces of jargon,
   split it.
 - **Define the domain fact before you lean on it.** One or two sentences, then use the term.
-- **Plain words on first use, precise term second.** *"kick them out of every device they are
-  logged into"* before *"revoke the session"*.
+- **Effect on first use, precise term second.** *"they get logged out on every device"*
+  before *"the session is revoked"*. This is a plain description of what happens, not a
+  substitute story.
 - **Concrete numbers beat adjectives.** *"waited 32 seconds, not the 5 it claimed"*, not
   *"a significant discrepancy"*.
 - **Never make them hold two new concepts at once.**
@@ -57,11 +58,18 @@ wrong instinct and makes it worse.
 Do not lecture. They lack context, not ability. Skip language basics unless the construct is
 genuinely load-bearing.
 
-## Rule 2 — plain words open everything; the hard version is on request
+## Rule 2 — concrete before abstract; the hard version is on request
 
-**Every stop opens in words a twelve-year-old could follow, carrying a concrete everyday
-example.** That opening is not a summary and not optional. It is how the reviewer gets their
-footing before a single real name appears.
+**Every stop opens on something concrete from this system: one real request, with real values,
+moving through the real code in the order it happens.** That opening is not a summary and not
+optional. It is how the reviewer gets their footing before the abstraction arrives.
+
+**Concrete does not mean invented.** No car shop, no doorman, no bakery queue, no luggage tags.
+The reviewer is an engineer; a made-up setting gives them a second world to learn and then map
+back onto the code, and the mapping is where they get lost. Name the real mechanism instead:
+*"a `GET /devices/42/wink` comes in with a viewer's token — the guard reads the role claim,
+sees `viewer`, and returns 403 before the handler runs"*, not *"a doorman checks the guest
+list"*.
 
 **Do not then repeat the same point in senior register.** An earlier version of this skill
 required both halves inline, every time. It doubled the length of every message and the reviewer
@@ -69,8 +77,8 @@ got lost *faster*. More words is the wrong fix for confusion.
 
 So:
 
-- **Inline:** plain words first, then let the real names arrive *inside the same explanation* as
-  it goes on. One pass, one rising altitude — never two copies of one idea.
+- **Inline:** the concrete case first, then the general rule it illustrates, *inside the same
+  explanation*. One pass, one rising altitude — never two copies of one idea.
 - **On request:** when the reviewer says **"senior version"**, **"harder"**, or asks how they
   would have written it themselves, give that same point again in full engineering register —
   real types, the mechanism, `file:line`, the trade-off that was made. This is the comparison
@@ -78,17 +86,24 @@ So:
 - **At the wrap-up:** the findings list is written in engineering register by default. By then
   they have the whole story and want precision.
 
-### Rules for the plain opening
+### Rules for the opening
 
-- **The example is mandatory.** An abstraction restated in short words is still an abstraction.
-  Doors, keys, luggage tags, a bakery queue, a signed permission slip, a sealed envelope.
-- **Zero jargon in the opening.** If the word would not appear in a children's book, hold it
-  back a paragraph — *cache*, *token*, *async*, *interface*, *inject*, *middleware* all fail.
+- **The concrete example is mandatory.** An abstraction restated in short words is still an
+  abstraction. Use a real entry point, real input values, and say what comes out the other end.
+- **Name the real thing rather than a stand-in for it.** If a reverse proxy checks a role, say
+  *"nginx rejects the request before it reaches the app"*. Comparing to a piece of technology
+  the reviewer already knows — an nginx rule, a database index, a retry with backoff, a
+  work queue — is fine in one clause when the mechanism here is genuinely unusual. Comparing to
+  a shop, a person, a household object or any invented setting is not.
+- **Define repo-local terms; do not replace them.** One sentence on what the thing is here, then
+  use its real name from then on: *"a `DeviceClaim` is the row tying a device to the account
+  that owns it."* Inventing a friendlier word for it just adds a second name to track.
+- **Assume programming, not this codebase.** Skip explanations of language constructs and
+  standard patterns. Do explain internal acronyms, layer names and repo shorthand — those carry
+  no meaning outside this repo.
 - **Never write "basically" or "essentially".** Say the thing instead.
-- **One metaphor per mechanism, per review.** Reusing doors-and-bouncers for two different
-  things fuses them in the reader's head.
-- **It has to be true.** A simplification that misleads is worse than jargon. If the metaphor
-  breaks down somewhere load-bearing, say where, in one clause.
+- **It has to be true.** Trace a path you have verified against the code, with values the code
+  would really produce. A tidy example the code does not actually do is worse than no example.
 
 ## Rule 3 — the stop gate (this is what makes the pacing hold)
 
@@ -152,7 +167,7 @@ whether the review lands.
    at."* Prefer the action the change exists for. Verify the endpoint or handler is real, and
    link it.
 2. **List the stops** — 6 to 12, one line each, in execution order. Title each in plain words
-   (*"the doorman who waits inside, not at the door"*), never with a filename.
+   (*"the role check that runs after the route matches, not before"*), never with a filename.
 3. **Say what is deferred.** No criticisms, no shell checks, no findings along the way. They all
    arrive as one list at the final stop. Say this up front so the reviewer stops bracing for it.
 4. **Name the one pretend thing, once.** If the story needs something not yet true — an
@@ -206,8 +221,8 @@ Then start unit 1, in the per-unit shape at the end of Step 2. Do not dump sever
 Head each one **"Stop N of M — <plain-words title>"**. Then these four parts, in this order, and
 nothing else:
 
-1. **What happens.** Three to six short sentences. What the request is doing here, in plain
-   words, carrying Rule 2's everyday example if the stop needs one.
+1. **What happens.** Three to six short sentences. What the request is doing here, opening on
+   the concrete trace of Rule 2 — real call, real values, what comes back.
 2. **The lines that actually run.** A handful — 3 to 10. Not the file. If the file is 200 lines
    and 6 of them execute on this path, show the 6 and say so.
 3. **Why it is built that way.** Two to four sentences on the design choice, and what would go
