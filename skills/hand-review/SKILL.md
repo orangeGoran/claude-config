@@ -1,6 +1,6 @@
 ---
 name: hand-review
-description: Guide a human through a diff one unit at a time — bundling files into themed groups for large changes — waiting for confirmation between each. Follows one real request end to end through the change, in the order the code runs, one stop per message, opening each on a concrete trace through the real code rather than an invented analogy. Criticisms are collected and delivered at the end rather than interrupting the story. Every stop ends in a question the reviewer answers, so the tour cannot run ahead of them. Use when the user asks to be walked through changes, guided through a review by hand, after a plan's phases have finished, or when they say "guide me file by file" / "bundle these" / invoke /hand-review. This is a human-led guided tour, not the automated audit that /code-review performs.
+description: Guide a human through a diff one unit at a time — bundling files into themed groups for large changes — waiting for confirmation between each. Opens with a plain brief — the problem, what was done about it, what is different when it ships — because the reviewer did not watch the work happen. Then follows one real request end to end through the change, in the order the code runs, one stop per message, opening each on a concrete trace through the real code rather than an invented analogy. Criticisms are collected and delivered at the end rather than interrupting the story. Every stop ends in a question the reviewer answers, so the tour cannot run ahead of them. Use when the user asks to be walked through changes, guided through a review by hand, after a plan's phases have finished, or when they say "guide me file by file" / "bundle these" / invoke /hand-review. This is a human-led guided tour, not the automated audit that /code-review performs.
 argument-hint: "[optional target: nothing (working tree), a branch, a commit range, a PR number, or the plan file whose phases just finished]"
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write, AskUserQuestion
 ---
@@ -134,26 +134,53 @@ question arrive — treat free text as the answer and follow it, not the options
 - If `AskUserQuestion` is unavailable, fall back to *"say **next** for stop N+1"* and say once
   that pacing is now on the honour system.
 
-## Step 0 — scope and calibration (one short message, then start)
+## Step 0 — the brief (one message, then the tour)
 
-1. **Resolve the target.** No argument → uncommitted working tree (staged + unstaged +
-   untracked). Otherwise a branch, commit range, or PR number as given. If the working tree
-   is clean and no argument was passed, diff the branch against its base and say so.
-   **If the argument is a plan file** — the usual case when a plan's phases have just
-   finished — read it, then review the diff of everything those phases produced: the working
-   tree if it is dirty, otherwise the commits back to the plan's base. Say in one line which
-   you chose. Read the phases for intent (Rule 0), and name the phase a stop came from when it
-   helps; **do not let the phase order replace execution order** — the journey still follows
-   the request through the code.
-2. **Detect the languages** in the diff.
-3. **Pick the bridge language.** Default to **Node.js / TypeScript / NestJS** unless the user
-   has said otherwise or the diff is already in it. State it in one line and move on — do not
-   ask and wait. Bridge only where a construct is load-bearing; never analogise for its own sake.
-4. **Measure the comment-to-code ratio** before writing anything (see **How big it
-   really is**, Step 2). In a
-   comment-heavy repo this reframes the whole review.
-5. Say that every stop ends in a question with the next step as the first option, and that
-   "Other" takes anything — "terser", "bundle the rest", "skip to N", or a question of their own.
+**The reviewer did not watch this work happen.** They do not know what problem was in front of
+the author, what was tried, or what is supposed to be different afterwards. Closing that gap is
+the entire job of the first message, and nothing else in it comes close in value.
+
+So the first message is a brief, not a scoping report. Four short parts, in this order:
+
+1. **The problem.** What was broken, missing or painful before this change — two to four
+   sentences, with one concrete instance. *"A rolled-back device kept the database from the
+   failed version, so the operator had to copy the old file back by hand and usually forgot."*
+2. **What was done about it.** The shape of the solution in two to four sentences, plus the one
+   decision that most shaped it and what it was chosen over.
+3. **What is different when this ships.** Before → after, stated as something observable: what
+   an operator, caller or user now sees that they did not before. If something they would expect
+   to change deliberately did not, say that here — it is the cheapest place to prevent a
+   misunderstanding that would otherwise surface at stop 6.
+4. **How the review will go.** Two or three lines: the request the tour follows, how many stops,
+   that every stop ends in a question whose first option is the next stop, that **Other** takes
+   anything ("terser", "skip to 8", a question of your own), and that findings are held to one
+   list at the end.
+
+**What does not go in this message:** file counts, line counts, comment-to-code ratios, language
+inventories, a bridge-language announcement, a coverage ledger, a commit plan, or a recap of how
+you resolved the target. None of it tells the reviewer what the change is for, and it is what
+makes the opening unreadable. Scope only earns a sentence when the answer is genuinely
+surprising — someone else's in-flight work sitting in the same tree, a submodule left out — and
+then it is one clause, not a section.
+
+**When you do not know the intent** (Rule 0 — fresh session, someone else's branch), the brief
+is still required. Build it from the code and label the source: *"the commit message says X; I
+found no ticket; from reading the diff, what actually changes is Y."* A brief derived from the
+diff and marked as such is exactly what the reviewer cannot produce for themselves. Never
+skip it and never invent the motive.
+
+**Resolve the target quietly.** No argument → uncommitted working tree (staged + unstaged +
+untracked). Otherwise the branch, commit range, or PR number given. Clean tree and no argument →
+diff the branch against its base. **A plan file** — the usual case when a plan's phases have
+just finished — is read for intent and feeds parts 1 and 2 of the brief as *stated* intent
+(Rule 0); review the diff those phases produced, the working tree if dirty, otherwise the
+commits back to the plan's base. **Do not let the phase order replace execution order.**
+
+**Calibrations you make but do not announce:** the languages in the diff; whether a construct
+needs bridging into **Node.js / TypeScript / NestJS** (bridge only where one is genuinely
+load-bearing, never for its own sake); and the comment-to-code ratio, which matters only if the
+diff would otherwise look far bigger than the code it contains — then it is one clause at the
+stop where the size misleads, not an opening statistic.
 
 ## Step 1 — the journey (the default flow)
 
@@ -166,8 +193,14 @@ whether the review lands.
    clicks Wink — the button that flashes the LED so you can tell which device you are looking
    at."* Prefer the action the change exists for. Verify the endpoint or handler is real, and
    link it.
-2. **List the stops** — 6 to 12, one line each, in execution order. Title each in plain words
-   (*"the role check that runs after the route matches, not before"*), never with a filename.
+2. **List the stops** — 6 to 12, one line each, in execution order. Each line says *what
+   happens there*, in the reviewer's terms, carrying over from the brief — *"the rollback picks
+   which snapshot to restore, and refuses three cases that would silently restore the wrong
+   one"*. Never a filename, and never a label so short it only makes sense to someone who
+   already read the code (*"the guard"*, *"version selection"*).
+2b. **Say which stops carry the judgement calls** and which are mechanical — *"3 and 5 are the
+   decisions; 8 to 10 are tests and docs, skim them"*. Naming what to skim is what makes a
+   ten-stop tour get finished.
 3. **Say what is deferred.** No criticisms, no shell checks, no findings along the way. They all
    arrive as one list at the final stop. Say this up front so the reviewer stops bracing for it.
 4. **Name the one pretend thing, once.** If the story needs something not yet true — an
@@ -176,14 +209,12 @@ whether the review lands.
 5. **Gate the plan itself** (Rule 3) before stop 1 — offer *start the tour*, *skip to a stop*,
    *bundle it tighter*. This is where a reviewer redirects a tour that is aimed wrong, and it
    is much cheaper here than at stop 5.
-
-6. **Publish a coverage ledger with the stop list.** A journey visits some files more than
-   once, which costs the reviewer the one thing a file-ordered tour gave them for free: knowing
-   when a file is *done*. So print a table — stop number against the files that are **finished**
-   after it — before stop 1. Some stops finish nothing, and saying so is the point.
-7. **Say how the change will be split into commits**, if the file count or the repo's own rules
-   mean it cannot be one. Check the count against any commit-size rule the project states, and
-   name the split as falling out of the ledger. Propose the actual messages at the wrap-up.
+6. **Keep the coverage ledger to yourself until it is asked for or earned.** Track which files
+   are finished after each stop — a journey revisits files, and the reviewer loses track of when
+   one is done — but do not open the review with the table. The per-stop *"done after this
+   stop"* line carries it, and the full table belongs at the wrap-up or on request.
+7. **Commits are a wrap-up topic, not an opening one.** Note whether the repo's own rules force
+   a split, and propose the actual messages at the end.
 
 **Every file appears at the moment the request first touches it, and never before.** Files the
 request never reaches — tests, fixtures, lock files, pipeline — get their own stops at the end,
@@ -197,8 +228,9 @@ rather than forcing a fake one.
 
 ## Step 1b — the map (fallback: when there is no request to follow)
 
-Show the whole shape as a table before any code: number, unit, real size, and a few words on
-**why it is in that position**.
+**The Step 0 brief still comes first** — a docs change or a dependency bump still had a reason,
+and the reviewer still cannot see it. Only then show the shape as a table: number, unit, real
+size, and a few words on **why it is in that position**.
 
 **Order by narrative, never alphabetically or by path.** Usually: the heart of the change →
 deleted files → contracts → wiring/config → callers → tests → housekeeping.
@@ -253,7 +285,7 @@ real sizes, then adapt these parts to what the unit deserves:
 |---|---|
 | **The one thing to understand first** ⭐ | A short primer on the domain fact the change rests on, when there is one. *"Accounts and login sessions live in the same file — that is what makes this work."* Often the most valuable paragraph in the bundle |
 | **What it is** | One paragraph, plain language. What this code is for |
-| **How big it really is** | *"324 lines, 124 of them run."* Required opening line in comment-heavy code — never let prose inflate the apparent size |
+| **How big it really is** | *"324 lines, 124 of them run."* Only when the raw diff size would mislead — never as a routine opening statistic |
 | **The changes, numbered** ⭐ | For each: **headline the user-visible consequence**, then *what went wrong*, then *the fix*, with `file:line` links. This narrative shape is what makes a bundle readable; prefer it over "read the file in this order" |
 | **Consequences to know about** | Behaviour changes that fall out of the change and were not the point of it — a precedence flip, a shortened timeout, a restore that no longer carries data. A small before/now table. **Reviewers forgive these; they do not forgive finding them later** |
 | **A concrete trace** | One realistic case end to end, real values, as a table. Use the case the change exists for |
@@ -311,6 +343,11 @@ correct it** rather than defending it.
 - **Still open** — deliberately not addressed, and who owns it
 - **What the tour did not cover** — bundles skipped, checks not run, claims resting on reading
   rather than execution
+- **The coverage ledger**, if it was not asked for earlier — stop against the files finished
+  after it, so the reviewer can stage with confidence. Here it is a checklist; at the opening it
+  was noise
+- **How it splits into commits**, if the repo's rules or the file count mean it cannot be one,
+  with the actual messages
 - Offer the next step **through the gate**: run the tests, produce a commit message, write the
   findings into a plan, or go back to a stop that is still unsettled
 
@@ -319,6 +356,8 @@ correct it** rather than defending it.
 1. **One stop per turn, ended by an `AskUserQuestion` gate** (Rule 3). The pacing is the point,
    and the tool call is what makes it hold.
 1b. **Follow a request, not a file listing** (Step 1) unless the diff has no runtime path.
+1c. **Open with the brief, not with scope mechanics** (Step 0). No file counts, line counts,
+   comment ratios, language lists, ledgers or commit plans in the first message.
 2. **Track position** — "Stop 4 of 10" in every heading, so a long review survives a break.
    Above ~8 units, offer once to write the map and findings to a scratch file so the tour can
    resume in a later session.
