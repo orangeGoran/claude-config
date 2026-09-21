@@ -116,7 +116,8 @@ turn cannot continue until the reviewer answers, so a stop physically cannot run
 
 The first option is always the next stop, named in plain words — never "Next" alone:
 
-- **`Next — stop 4: where the flag is read`** — the one-line teaser, as an option
+- **`Next — stop 4: is the delete path safe?`** — the teaser names what the next stop
+  **decides**, not where it sits, so the reviewer arrives already knowing what to judge
 - **`Simpler`** — throw the explanation away and re-tell it from the top in fewer words (Rule 1)
 - **`Senior version`** — the same point in full engineering register (Rule 2)
 - **`I found a problem`** — go to Step 3
@@ -198,6 +199,10 @@ whether the review lands.
    which snapshot to restore, and refuses three cases that would silently restore the wrong
    one"*. Never a filename, and never a label so short it only makes sense to someone who
    already read the code (*"the guard"*, *"version selection"*).
+2a. **Merge before you publish the list.** Read the neighbours: if a reviewer could not form an
+   opinion on one without the next — the write and the checks that guard it, the parse and the
+   validation of what it parsed — make them one stop now. A stop list built from mechanisms
+   produces halves; a stop list built from judgements produces stops that can be answered.
 2b. **Say which stops carry the judgement calls** and which are mechanical — *"3 and 5 are the
    decisions; 8 to 10 are tests and docs, skim them"*. Naming what to skim is what makes a
    ten-stop tour get finished.
@@ -250,8 +255,23 @@ Then start unit 1, in the per-unit shape at the end of Step 2. Do not dump sever
 
 ## Step 2 — per stop
 
-Head each one **"Stop N of M — <plain-words title>"**. Then these four parts, in this order, and
-nothing else:
+Head each one **"Stop N of M — <plain-words title>"**. **Then two lines of handrail before any
+mechanism** — landing straight in *what happens* is a cold start, and the reviewer spends the
+first half of the stop working out why they are here:
+
+- **Where we came from.** One sentence naming what the previous stop established and **what is
+  carried into this one**, as a real value where there is one. *"Stop 3 left us holding the
+  string `iriis.db`, read from the device's own config."* At stop 1 this line instead connects
+  back to the brief.
+- **What this stop decides.** One **bold** sentence: the judgement made here and where it could
+  go wrong. *"This stop turns that name into an absolute path — and it is where a broken config
+  could aim the delete outside the backup folder."* Not a summary of the code; the reason the
+  stop exists.
+
+Two lines, never more. If the recap needs a paragraph, the previous stop did not land and the
+fix is to re-tell that one, not to prefix this one.
+
+Then these parts, in this order, and nothing else:
 
 1. **What happens.** Three to six short sentences. What the request is doing here, opening on
    the concrete trace of Rule 2 — real call, real values, what comes back.
@@ -267,11 +287,18 @@ nothing else:
 
 **Hard limits, because the failure mode here is volume, not inaccuracy:**
 
-- **One idea per stop.** A stop containing two design choices is two stops.
+- **One judgement per stop — and everything that judgement needs.** The unit is the decision
+  the reviewer has to form an opinion on, not the individual mechanism. If two mechanical steps
+  cannot be judged apart — where a file may be written, and the checks that stop it being
+  written wrong — they are **one stop**, even though that stop is longer. Splitting them puts a
+  confirmation between two halves of one thought and asks for an opinion the reviewer cannot
+  form yet. A stop holding two *independent* decisions is still two stops.
 - **No tables, no shell checks, no findings, no "consequences" block inline.** Each of those
   breaks the narrative, and stacking them is exactly what makes a reviewer lose the thread.
 - **One code block per stop**, unless the second is three lines showing a contrast.
-- **If a stop runs past roughly 40 lines of prose, split it.**
+- **If a stop runs past roughly 40 lines of prose, split it** — but only where the reviewer
+  could genuinely judge the first half on its own. If there is no such seam, keep it whole and
+  trim the prose instead.
 
 End with the gate (Rule 3), its first option naming stop N+1 in plain words. **The tool call is
 the last thing in the turn** — no trailing prose after it, and never more than one stop per turn.
@@ -279,7 +306,8 @@ the last thing in the turn** — no trailing prose after it, and never more than
 ### Fallback: the per-unit shape (use with Step 1b only)
 
 Head each **"Bundle N of M — <theme>"** or *"File N of M — `path`"*, with clickable links and
-real sizes, then adapt these parts to what the unit deserves:
+real sizes. **The two-line handrail of Step 2 applies here too** — where we came from, and what
+this bundle decides — then adapt these parts to what the unit deserves:
 
 | Part | What it does |
 |---|---|
