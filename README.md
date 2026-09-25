@@ -26,7 +26,7 @@ Each skill is independent. Symlink only the ones you want (see
 | Path | What it is |
 | --- | --- |
 | `CLAUDE.md` | Global standing rules, loaded in every project |
-| `scripts/setup-claude.sh` | Links `CLAUDE.md` and your chosen skills into `~/.claude/`, and optionally keeps session history |
+| `scripts/setup-claude.sh` | Links `CLAUDE.md` and your chosen skills into `~/.claude/`, and optionally sets global settings (session history, no AI attribution) |
 | `scripts/plans-dashboard.mjs` | The plans dashboard server |
 | `scripts/launcher-template.sh` | Starting point for a repo's dashboard launcher |
 | `scripts/worktree-run.sh` | Runs a plan in its own git worktree, so plans can run in parallel |
@@ -46,6 +46,8 @@ The script asks before each step:
 - symlink each skill into `~/.claude/skills/`, one question per skill
 - set `cleanupPeriodDays` to `99999` in `~/.claude/settings.json`, so Claude Code keeps
   session transcripts instead of deleting them after 30 days
+- set `attribution` to `{"commit": "", "pr": ""}`, so Claude Code adds no co-author line
+  to commits and no footer to PR descriptions
 
 A real file already in the way is moved aside to `<name>.bak-<timestamp>`, and
 `settings.json` is merged, never replaced.
