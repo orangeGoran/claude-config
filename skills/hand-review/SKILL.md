@@ -1,6 +1,6 @@
 ---
 name: hand-review
-description: Guide a human through a diff one unit at a time — bundling files into themed groups for large changes — waiting for confirmation between each. Opens with a plain brief — the problem, what was done about it, what is different when it ships — because the reviewer did not watch the work happen. Then follows one real request end to end through the change, in the order the code runs, one stop per message, opening each on a concrete trace through the real code rather than an invented analogy. Criticisms are collected and delivered at the end rather than interrupting the story. Every stop ends in a question the reviewer answers, so the tour cannot run ahead of them. Use when the user asks to be walked through changes, guided through a review by hand, after a plan's phases have finished, or when they say "guide me file by file" / "bundle these" / invoke /hand-review. This is a human-led guided tour, not the automated audit that /code-review performs.
+description: Guide a human reviewer through a diff by hand, one stop at a time, pausing for their answer after each. Use when the user asks to be walked through changes, guided through a review by hand, after a plan's phases have finished, or when they say "guide me file by file" / "bundle these" / invoke /hand-review. This is a human-led guided tour, not the automated audit that /code-review performs.
 argument-hint: "[optional target: nothing (working tree), a branch, a commit range, a PR number, or the plan file whose phases just finished]"
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write, AskUserQuestion
 ---
@@ -29,7 +29,7 @@ Two different situations, and conflating them is the main way this skill goes wr
 Never carry claims from a previous session as if they were established here. If context is
 missing, say so and read the code.
 
-## Rule 1 — the register (this is the skill)
+## Rule 1 — the register
 
 The most common failure is not being wrong. It is being **unreadable** — dense, jargon-stacked
 paragraphs that are individually accurate and collectively useless. Assume the reviewer is a
@@ -37,7 +37,7 @@ capable engineer who does not know **this codebase**.
 
 - **Headline the consequence, not the mechanism.** *"Saving a form with nothing changed logged
   people out"* — then explain that the database counts a rewritten row as affected. Never the
-  other way round. This is the single biggest lever in this skill.
+  other way round.
 - **Short sentences, one idea each.** If a sentence has three clauses and two pieces of jargon,
   split it.
 - **Define the domain fact before you lean on it.** One or two sentences, then use the term.
@@ -71,9 +71,9 @@ back onto the code, and the mapping is where they get lost. Name the real mechan
 sees `viewer`, and returns 403 before the handler runs"*, not *"a doorman checks the guest
 list"*.
 
-**Do not then repeat the same point in senior register.** An earlier version of this skill
-required both halves inline, every time. It doubled the length of every message and the reviewer
-got lost *faster*. More words is the wrong fix for confusion.
+**Do not then repeat the same point in senior register.** Saying everything twice doubles every
+message, and the reviewer gets lost faster, not slower. More words is the wrong fix for
+confusion.
 
 So:
 
@@ -139,7 +139,7 @@ question arrive — treat free text as the answer and follow it, not the options
 
 **The reviewer did not watch this work happen.** They do not know what problem was in front of
 the author, what was tried, or what is supposed to be different afterwards. Closing that gap is
-the entire job of the first message, and nothing else in it comes close in value.
+the job of the first message.
 
 So the first message is a brief, not a scoping report. Four short parts, in this order:
 
@@ -187,8 +187,7 @@ stop where the size misleads, not an opening statistic.
 
 **Follow one request end to end, in the order the code actually runs.** Not file by file, not
 bundle by bundle. A file-ordered tour is a parts list, and nobody learns a machine from a parts
-list — they learn it by watching it run once. This is the single biggest change you can make to
-whether the review lands.
+list — they learn it by watching it run once.
 
 1. **Pick one real thing a person does**, and name it the way that person would: *"someone
    clicks Wink — the button that flashes the LED so you can tell which device you are looking

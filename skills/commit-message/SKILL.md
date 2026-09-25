@@ -2,12 +2,12 @@
 name: commit-message
 description: Generate a copy-paste-ready Conventional Commits message for the current changes — nothing else. No tests, no lint, no workflow gates, no staging. Use whenever the user asks for a commit message (e.g. "give me a commit message", "commit message for your changes") or invokes /commit-message.
 argument-hint: "[optional focus, e.g. a file/topic to describe]"
-allowed-tools: Bash(git *)
+allowed-tools: Bash(git status *), Bash(git diff *), Bash(git log *)
 ---
 
 Generate a commit message for the current changes: $ARGUMENTS
 
-**IMPORTANT: Never run `git add`, `git reset`, `git commit`, or any command that modifies the staging area or creates commits. Only output the message. This skill runs no tests, no lint, and no workflow checks.**
+Only write the message — the user stages and commits themselves. Do not run `git add`, `git reset`, `git commit`, or anything else that changes the index or history, and do not run tests, lint, or workflow checks.
 
 ## Steps
 
@@ -37,4 +37,4 @@ Use **Conventional Commits**:
 
 ## Output
 
-Output **only** the commit message in a single fenced code block so the user can copy it — no preamble, no "let me know if..." closers. If the changes are genuinely unrelated bundles, you may offer 2–3 alternative messages (one per bundle), each in its own fenced block, with a one-line label above each.
+Reply with just the commit message in a single fenced code block, ready to copy. If the changes are genuinely unrelated bundles, you may offer 2–3 alternative messages (one per bundle), each in its own fenced block, with a one-line label above each.
