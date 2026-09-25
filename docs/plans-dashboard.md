@@ -14,11 +14,30 @@ node scripts/plans-dashboard.mjs          # → http://127.0.0.1:4899
 node scripts/plans-dashboard.mjs --help   # options and file locations
 ```
 
-It opens empty until you register a project. Requires Node 18+ (developed on 24).
+Requires Node 18+ (developed on 24).
 
 ## Add your first project
 
-Open Claude Code **inside the repository you want on the dashboard** and paste this:
+With no projects registered, a two-step guide opens by itself (**Guide** in the top bar
+reopens it): a short demo of the flow you step through, then a repo to pick. It ends with a
+four-stop tour of the real screen (plan list, plan pane, launch bar, Guide/Settings); what to
+launch is left to you. Machine checks (Node, the `claude` CLI, git, jq, HTTPS) appear only when one fails.
+It looks for repos in the folder this one sits in and the usual dev folders (`~/Workspace`,
+`~/Projects`, `~/code`, …) up to three levels deep, or any folder you type, and rates each:
+
+| Level | Meaning |
+| --- | --- |
+| Green | ready — git repo, plans folder with plans, a way to launch, allowlist, skills, CLAUDE.md |
+| Amber | launchable; a recommended item is missing (a first plan, skills, CLAUDE.md, a pipeline project's allowlist) |
+| Red | a required item is missing: git repo, plans folder, a launcher, or (for generic projects) a permission allowlist |
+
+Every missing item comes with a shell command or a prompt to paste into Claude Code in that
+repo, plus one combined prompt that covers them all. **＋ Add** registers the repo; one that
+already has `.claude/scripts/run-skill.sh` gets it as its launcher. A registered project that
+turns red shows **needs setup** in the sidebar.
+
+To register a repo from Claude Code instead, open Claude Code **inside the repository you want on
+the dashboard** and paste this:
 
 ```
 Register this repository with my plans dashboard.

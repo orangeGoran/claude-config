@@ -30,6 +30,7 @@ import {
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 const VERSION = '1.0.0';
 const HOME = os.homedir();
@@ -38,6 +39,9 @@ const CENTRAL = path.join(HOME, '.claude', 'pipeline-dashboard');
 const PORT = +(process.env.DASH_PORT || 4899);
 const NO_SUMMARY = !!process.env.DASH_NO_SUMMARY;
 const SUMMARY_MODEL = process.env.DASH_SUMMARY_MODEL || 'haiku';
+// the claude-config checkout this script lives in — onboarding points prompts at its
+// docs and launcher template, and scans its parent folder for sibling repos
+const DASH_REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
   console.log(VERSION);
@@ -327,11 +331,13 @@ const listPlans = async (proj) => {
 
 const fullState = async () => {
   const out = [];
-  for (const proj of allProjects()) {
+  for (const entry of loadRegistry()) {
+    const proj = resolveProject(entry);
     out.push({
       name: proj.name, client: proj.client, root: proj.root, plansDir: proj.plansDir,
       hasPipeline: proj.hasPipeline, hasLanes: proj.hasLanes,
       launchers: proj.launchers, issuesUrl: proj.issuesUrl,
+      setupLevel: projectHealth(proj.root, entry).level,
       plans: await listPlans(proj),
     });
   }
@@ -505,6 +511,234 @@ const saveLaunchers = (name, launchers) => {
   return { ok: true };
 };
 
+// one registry entry as the settings panel and onboarding submit it → stored shape
+const cleanEntry = (e) => {
+  if (!e || !safeName(e.name) || !e.root || typeof e.root !== 'string')
+    return { warning: 'Skipped an entry with a missing/invalid name or root.' };
+  const entry = {
+    name: e.name,
+    client: String(e.client || 'Default').slice(0, 40),
+    root: String(e.root).slice(0, 500),
+    launchers: Array.isArray(e.launchers) ? e.launchers : [],
+  };
+  if (e.plansDir && String(e.plansDir).trim()) entry.plansDir = String(e.plansDir).slice(0, 500);
+  if (e.doneDir && String(e.doneDir).trim()) entry.doneDir = String(e.doneDir).slice(0, 500);
+  let warning;
+  if (!existsSync(expand(entry.root)))
+    warning = entry.name + ': root does not exist: ' + entry.root;
+  else if (entry.plansDir && !existsSync(expand(entry.plansDir)))
+    warning = entry.name + ': plansDir does not exist: ' + entry.plansDir;
+  return { entry, warning };
+};
+
+// ---------- onboarding: system check, repo discovery, readiness ----------
+
+const tilde = (p) => (p && p.startsWith(HOME + '/') ? '~' + p.slice(HOME.length) : p);
+const toolVersion = (cmd, args) =>
+  new Promise((resolve) => {
+    execFile(cmd, args, { env: ENV, timeout: 8000 }, (err, out) =>
+      resolve(err ? null : String(out).trim().split('\n')[0]));
+  });
+const systemCheck = async () => {
+  const [claude, git, jq] = await Promise.all([
+    toolVersion('claude', ['--version']), toolVersion('git', ['--version']), toolVersion('jq', ['--version']),
+  ]);
+  const nodeMajor = +process.versions.node.split('.')[0];
+  return [
+    { id: 'node', label: 'Node.js 18 or newer', ok: nodeMajor >= 18, required: true,
+      detail: 'v' + process.versions.node, why: 'Runs this dashboard.', fixCmd: 'brew install node' },
+    { id: 'claude', label: 'Claude Code CLI', ok: !!claude, required: true,
+      detail: claude || 'not found on PATH',
+      why: 'Every launched plan runs through it, and it writes the plain-language plan summaries.',
+      fixCmd: 'curl -fsSL https://claude.ai/install.sh | bash' },
+    { id: 'git', label: 'git', ok: !!git, required: true, detail: git || 'not found on PATH',
+      why: 'Runs are reviewed as diffs, and parallel runs each get their own git worktree.',
+      fixCmd: 'xcode-select --install' },
+    { id: 'jq', label: 'jq', ok: !!jq, required: false, detail: jq || 'not found on PATH',
+      why: 'The launcher template uses it to copy a repo’s permission allowlist into headless runs.',
+      fixCmd: 'brew install jq' },
+  ];
+};
+
+// the registration scripts/launcher-template.sh documents for a repo that copied it
+const WRAPPER_LAUNCHER = { label: 'Implement', cmd: 'bash .claude/scripts/run-skill.sh implement {plan}' };
+// where plan folders usually live, most common first
+const PLAN_DIR_CANDIDATES = ['.plans', 'docs/plans', 'wiki/plans', 'plans'];
+const countMd = (dir) => {
+  try { return readdirSync(dir).filter((f) => f.endsWith('.md')).length; } catch { return 0; }
+};
+const allowRuleCount = (root) =>
+  ((loadJson(path.join(root, '.claude', 'settings.json')).permissions || {}).allow || []).length;
+const skillNames = (root) => {
+  try {
+    return readdirSync(path.join(root, '.claude', 'skills'))
+      .filter((d) => existsSync(path.join(root, '.claude', 'skills', d, 'SKILL.md')));
+  } catch { return []; }
+};
+
+// What a repo needs before its plans can be launched from here. Every failing check
+// carries its own fix: a shell command, or a prompt to paste into Claude Code there.
+const projectHealth = (root, entry) => {
+  const plansDir = entry ? resolveProject(entry).plansDir
+    : PLAN_DIR_CANDIDATES.map((d) => path.join(root, d)).find((d) => existsSync(d)) || null;
+  const hasPipeline = existsSync(path.join(root, '.claude/scripts/auto-pipeline.sh'));
+  const hasWrapper = existsSync(path.join(root, '.claude/scripts/run-skill.sh'));
+  const launchers = entry && Array.isArray(entry.launchers) ? entry.launchers.length : 0;
+  const plans = plansDir ? countMd(plansDir) : 0;
+  const rules = allowRuleCount(root);
+  const skills = skillNames(root);
+  const docs = path.join(DASH_REPO, 'docs/plans-dashboard.md');
+  const checks = [
+    { id: 'git', label: 'Git repository', required: true, ok: existsSync(path.join(root, '.git')),
+      why: 'You review what a run changed as a git diff; parallel runs need git worktrees.',
+      fixCmd: 'cd ' + tilde(root) + ' && git init' },
+    { id: 'plansDir', label: 'Plans folder', required: true, ok: !!plansDir && existsSync(plansDir),
+      detail: plansDir ? tilde(plansDir) : 'none of ' + PLAN_DIR_CANDIDATES.join(', '),
+      why: 'The dashboard lists the *.md files in this folder as plans.',
+      fixPrompt: 'Create a .plans/ folder in this repository for implementation plans: one markdown file ' +
+        'per piece of work, kebab-case names such as add-login-rate-limit.md, and a .plans/done/ folder ' +
+        'for finished ones. Do not commit.' },
+    { id: 'plans', label: 'At least one plan', required: false, ok: plans > 0,
+      detail: plans + ' plan' + (plans === 1 ? '' : 's'),
+      why: 'Nothing shows on the dashboard until the folder holds a plan.',
+      fixPrompt: 'Write a first implementation plan for a small, real improvement you find in this ' +
+        'codebase and save it as ' + (plansDir ? path.relative(root, plansDir) || '.' : '.plans') +
+        '/<kebab-case-name>.md. Start with "# Plan: <title>", then sections Goal, Context (the files ' +
+        'involved), Steps, and How to verify. Keep it short. Do not implement it and do not commit.' },
+  ];
+  if (hasPipeline) {
+    checks.push({ id: 'launch', label: 'A way to launch plans', required: true, ok: true,
+      detail: 'auto-pipeline.sh — pipeline mode, nothing to configure' });
+  } else {
+    // an unregistered repo with the wrapper is ready: adding it saves WRAPPER_LAUNCHER
+    checks.push({ id: 'launch', label: 'A way to launch plans', required: true,
+      ok: launchers > 0 || (!entry && hasWrapper),
+      detail: launchers ? launchers + ' launcher' + (launchers === 1 ? '' : 's') + ' configured'
+        : hasWrapper ? (entry ? 'run-skill.sh is in the repo — save it as a launcher'
+          : 'run-skill.sh — becomes the launcher when you add the project')
+        : 'no launcher script and no launcher configured',
+      why: 'The ▶ Launch button runs a launcher command for the plan.',
+      action: entry ? 'launchers' : undefined,
+      fixPrompt: hasWrapper ? undefined
+        : 'Set up a headless launcher so my plans dashboard can run plans in this repository. ' +
+          'Read ' + tilde(docs) + ' (section "How a plan gets launched") first. Copy ' +
+          tilde(path.join(DASH_REPO, 'scripts/launcher-template.sh')) + ' to .claude/scripts/run-skill.sh ' +
+          'and make it executable. Edit its two marked spots: (1) the skills it may run — use the skills ' +
+          'in .claude/skills that implement or review a plan; if there is none, create ' +
+          '.claude/skills/implement/SKILL.md, a skill that takes a plan file path as its argument, ' +
+          'implements the plan following this repo’s conventions, and runs the relevant tests; ' +
+          '(2) extra permissions a run needs. Then run it once with --dry-run on a plan and show me the ' +
+          'output. Do not commit.' });
+  }
+  checks.push(
+    { id: 'allow', label: 'Permission allowlist', required: !hasPipeline, ok: rules > 0,
+      detail: rules ? rules + ' allow rule' + (rules === 1 ? '' : 's') + ' in .claude/settings.json'
+        : 'no permissions.allow in .claude/settings.json',
+      why: 'A launched run cannot ask you for permission — any command not on the list fails, and the ' +
+        'run reports problems that never happened.',
+      fixPrompt: 'Create or extend .claude/settings.json in this repository with a permissions.allow list ' +
+        'that lets a headless Claude session do routine work here without asking: read and edit files in ' +
+        'the repo, run this repo’s real test, lint, type-check and build commands (find them in ' +
+        'package.json, Makefile, pyproject.toml or similar), and read-only git commands (git status, git ' +
+        'diff, git log). Do not allow push, deploy, or destructive commands. Keep any existing rules. ' +
+        'Show me the final list. Do not commit.' },
+    { id: 'skills', label: 'Project skills', required: false, ok: skills.length > 0,
+      detail: skills.length ? skills.slice(0, 4).map((s) => '/' + s).join(', ') +
+        (skills.length > 4 ? ' +' + (skills.length - 4) : '') : 'no .claude/skills',
+      why: 'Skills give launched runs this repo’s own workflow (implement, test, review).',
+      fixPrompt: 'Create a skill at .claude/skills/implement/SKILL.md for this repository. It takes the ' +
+        'path of a plan file as its argument, implements the plan following the conventions in this ' +
+        'repo, runs the relevant tests with this repo’s real test command, and ends with a short ' +
+        'summary of what changed. It never pushes or opens PRs. Do not commit.' },
+    { id: 'claudemd', label: 'CLAUDE.md', required: false, ok: existsSync(path.join(root, 'CLAUDE.md')),
+      why: 'Tells every run how this repo is built, tested and structured.',
+      fixCmd: 'cd ' + tilde(root) + ' && claude "/init"' },
+  );
+  const failing = checks.filter((c) => !c.ok);
+  const level = failing.some((c) => c.required) ? 'red' : failing.length ? 'amber' : 'green';
+  // one prompt that fixes everything that can be fixed from inside Claude Code
+  const prompts = failing.filter((c) => c.fixPrompt).map((c) => c.fixPrompt);
+  const fixAll = prompts.length > 1
+    ? 'Get this repository ready for my plans dashboard. Do these steps in order, show me what you ' +
+      'changed after each, and do not commit:\n\n' +
+      prompts.map((p, i) => (i + 1) + '. ' + p.replace(/\s*Do not commit\.$/, '')).join('\n\n')
+    : prompts[0] || null;
+  return { root, display: tilde(root), plansDir, hasPipeline, level, checks, fixAll };
+};
+
+// A folder is a candidate project when it is a git repo or already has Claude/plan
+// folders. Descent stops at a candidate, so submodules and nested packages don't appear.
+const SCAN_SKIP = new Set(['node_modules', 'worktrees', 'vendor', 'dist', 'build', 'Library', 'Applications']);
+const findRepos = (dir, depth, out, budget) => {
+  if (budget.n-- <= 0) return;
+  let ents;
+  try { ents = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  const names = new Set(ents.map((e) => e.name));
+  if (['.git', '.claude', '.plans'].some((n) => names.has(n))) {
+    // a .git FILE marks a linked worktree or submodule checkout, not a project of its own
+    if (!names.has('.git') || ents.find((e) => e.name === '.git').isDirectory()) out.push(dir);
+    return;
+  }
+  if (depth <= 0) return;
+  for (const e of ents)
+    if (e.isDirectory() && !e.name.startsWith('.') && !SCAN_SKIP.has(e.name))
+      findRepos(path.join(dir, e.name), depth - 1, out, budget);
+};
+// where to look when the user hasn't said: next to this checkout, then the usual dev folders
+const defaultScanRoots = () =>
+  [...new Set([path.dirname(DASH_REPO),
+    ...['Workspace', 'Projects', 'Developer', 'code', 'dev', 'src', 'repos', 'GitHub']
+      .map((d) => path.join(HOME, d))])].filter((d) => existsSync(d));
+const suggestName = (root, taken) => {
+  const base = path.basename(root).replace(/[^A-Za-z0-9._-]/g, '-') || 'project';
+  let name = base;
+  for (let i = 2; taken.has(name); i++) name = base + '-' + i;
+  return name;
+};
+const scanProjects = (dirs) => {
+  const reg = loadRegistry();
+  const registered = new Set(reg.map((e) => expand(e.root)));
+  const taken = new Set(reg.map((e) => e.name));
+  const seen = new Set(), candidates = [];
+  for (const scanRoot of dirs) {
+    const found = [];
+    findRepos(scanRoot, 3, found, { n: 600 });
+    for (const root of found) {
+      if (seen.has(root) || registered.has(root)) continue;
+      seen.add(root);
+      const h = projectHealth(root, null);
+      const parent = path.dirname(root);
+      h.name = suggestName(root, taken);
+      taken.add(h.name);
+      // a repo grouped under a folder (~/Workspace/acme/api) suggests that folder as the client
+      const group = parent !== scanRoot && parent.startsWith(scanRoot) ? path.basename(parent) : '';
+      h.client = group ? group[0].toUpperCase() + group.slice(1) : 'Default';
+      h.self = root === DASH_REPO;
+      candidates.push(h);
+    }
+  }
+  const rank = { green: 0, amber: 1, red: 2 };
+  candidates.sort((a, b) => a.self - b.self || rank[a.level] - rank[b.level] || a.root.localeCompare(b.root));
+  return { roots: dirs.map(tilde), candidates };
+};
+const addProject = (b) => {
+  const root = expand(String(b.root || '').trim());
+  if (!root || !existsSync(root)) return { ok: false, output: 'That folder does not exist.' };
+  const reg = loadRegistry();
+  if (reg.some((e) => expand(e.root) === root)) return { ok: false, output: 'Already on the dashboard.' };
+  const { entry, warning } = cleanEntry({
+    name: b.name, client: b.client, root: tilde(root),
+    plansDir: b.plansDir ? tilde(expand(b.plansDir)) : undefined,
+    launchers: existsSync(path.join(root, '.claude/scripts/run-skill.sh'))
+      && !existsSync(path.join(root, '.claude/scripts/auto-pipeline.sh')) ? [WRAPPER_LAUNCHER] : [],
+  });
+  if (!entry) return { ok: false, output: warning };
+  if (reg.some((e) => e.name === entry.name)) return { ok: false, output: 'A project named ' + entry.name + ' already exists.' };
+  mkdirSync(path.dirname(REG_FILE), { recursive: true });
+  saveRegistry([...reg, entry]);
+  return { ok: true, name: entry.name, warning };
+};
+
 const cleanup = (proj, slug, artifacts) =>
   new Promise((resolve) => {
     execFile('bash', [proj.launcherScript, '--cleanup', slug], { cwd: proj.root, env: ENV, timeout: 60000 },
@@ -633,6 +867,20 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, loadRegistry().map((e) => ({
         ...e, _hasPipeline: resolveProject(e).hasPipeline,
       })));
+    if (url.pathname === '/api/onboarding')
+      return json(res, 200, {
+        system: await systemCheck(),
+        dashRepo: tilde(DASH_REPO),
+        registryFile: tilde(REG_FILE),
+        projects: loadRegistry().map((e) => ({
+          ...projectHealth(expand(e.root), e), name: e.name, client: e.client || 'Default',
+        })),
+      });
+    if (url.pathname === '/api/scan') {
+      const dir = (url.searchParams.get('dir') || '').trim();
+      if (dir && !existsSync(expand(dir))) return json(res, 400, { error: 'Folder not found: ' + dir });
+      return json(res, 200, scanProjects(dir ? [path.resolve(expand(dir))] : defaultScanRoots()));
+    }
     if (url.pathname === '/api/discover') {
       const proj = getProj();
       if (!proj) return json(res, 400, { error: 'bad project' });
@@ -676,29 +924,18 @@ const server = http.createServer(async (req, res) => {
         if (!Array.isArray(b.projects)) return json(res, 400, { error: 'bad registry' });
         const seen = new Set(); const cleaned = []; const warnings = [];
         for (const e of b.projects) {
-          if (!e || !safeName(e.name) || !e.root || typeof e.root !== 'string') {
-            warnings.push('Skipped an entry with a missing/invalid name or root.'); continue;
-          }
-          if (seen.has(e.name)) { warnings.push('Duplicate name skipped: ' + e.name); continue; }
-          seen.add(e.name);
-          const entry = {
-            name: e.name,
-            client: String(e.client || 'Default').slice(0, 40),
-            root: String(e.root).slice(0, 500),
-            launchers: Array.isArray(e.launchers) ? e.launchers : [],
-          };
-          if (e.plansDir && String(e.plansDir).trim()) entry.plansDir = String(e.plansDir).slice(0, 500);
-          if (e.doneDir && String(e.doneDir).trim()) entry.doneDir = String(e.doneDir).slice(0, 500);
-          if (!existsSync(expand(entry.root)))
-            warnings.push(entry.name + ': root does not exist: ' + entry.root);
-          else if (entry.plansDir && !existsSync(expand(entry.plansDir)))
-            warnings.push(entry.name + ': plansDir does not exist: ' + entry.plansDir);
+          const { entry, warning } = cleanEntry(e);
+          if (!entry) { warnings.push(warning); continue; }
+          if (seen.has(entry.name)) { warnings.push('Duplicate name skipped: ' + entry.name); continue; }
+          seen.add(entry.name);
+          if (warning) warnings.push(warning);
           cleaned.push(entry);
         }
         saveRegistry(cleaned);
         return json(res, 200, { ok: true,
           output: warnings.length ? warnings.join('\n') : 'Settings saved — ' + cleaned.length + ' project(s).' });
       }
+      if (url.pathname === '/api/add-project') return json(res, 200, addProject(b));
       if (url.pathname === '/api/launchers') {
         if (!proj) return json(res, 400, { error: 'bad project' });
         return json(res, 200, saveLaunchers(proj.name, Array.isArray(b.launchers) ? b.launchers : []));
@@ -911,12 +1148,146 @@ const PAGE = /* html */ `<!doctype html>
   input, select, textarea, button { transition:border-color .15s, background .15s, color .15s; }
   input:focus-visible, select:focus-visible, textarea:focus-visible {
              outline:2px solid var(--accent); outline-offset:-1px; }
+  .emptyproj { padding:10px 14px 12px 34px; font-size:12px; color:var(--dim); border-bottom:1px solid var(--line); }
+  .emptyproj code, .welcome code { background:var(--codechip); border-radius:5px; padding:1px 5px; font:11px ui-monospace,monospace; }
+  .welcome { max-width:560px; margin:8vh auto 0; text-align:center; }
+  .welcome h2 { font-size:22px; margin:0 0 8px; }
+  .welcome p { color:var(--dim); margin:0 0 20px; }
+  .welcome button { font-size:14px; padding:10px 20px; }
+  /* setup guide overlay — deliberately plain: type, rules and small marks, no emoji */
+  #onb { position:fixed; inset:0; background:rgba(5,7,12,.62); display:none; z-index:20;
+         align-items:center; justify-content:center; padding:16px; }
+  #onb.open { display:flex; }
+  .onb-box { width:min(900px,100%); height:min(680px,100%); background:var(--panel);
+             border:1px solid var(--line); border-radius:14px; display:flex; flex-direction:column;
+             box-shadow:0 24px 70px rgba(0,0,0,.45); overflow:hidden; }
+  .onb-top { display:flex; align-items:center; gap:18px; padding:14px 22px; border-bottom:1px solid var(--line); }
+  .steps { display:flex; gap:22px; font-size:13px; }
+  .steps span { color:var(--dim); cursor:pointer; padding:4px 0; border-bottom:2px solid transparent; }
+  .steps span b { font-weight:600; margin-right:6px; font-variant-numeric:tabular-nums; }
+  .steps span.on { color:var(--fg); border-bottom-color:var(--accent); }
+  .steps span.done { color:var(--fg); }
+  .onb-x { background:none; border:0; color:var(--dim); font-size:13px; padding:4px 6px; }
+  .onb-x:hover { color:var(--fg); }
+  .onb-body { flex:1; overflow-y:auto; padding:30px 34px; }
+  .onb-body h2 { font-size:24px; line-height:1.25; margin:0 0 8px; letter-spacing:-.01em; font-weight:650; }
+  .onb-body .lead { color:var(--dim); margin:0 0 24px; max-width:640px; font-size:14px; }
+  .onb-body h3 { font-size:12px; font-weight:600; margin:26px 0 8px; color:var(--dim); }
+  .onb-foot { display:flex; gap:12px; align-items:center; padding:14px 22px; border-top:1px solid var(--line); }
+  .onb-foot .primary { padding:9px 18px; }
+  .linkbtn { background:none; border:0; color:var(--dim); padding:4px 2px; font-size:13px; }
+  .linkbtn:hover { color:var(--fg); text-decoration:underline; }
+  /* status marks */
+  .mk { width:16px; height:16px; flex-shrink:0; display:inline-flex; align-items:center; justify-content:center; margin-top:2px; }
+  .mk svg { width:14px; height:14px; }
+  .mk.ok { color:var(--ok); }
+  .mk.bad::before, .mk.warn::before { content:''; width:8px; height:8px; border-radius:50%; }
+  .mk.bad::before { background:var(--bad); }
+  .mk.warn::before { border:2px solid var(--warn); width:5px; height:5px; }
+  /* demo */
+  .demo > * { min-width:0; }
+  .demo { display:grid; grid-template-columns:1.35fr 1fr; gap:22px; align-items:stretch; }
+  .win { border:1px solid var(--line); border-radius:10px; background:var(--codebg); overflow:hidden;
+         height:250px; display:flex; flex-direction:column; }
+  .win-bar { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line);
+             font:12px ui-monospace,monospace; color:var(--dim); }
+  .win-bar .st { margin-left:auto; display:flex; align-items:center; gap:6px; }
+  .win-bar .st i { width:7px; height:7px; border-radius:50%; background:var(--dot); }
+  .scene { display:none; padding:14px 16px; font:12.5px/1.75 ui-monospace,monospace; color:var(--logfg); }
+  .scene.on { display:block; }
+  .scene .ln { white-space:pre; overflow:hidden; text-overflow:ellipsis; }
+  .scene.on .ln { animation:lnIn .3s both; }
+  .scene.on .ln:nth-child(2) { animation-delay:.35s } .scene.on .ln:nth-child(3) { animation-delay:.7s }
+  .scene.on .ln:nth-child(4) { animation-delay:1.05s } .scene.on .ln:nth-child(5) { animation-delay:1.4s }
+  .scene.on .ln:nth-child(6) { animation-delay:1.75s } .scene.on .ln:nth-child(7) { animation-delay:2.1s }
+  @keyframes lnIn { from { opacity:0; transform:translateY(3px) } to { opacity:1; transform:none } }
+  .scene .h { color:var(--fg); font-weight:600; }
+  .scene .m { color:var(--dim); }
+  .scene .add { color:var(--ok); } .scene .del { color:var(--bad); }
+  .scene .pass { color:var(--ok); }
+  .win.s1 .win-bar .st i { background:var(--run); animation:pulse 1.2s ease-in-out infinite; }
+  .win.s2 .win-bar .st i { background:var(--ok); }
+  .caps { display:flex; flex-direction:column; gap:4px; }
+  .caps button { text-align:left; background:none; border:0; border-left:2px solid var(--line); border-radius:0;
+                 padding:10px 0 10px 16px; color:var(--dim); position:relative; }
+  .caps button b { display:block; color:var(--dim); font-size:14px; font-weight:600; margin-bottom:2px; }
+  .caps button span { font-size:13px; line-height:1.5; display:block; }
+  .caps button.on { color:var(--fg); }
+  .caps button.on b { color:var(--fg); }
+  .caps button.on::before { content:''; position:absolute; left:-2px; top:0; width:2px; height:100%;
+                            background:var(--accent); }
+  .caps button:not(.on):hover b { color:var(--fg); }
+  .demo-nav { display:flex; align-items:center; gap:8px; margin-top:10px; font-size:12px; color:var(--dim); }
+  .demo-nav button { padding:4px 10px; font-size:12px; }
+  .demo-nav .nx { margin-left:auto; }
+  @media (prefers-reduced-motion: reduce) { .scene.on .ln { animation:none; } }
+  @media (max-width:760px) { .demo { grid-template-columns:1fr; } }
+  @media (max-width:600px) {
+    #onbtitle { display:none; }
+    .steps { gap:14px; }
+    .steps span:not(.on) { font-size:0; }          /* just the number for steps you're not on */
+    .steps span:not(.on) b { font-size:13px; margin:0; }
+    .onb-x { white-space:nowrap; }
+    .onb-body { padding:22px 18px; }
+  }
+  .alert { border:1px solid var(--line); border-left:3px solid var(--bad); border-radius:8px; padding:12px 14px;
+           margin-top:24px; background:var(--card); }
+  .alert.soft { border-left-color:var(--warn); }
+  .alert p { margin:0 0 6px; font-size:13px; }
+  /* check rows */
+  .ck { display:flex; gap:10px; align-items:flex-start; padding:9px 0; border-top:1px solid var(--line); font-size:13px; }
+  .ck:first-child { border-top:0; }
+  .ck .bd { flex:1; min-width:0; }
+  .ck .lb { font-weight:600; }
+  .ck .dt { color:var(--dim); font-size:12px; margin-left:8px; word-break:break-all; }
+  .ck .why { color:var(--dim); font-size:12px; margin-top:1px; }
+  .ck .fix { margin-top:7px; display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
+  .ck .opt-tag { font-size:11px; color:var(--dim); margin-left:6px; font-weight:400; }
+  .cmdrow { display:flex; gap:6px; align-items:center; width:100%; }
+  .cmdrow code { flex:1; min-width:0; background:var(--codebg); border:1px solid var(--line); border-radius:6px;
+                 padding:5px 9px; font:12px ui-monospace,monospace; overflow-x:auto; white-space:nowrap; }
+  .onb-body button.sm { padding:4px 10px; font-size:12px; flex-shrink:0; }
+  .promptbox { background:var(--codebg); border:1px solid var(--line); border-radius:6px; padding:9px 11px;
+               font:12px/1.5 ui-monospace,monospace; white-space:pre-wrap; max-height:160px; overflow:auto;
+               margin:6px 0 0; color:var(--logfg); width:100%; }
+  details.pr summary { font-size:12px; color:var(--dim); cursor:pointer; }
+  /* project rows */
+  .prow { border:1px solid var(--line); border-radius:10px; margin:8px 0; background:var(--card); }
+  .prow-head { display:flex; gap:12px; align-items:center; padding:12px 14px; cursor:pointer; }
+  .prow-head:hover { background:var(--hover); border-radius:10px; }
+  .prow-name { font-weight:600; font-size:14px; }
+  .prow-path { color:var(--dim); font:12px ui-monospace,monospace; margin-top:1px; word-break:break-all; }
+  .prow-state { font-size:12px; white-space:nowrap; display:flex; align-items:center; gap:6px; }
+  .prow-state.green { color:var(--ok); } .prow-state.amber { color:var(--warn); } .prow-state.red { color:var(--bad); }
+  .prow-body { padding:0 14px 12px 14px; border-top:1px solid var(--line); }
+  .prow-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding-top:10px; }
+  .prow-actions input { background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:6px;
+                        padding:4px 8px; font-size:12px; width:150px; }
+  .scanrow { display:flex; gap:8px; margin:14px 0 0; }
+  .scanrow input { flex:1; background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:8px;
+                   padding:7px 10px; font:12px ui-monospace,monospace; }
+  /* tour: a transparent blocker, a spotlight hole, and a card beside it */
+  #tour { display:none; }
+  #tour.open { display:block; }
+  #tourblock { position:fixed; inset:0; z-index:30; }
+  #tourhole { position:fixed; z-index:31; border-radius:10px; pointer-events:none;
+              box-shadow:0 0 0 9999px rgba(5,7,12,.66); outline:2px solid var(--accent);
+              transition:left .25s, top .25s, width .25s, height .25s; }
+  #tourpop { position:fixed; z-index:32; width:320px; background:var(--panel); border:1px solid var(--line);
+             border-radius:12px; padding:14px 16px 12px; box-shadow:0 18px 50px rgba(0,0,0,.45);
+             transition:left .25s, top .25s; }
+  #tourpop b { font-size:15px; display:block; margin:2px 0 4px; }
+  #tourpop p { margin:0 0 12px; font-size:13px; color:var(--dim); line-height:1.55; }
+  .tp-count { font-size:11px; color:var(--dim); }
+  .tp-foot { display:flex; gap:8px; align-items:center; }
+  @media (prefers-reduced-motion: reduce) { #tourhole, #tourpop { transition:none; } }
 </style>
 <header><h1>🗂 Plans</h1><span class="hdrun" id="hdrun" style="display:none"></span>
   <span class="hdok" id="hdok" style="display:none"></span>
   <span class="dim" id="clock"></span>
   <span class="hdwarn" id="connmsg" style="display:none"></span>
   <span class="dim" style="margin-left:auto">auto-refresh 5s · summaries generate in background</span>
+  <button id="guidebtn" title="how it works, add a repo, start a run">Guide</button>
   <button id="settingsbtn" title="projects & settings">⚙ Settings</button>
   <button id="themeBtn" title="toggle light/dark">🌙</button></header>
 <div class="wrap">
@@ -948,6 +1319,17 @@ const PAGE = /* html */ `<!doctype html>
     <button onclick="closeLog()">✕ close</button></header>
   <div id="logbody"></div>
 </div>
+<div id="onb" role="dialog" aria-modal="true" aria-labelledby="onbtitle">
+  <div class="onb-box">
+    <div class="onb-top"><h1 id="onbtitle" style="font-size:14px">Plans</h1><div class="steps" id="onbsteps"></div>
+      <span style="flex:1"></span><button class="onb-x" id="onbskip" title="close (Esc)">Skip for now</button></div>
+    <div class="onb-body" id="onbbody"></div>
+    <div class="onb-foot"><button class="linkbtn" id="onbback">Back</button><span style="flex:1"></span>
+      <button class="primary" id="onbnext">Continue</button></div>
+  </div>
+</div>
+<div id="tour"><div id="tourblock"></div><div id="tourhole"></div>
+  <div id="tourpop" role="dialog" aria-live="polite"></div></div>
 <script>
 // theme: remembered per browser, defaults to system preference
 const applyTheme = (t) => {
@@ -1185,13 +1567,21 @@ function renderList() {
   ho.textContent = '✓ ' + ready.length + ' to review';
   // grouped list: client → project → plans; project sections collapse on header click
   const vis = visiblePlans();
-  const clients = [...new Set(vis.map((p) => p.client))];
-  byId('side').innerHTML = clients.map((c) => {
-    const projNames = [...new Set(vis.filter((p) => p.client === c).map((p) => p.project))];
+  // Unfiltered, every registered project shows — an empty one included, so a project
+  // added a moment ago doesn't look like it failed to register.
+  const filtering = byId('q').value || byId('statusFilter').value;
+  const shownProjs = state.filter((s) => !filtering || vis.some((p) => p.project === s.name));
+  const clients = [...new Set(shownProjs.map((s) => s.client))];
+  byId('side').innerHTML = !state.length
+    ? '<div class="emptyproj" style="padding:18px 16px">No projects on the dashboard yet.<br><br>' +
+      '<button class="primary" data-guide="">Get started</button></div>'
+    : clients.map((c) => {
+    const projNames = shownProjs.filter((s) => s.client === c).map((s) => s.name);
     return '<div class="ghead">' + esc(c) + '</div>' + projNames.map((pr) => {
       const items = vis.filter((p) => p.project === pr);
       const closed = collapsedProjects.has(pr);
-      const hasLanes = (state.find((s) => s.name === pr) || {}).hasLanes;
+      const sp = state.find((s) => s.name === pr) || {};
+      const hasLanes = sp.hasLanes;
       // run counters for the whole project (not just filtered-visible plans)
       const projPlans = plans.filter((p) => p.project === pr);
       const liveN = projPlans.filter((p) => p.live).length;
@@ -1204,10 +1594,20 @@ function renderList() {
         (closed ? '▸' : '▾') + '</span>📁 ' + esc(pr) +
         (hasLanes ? '<button class="pbtn" data-suggest="' + esc(pr) +
           '" title="suggest a parallel launch batch">🧭 Suggest</button>' : '') + runBadges +
+        (sp.setupLevel === 'red' ? '<span class="chip bad x" data-guide="' + escA(sp.root) +
+          '" title="something required is missing — open the guide">needs setup</span>' : '') +
         '<span class="cnt">' + items.length + ' plan' + (items.length === 1 ? '' : 's') +
-        '</span></div>' + (closed ? '' : items.map(itemHtml).join(''));
+        '</span></div>' + (closed ? '' : items.length ? items.map(itemHtml).join('')
+          : '<div class="emptyproj">' + (projPlans.length ? 'All plans are archived.'
+            : 'No plans yet — add a <code>.md</code> file to <code>' + esc(sp.plansDir) + '</code>.') + '</div>');
     }).join('');
   }).join('');
+  byId('side').querySelectorAll('[data-guide]').forEach((el) =>
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (el.dataset.guide) onbOpenCards.add(el.dataset.guide);
+      openGuide(el.dataset.guide ? 1 : 0);
+    }));
   byId('side').querySelectorAll('[data-suggest]').forEach((el) =>
     el.addEventListener('click', (e) => { e.stopPropagation(); openSuggest(el.dataset.suggest); }));
   const allProjNames = [...new Set(plans.map((p) => p.project))];
@@ -1237,7 +1637,7 @@ function renderList() {
 
 async function renderDetail(loadPlan) {
   const p = find(selected);
-  if (!p) { byId('detail').innerHTML = '<span class="dim">Select a plan on the left.</span>'; return; }
+  if (!p) return renderEmptyDetail();
   CUR_ISSUES = p.issuesUrl || '';
   const launcherModes = !p.hasPipeline && !p.archived
     ? ((p.launchers || []).length ? \`
@@ -1473,9 +1873,10 @@ async function loadLog() {
   if (stick) el.scrollTop = el.scrollHeight;
 }
 // --- launcher setup dialog (generic projects): pick a skill/script or write a command ---
-async function openLauncherSetup(projName, fromSettings) {
+// back: where ‹ Back and a save return to (the settings panel, the setup guide), or null
+async function openLauncherSetup(projName, back) {
   logKey = null;
-  setBack(fromSettings ? openSettings : null);
+  setBack(back || null);
   byId('logtitle').textContent = '⚙ launchers — ' + projName;
   byId('logpane').classList.add('open');
   byId('logbody').innerHTML = '<div class="setup">scanning ' + esc(projName) + ' .claude folder…</div>';
@@ -1483,7 +1884,8 @@ async function openLauncherSetup(projName, fromSettings) {
   const proj = state.find((s) => s.name === projName) || { launchers: [] };
   const HEADLESS = ' --permission-mode acceptEdits --verbose --output-format stream-json';
   const tplSkill = (s) => 'claude -p "/' + s + ' {plan}"' + HEADLESS;
-  const tplScript = (s) => (s.endsWith('.sh') ? 'bash' : 'node') + ' .claude/scripts/' + s + ' {plan}';
+  const tplScript = (s) => s === 'run-skill.sh' ? 'bash .claude/scripts/run-skill.sh implement {plan}'
+    : (s.endsWith('.sh') ? 'bash' : 'node') + ' .claude/scripts/' + s + ' {plan}';
   const tplGeneric = 'claude -p "Read the plan at {plan} and implement it in this repository. '
     + 'Follow the repo conventions and existing patterns. Run the relevant tests. '
     + 'Do not push, do not create PRs." ' + HEADLESS.trim();
@@ -1531,7 +1933,7 @@ async function openLauncherSetup(projName, fromSettings) {
     el.addEventListener('click', async () => {
       const ls = (proj.launchers || []).filter((_, i) => i !== +el.dataset.dl);
       await post('/api/launchers', { project: projName, launchers: ls });
-      await refresh(); openLauncherSetup(projName, fromSettings);
+      await refresh(); openLauncherSetup(projName, back);
     }));
   byId('lsave').addEventListener('click', async () => {
     const cmd = byId('lcmd').value.trim();
@@ -1540,7 +1942,7 @@ async function openLauncherSetup(projName, fromSettings) {
       { label: byId('llabel').value.trim() || 'launcher', cmd }];
     await post('/api/launchers', { project: projName, launchers: ls });
     await refresh();
-    if (fromSettings) openSettings();
+    if (back) back();
     else { closeLog(); renderDetail(false); }
   });
 }
@@ -1607,7 +2009,7 @@ async function openSettings() {
       rows.push({ name: '', client: '', root: '', plansDir: '', launchers: [] }); render();
     });
     byId('logbody').querySelectorAll('[data-lset]').forEach((el) =>
-      el.addEventListener('click', () => openLauncherSetup(el.dataset.lset, true)));
+      el.addEventListener('click', () => openLauncherSetup(el.dataset.lset, openSettings)));
     byId('saveReg').addEventListener('click', async () => {
       const r = await post('/api/registry', { projects: rows });
       if (r.ok) { closeLog(); refresh(); }
@@ -1690,7 +2092,18 @@ async function openSuggest(projName) {
   });
 }
 document.addEventListener('keydown', (e) => {
+  if (tourStep >= 0) {
+    if (e.key === 'Escape') endTour();
+    else if (e.key === 'ArrowRight') tourGo(1);
+    else if (e.key === 'ArrowLeft') tourGo(-1);
+    return;
+  }
+  if (byId('demohost') && byId('onb').classList.contains('open') && /^Arrow(Left|Right)$/.test(e.key)) {
+    demoScene = Math.min(2, Math.max(0, demoScene + (e.key === 'ArrowRight' ? 1 : -1)));
+    return paintDemo();
+  }
   if (e.key !== 'Escape') return;
+  if (byId('onb').classList.contains('open')) return closeGuide();
   if (drawerBack) drawerBack(); else closeLog();
 });
 byId('q').addEventListener('input', renderList);
@@ -1709,6 +2122,301 @@ byId('collapseAll').addEventListener('click', () => {
 STATUSES.forEach((s) => {
   const o = document.createElement('option'); o.textContent = s; byId('statusFilter').appendChild(o);
 });
+// --- setup guide: what it does (demo) → pick a project; then a tour of the real screen ---
+// Machine checks stay out of sight unless one fails: a list of green ticks is a screen
+// with nothing to do on it.
+const ONB_STEPS = ['How it works', 'Pick a project'];
+let onbStep = 0, onbData = null, onbScan = null, onbScanDir = '', onbScanErr = '', onbCopies = [];
+let demoScene = 0;
+const onbOpenCards = new Set();   // project roots whose row is expanded
+const CHECK_SVG = '<svg viewBox="0 0 16 16"><path d="M3 8.5l3.2 3.2L13 4.5" fill="none" stroke="currentColor" ' +
+  'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const mark = (c) => '<span class="mk ' + (c.ok ? 'ok' : c.required ? 'bad' : 'warn') + '">' + (c.ok ? CHECK_SVG : '') + '</span>';
+function renderEmptyDetail() {
+  byId('detail').innerHTML = state.length ? '<span class="dim">Select a plan on the left.</span>'
+    : '<div class="welcome"><h2>Hand off the work. Review the result.</h2><p>Describe a change in a plan ' +
+      'file. Claude Code implements and tests it in the background. You come back to a diff.</p>' +
+      '<button class="primary" data-guide="">Get started</button></div>';
+  byId('detail').querySelectorAll('[data-guide]').forEach((el) => el.addEventListener('click', () => openGuide(0)));
+}
+function openGuide(step) {
+  onbStep = step || 0;
+  demoScene = 0;
+  byId('onb').classList.add('open');
+  renderGuide();
+  loadGuide(false);
+}
+function closeGuide() {
+  byId('onb').classList.remove('open');
+  try { sessionStorage.setItem('dash-guide-closed', '1'); } catch {}
+  refresh();
+}
+async function loadGuide(rescan) {
+  const scanUrl = '/api/scan' + (onbScanDir ? '?dir=' + encodeURIComponent(onbScanDir) : '');
+  try {
+    const [o, sc] = await Promise.all([
+      fetch('/api/onboarding').then((r) => r.json()),
+      rescan || !onbScan ? fetch(scanUrl).then((r) => r.json()) : null,
+    ]);
+    onbData = o;
+    if (sc && sc.error) onbScanErr = sc.error;
+    else if (sc) { onbScan = sc; onbScanErr = ''; }
+  } catch (e) { onbScanErr = 'Could not reach the server: ' + e; }
+  if (byId('onb').classList.contains('open')) renderGuide();
+}
+// every copyable string goes through an index, so no text has to survive an attribute
+const cp = (t) => { onbCopies.push(t); return onbCopies.length - 1; };
+const cmdRow = (t) => '<div class="cmdrow"><code>' + esc(t) + '</code><button class="sm" data-cp="' + cp(t) + '">Copy</button></div>';
+function checkHtml(c, projName) {
+  let h = '<div class="ck">' + mark(c) + '<div class="bd"><span class="lb">' + esc(c.label) + '</span>' +
+    (c.required ? '' : '<span class="opt-tag">optional</span>') +
+    (c.detail ? '<span class="dt">' + esc(c.detail) + '</span>' : '');
+  if (!c.ok) {
+    h += '<div class="why">' + esc(c.why || '') + '</div><div class="fix">';
+    if (c.fixCmd) h += cmdRow(c.fixCmd);
+    if (c.fixPrompt) h += '<details class="pr"><summary>Prompt for Claude Code, run in this repo ' +
+      '<button class="sm" data-cp="' + cp(c.fixPrompt) + '">Copy prompt</button></summary>' +
+      '<div class="promptbox">' + esc(c.fixPrompt) + '</div></details>';
+    if (c.action === 'launchers' && projName)
+      h += '<button class="sm" data-lset="' + escA(projName) + '">Set up a launcher by hand</button>';
+    h += '</div>';
+  }
+  return h + '</div></div>';
+}
+function projRow(p, registered) {
+  const open = onbOpenCards.has(p.root);
+  const missing = p.checks.filter((c) => !c.ok);
+  const req = missing.filter((c) => c.required);
+  const stateTxt = p.level === 'green' ? 'Ready'
+    : p.level === 'amber' ? 'Ready · ' + missing.length + ' tip' + (missing.length === 1 ? '' : 's')
+    : 'Needs ' + req.length + ' thing' + (req.length === 1 ? '' : 's');
+  let h = '<div class="prow"><div class="prow-head" data-card="' + escA(p.root) + '">' +
+    '<div style="flex:1;min-width:0"><div class="prow-name">' + esc(p.name) + '</div>' +
+    '<div class="prow-path">' + esc(p.display) + '</div></div>' +
+    '<span class="prow-state ' + p.level + '">' + (p.level === 'green' ? CHECK_SVG.replace('<svg', '<svg width="13" height="13"') : '') +
+    stateTxt + '</span>' +
+    (registered ? '<span class="dim" style="font-size:12px">added</span>'
+      : '<button class="sm ' + (p.level === 'red' ? '' : 'primary') + '" data-add="' + escA(p.root) + '">Add</button>') +
+    '<span class="dim" style="width:12px">' + (open ? '−' : '+') + '</span></div>';
+  if (!open) return h + '</div>';
+  h += '<div class="prow-body">' + p.checks.map((c) => checkHtml(c, registered ? p.name : null)).join('');
+  h += '<div class="prow-actions">';
+  if (!registered)
+    h += '<input data-nm="' + escA(p.root) + '" value="' + escA(p.name) + '" aria-label="project name" title="project name">' +
+      '<input data-cl="' + escA(p.root) + '" value="' + escA(p.client) + '" aria-label="client" title="client — groups projects in the sidebar">';
+  if (p.fixAll)
+    h += '<button class="sm" data-cp="' + cp(p.fixAll) + '" title="one prompt covering every item above that Claude can fix">' +
+      'Copy one prompt that fixes all of it</button>';
+  if (registered) h += '<button class="sm" data-recheck="1">Check again</button>';
+  return h + '</div></div></div>';
+}
+const DEMO = [
+  ['You write a plan', 'A markdown file in the repo that says what to change and how to check it.'],
+  ['Claude does the work', 'In the background: it edits, runs the tests and reviews itself. No prompts, no babysitting.'],
+  ['You review the diff', 'You come back to finished code, ready for you to check and commit.'],
+];
+const demoHtml = () =>
+  '<div class="demo"><div><div class="win s' + demoScene + '"><div class="win-bar">' +
+  ['.plans/rate-limit-login.md', 'rate-limit-login', 'rate-limit-login'][demoScene] +
+  '<span class="st"><i></i>' + ['draft', 'running', 'ready for review'][demoScene] + '</span></div>' +
+  '<div class="scene' + (demoScene === 0 ? ' on' : '') + '">' +
+    '<div class="ln h"># Plan: Rate-limit the login endpoint</div>' +
+    '<div class="ln m">## Goal</div><div class="ln">Five attempts per minute per IP, then 429.</div>' +
+    '<div class="ln m">## Steps</div><div class="ln">1. Add a guard in src/auth/</div>' +
+    '<div class="ln">2. Apply it to POST /login</div><div class="ln">3. Test the 6th attempt fails</div></div>' +
+  '<div class="scene' + (demoScene === 1 ? ' on' : '') + '">' +
+    '<div class="ln m">reading the plan</div><div class="ln">create  src/auth/rate-limit.guard.ts</div>' +
+    '<div class="ln">edit    src/auth/login.controller.ts</div><div class="ln">create  test/auth/rate-limit.spec.ts</div>' +
+    '<div class="ln">run     pnpm test <span class="pass">48 passed</span></div>' +
+    '<div class="ln">review  <span class="pass">no findings</span></div></div>' +
+  '<div class="scene' + (demoScene === 2 ? ' on' : '') + '">' +
+    '<div class="ln m">src/auth/login.controller.ts</div>' +
+    '<div class="ln del">-  @Post("login")</div><div class="ln add">+  @Post("login") @UseGuards(RateLimitGuard)</div>' +
+    '<div class="ln m">src/auth/rate-limit.guard.ts  (new)</div>' +
+    '<div class="ln add">+  const LIMIT = 5, WINDOW_MS = 60_000;</div>' +
+    '<div class="ln add">+  if (hits(ip) > LIMIT) throw new TooManyRequests();</div></div>' +
+  '</div><div class="demo-nav"><button class="sm" data-scene="' + (demoScene + 2) % 3 + '"' +
+    (demoScene === 0 ? ' disabled' : '') + ' aria-label="previous">‹</button>' + (demoScene + 1) + ' of 3' +
+    (demoScene < 2 ? '<button class="sm nx" data-scene="' + (demoScene + 1) + '">Next: ' +
+      DEMO[demoScene + 1][0] + ' ›</button>' : '') + '</div>' +
+  '</div><div class="caps">' + DEMO.map((d, i) => '<button data-scene="' + i + '" class="' +
+    (i === demoScene ? 'on' : '') + '"><b>' + (i + 1) + '. ' + d[0] + '</b><span>' + d[1] + '</span></button>').join('') +
+  '</div></div>';
+function paintDemo() {
+  const host = byId('demohost');
+  if (!host) return;
+  host.innerHTML = demoHtml();
+  host.querySelectorAll('[data-scene]').forEach((el) => el.addEventListener('click', () => {
+    demoScene = +el.dataset.scene; paintDemo();
+  }));
+}
+// the reader moves the demo on — an autoplay kept turning the page before it was read
+function startDemo() { paintDemo(); }
+function renderGuide() {
+  onbCopies = [];
+  byId('onbsteps').innerHTML = ONB_STEPS.map((t, i) => '<span data-step="' + i + '" class="' +
+    (i === onbStep ? 'on' : i < onbStep ? 'done' : '') + '"><b>' + (i + 1) + '</b>' + t + '</span>').join('');
+  const d = onbData;
+  const regd = d ? d.projects : [];
+  let h = '', next = 'Continue', nextOff = false;
+  if (onbStep === 0) {
+    h += '<h2>Hand off the work. Review the result.</h2><p class="lead">Plans runs your Claude Code setup ' +
+      'without you at the keyboard. You write down what to change, it does the work in the background, ' +
+      'and you come back to code that is ready for review.</p><div id="demohost"></div>';
+    const bad = d ? d.system.filter((c) => !c.ok) : [];
+    if (bad.length) {
+      const hard = bad.some((c) => c.required);
+      h += '<div class="alert' + (hard ? '' : ' soft') + '"><p><b>' +
+        (hard ? 'Fix this before your first run' : 'Optional, but worth doing') + '</b></p>' +
+        bad.map((c) => checkHtml(c)).join('') + '</div>';
+    }
+    next = 'Get started';
+  } else if (onbStep === 1) {
+    h += '<h2>Which repo should Claude work in?</h2><p class="lead">These are the repos found next to this ' +
+      'one. <b>Ready</b> ones can run plans now. For the others, open the row: each missing piece comes ' +
+      'with a prompt you paste into Claude Code, and it sets it up for you.</p>';
+    if (regd.length) h += '<h3>Added</h3>' + regd.map((p) => projRow(p, true)).join('');
+    h += '<h3>Found in ' + (onbScan ? esc(onbScan.roots.join(', ')) : '…') + '</h3>';
+    if (onbScanErr) h += '<p style="color:var(--bad)">' + esc(onbScanErr) + '</p>';
+    if (!onbScan) h += '<p class="dim">Looking for repos…</p>';
+    else if (!onbScan.candidates.length) h += '<p class="dim">Nothing new here.</p>';
+    else h += onbScan.candidates.map((p) => projRow(p, false)).join('');
+    h += '<div class="scanrow"><input id="scandir" placeholder="Look somewhere else, e.g. ~/code" value="' +
+      escA(onbScanDir) + '"><button class="sm" id="scanbtn">Look</button></div>';
+    nextOff = !regd.length;
+    next = 'Show me around';
+  }
+  byId('onbbody').innerHTML = h;
+  byId('onbback').style.visibility = onbStep ? '' : 'hidden';
+  byId('onbnext').textContent = next;
+  byId('onbnext').disabled = nextOff;
+  byId('onbnext').title = nextOff ? 'Add a repo first' : '';
+  if (onbStep === 0) startDemo();
+  const B = byId('onbbody');
+  B.querySelectorAll('[data-cp]').forEach((el) => el.addEventListener('click', async (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const was = el.textContent, ok = await copyText(onbCopies[+el.dataset.cp]);
+    el.textContent = ok ? 'Copied' : 'Copy failed — select it by hand';
+    setTimeout(() => (el.textContent = was), 1600);
+  }));
+  B.querySelectorAll('[data-card]').forEach((el) => el.addEventListener('click', () => {
+    const k = el.dataset.card;
+    onbOpenCards.has(k) ? onbOpenCards.delete(k) : onbOpenCards.add(k);
+    renderGuide();
+  }));
+  B.querySelectorAll('[data-add]').forEach((el) => el.addEventListener('click', async (e) => {
+    e.stopPropagation();   // the button sits in the row header, which toggles on click
+    const root = el.dataset.add;
+    const cand = onbScan.candidates.find((c) => c.root === root);
+    // a collapsed row has no inputs — add it under the suggested name and client
+    const val = (attr, dflt) => {
+      const inp = [...B.querySelectorAll('[' + attr + ']')].find((x) => x.getAttribute(attr) === root);
+      return inp ? inp.value.trim() : dflt;
+    };
+    el.disabled = true; el.textContent = 'Adding…';
+    const r = await (await fetch('/api/add-project', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root, name: val('data-nm', cand.name), client: val('data-cl', cand.client),
+        plansDir: cand.plansDir }) })).json();
+    if (!r.ok) { alert(r.output); el.disabled = false; el.textContent = 'Add'; return; }
+    onbScan.candidates = onbScan.candidates.filter((c) => c.root !== root);
+    await loadGuide(false);
+    refresh();
+  }));
+  B.querySelectorAll('[data-lset]').forEach((el) => el.addEventListener('click', () => {
+    byId('onb').classList.remove('open');
+    openLauncherSetup(el.dataset.lset, () => { closeLog(); openGuide(onbStep); });
+  }));
+  B.querySelectorAll('[data-recheck]').forEach((el) => el.addEventListener('click', () => loadGuide(true)));
+  const sb = byId('scanbtn');
+  if (sb) {
+    const go = () => { onbScanDir = byId('scandir').value.trim(); onbScan = null; renderGuide(); loadGuide(true); };
+    sb.addEventListener('click', go);
+    byId('scandir').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  }
+}
+byId('onbsteps').addEventListener('click', (e) => {
+  const s = e.target.closest('[data-step]');
+  if (s) { onbStep = +s.dataset.step; renderGuide(); }
+});
+byId('onbback').addEventListener('click', () => { onbStep = Math.max(0, onbStep - 1); renderGuide(); });
+byId('onbnext').addEventListener('click', () => {
+  if (onbStep === ONB_STEPS.length - 1) { closeGuide(); return startTour(); }
+  onbStep++; renderGuide();
+});
+byId('onbskip').addEventListener('click', closeGuide);
+byId('onb').addEventListener('click', (e) => { if (e.target === byId('onb')) closeGuide(); });
+byId('guidebtn').addEventListener('click', () => openGuide(0));
+// --- tour: after the guide, spotlight the real screen one region at a time ---
+// What to do next stays the user's call; the tour only says what each part is for.
+const TOUR = [
+  { el: () => document.querySelector('aside'), title: 'Your plans',
+    body: 'Every .md file in each repo’s plans folder, grouped by client and project. Click one to open it. ' +
+      'Plans that are running, or finished and waiting for your review, pin to the top of this list.' },
+  { el: () => byId('detail'), title: 'The open plan',
+    body: 'A plain-language summary, its status and tags, the controls to launch it, and the full plan text. ' +
+      'A launched plan runs in the background; you can close the tab.' },
+  { el: () => document.querySelector('.launchbar'), title: 'Run several at once',
+    body: 'Tick plans in the list and they queue down here. One press starts them all.' },
+  { el: () => [byId('guidebtn'), byId('settingsbtn')], title: 'Guide and Settings',
+    body: 'Guide brings back the walkthrough and the list of repos found on this machine. ' +
+      'Settings is where you rename projects, change folders and edit launchers.' },
+];
+let tourStep = -1;
+function startTour() {
+  // open a plan first, so the plan pane shows something real rather than "Select a plan"
+  if (!selected) {
+    const first = plans.find((p) => !p.archived);
+    if (first) { selected = first.key; renderList(); renderDetail(true); }
+  }
+  tourStep = 0;
+  byId('tour').classList.add('open');
+  setTimeout(paintTour, 150);
+}
+function endTour() {
+  tourStep = -1;
+  byId('tour').classList.remove('open');
+}
+function paintTour() {
+  if (tourStep < 0) return;
+  const s = TOUR[tourStep];
+  const els = [].concat(s.el()).filter(Boolean);
+  if (!els.length) return endTour();
+  const rs = els.map((e) => e.getBoundingClientRect());
+  const pad = 6;
+  const r = { left: Math.min(...rs.map((x) => x.left)) - pad, top: Math.min(...rs.map((x) => x.top)) - pad,
+              right: Math.max(...rs.map((x) => x.right)) + pad, bottom: Math.max(...rs.map((x) => x.bottom)) + pad };
+  const hole = byId('tourhole');
+  hole.style.left = Math.max(0, r.left) + 'px'; hole.style.top = Math.max(0, r.top) + 'px';
+  hole.style.width = (Math.min(innerWidth, r.right) - Math.max(0, r.left)) + 'px';
+  hole.style.height = (Math.min(innerHeight, r.bottom) - Math.max(0, r.top)) + 'px';
+  const pop = byId('tourpop');
+  pop.innerHTML = '<div class="tp-count">' + (tourStep + 1) + ' of ' + TOUR.length + '</div><b>' + s.title +
+    '</b><p>' + esc(s.body) + '</p><div class="tp-foot"><button class="linkbtn" id="tourskip">' +
+    (tourStep === TOUR.length - 1 ? '' : 'Skip tour') + '</button><span style="flex:1"></span>' +
+    (tourStep ? '<button class="sm" id="tourprev">Back</button>' : '') +
+    '<button class="sm primary" id="tournext">' + (tourStep === TOUR.length - 1 ? 'Done' : 'Next') + '</button></div>';
+  // beside the region if it fits (right, left, below, above), else inside its top-left corner
+  const pw = pop.offsetWidth, ph = pop.offsetHeight, gap = 14, W = innerWidth, H = innerHeight;
+  const spots = [
+    [r.right + gap, r.top], [r.left - gap - pw, r.top],
+    [r.right - pw, r.bottom + gap], [r.right - pw, r.top - gap - ph],
+  ];
+  const fits = ([x, y]) => x >= 8 && x + pw <= W - 8 && y + ph <= H - 8 && y >= 8;
+  let [x, y] = spots.find(fits) || [r.left + 24, r.top + 24];
+  x = Math.min(Math.max(8, x), W - pw - 8); y = Math.min(Math.max(8, y), H - ph - 8);
+  pop.style.left = x + 'px'; pop.style.top = y + 'px';
+  byId('tourskip').addEventListener('click', endTour);
+  byId('tournext').addEventListener('click', () => tourGo(1));
+  if (byId('tourprev')) byId('tourprev').addEventListener('click', () => tourGo(-1));
+  byId('tournext').focus();
+}
+function tourGo(d) {
+  const n = tourStep + d;
+  if (n >= TOUR.length) return endTour();
+  tourStep = Math.max(0, n);
+  paintTour();
+}
+addEventListener('resize', paintTour);
 let lastStateRaw = '', firstPaint = false, ticking = false;
 const connMsg = (m) => {
   const el = byId('connmsg');
@@ -1767,6 +2475,12 @@ async function refreshOnce() {
       && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
     renderList();
     if (selected && !typing) renderDetail(false);
+    else if (!selected) renderEmptyDetail();
+    if (!firstPaint && !state.length && !byId('onb').classList.contains('open')) {
+      let closed = null;
+      try { closed = sessionStorage.getItem('dash-guide-closed'); } catch {}
+      if (!closed) openGuide(0);
+    }
     renderBar();
     lastStateRaw = raw;   // only once a full repaint has actually landed
     firstPaint = true;
@@ -1778,6 +2492,11 @@ selected = new URLSearchParams(location.search).get('sel') || null;
 byId('side').innerHTML = '<div class="dim" style="padding:14px">loading plans…</div>';
 refresh(); setInterval(refresh, 5000);
 if (new URLSearchParams(location.search).get('settings')) openSettings();
+if (new URLSearchParams(location.search).get('tour')) {
+  const tourWhenPainted = () => (firstPaint ? startTour() : setTimeout(tourWhenPainted, 200));
+  tourWhenPainted();
+}
+if (new URLSearchParams(location.search).get('guide')) openGuide(+new URLSearchParams(location.search).get('guide') - 1 || 0);
 </script>`;
 
 server.on('error', (e) => {

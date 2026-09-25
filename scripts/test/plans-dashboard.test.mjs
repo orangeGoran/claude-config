@@ -153,3 +153,51 @@ test('archives a plan and puts it back', async () => {
   assert.equal(existsSync(path.join(plansDir, 'demo-plan.md')), true);
   assert.equal((await onlyPlan()).archived, undefined);
 });
+
+test('scan suggests unregistered repos with a readiness level and a fix for each gap', async () => {
+  const ws = path.join(tmp, 'ws');
+  const ready = path.join(ws, 'acme', 'ready-repo');           // grouped → client "Acme"
+  for (const d of ['.git', '.plans', '.claude/scripts', '.claude/skills/implement'])
+    mkdirSync(path.join(ready, d), { recursive: true });
+  writeFileSync(path.join(ready, '.plans', 'first.md'), '# Plan: First\n');
+  writeFileSync(path.join(ready, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(npm test)'] } }));
+  writeFileSync(path.join(ready, '.claude', 'scripts', 'run-skill.sh'), '#!/usr/bin/env bash\n');
+  writeFileSync(path.join(ready, '.claude', 'skills', 'implement', 'SKILL.md'), '---\nname: implement\n---\n');
+  writeFileSync(path.join(ready, 'CLAUDE.md'), '# Rules\n');
+  const bare = path.join(ws, 'bare-repo');
+  mkdirSync(path.join(bare, '.git'), { recursive: true });
+  mkdirSync(path.join(bare, 'node_modules', 'dep', '.git'), { recursive: true }); // never descended into
+
+  const scan = await (await get('/api/scan?dir=' + encodeURIComponent(ws))).json();
+  const byName = Object.fromEntries(scan.candidates.map((c) => [c.name, c]));
+  assert.deepEqual(Object.keys(byName).sort(), ['bare-repo', 'ready-repo']);
+  assert.equal(byName['ready-repo'].level, 'green');
+  assert.equal(byName['ready-repo'].client, 'Acme');
+  const b = byName['bare-repo'];
+  assert.equal(b.level, 'red');
+  const failing = b.checks.filter((c) => !c.ok).map((c) => c.id).sort();
+  assert.deepEqual(failing, ['allow', 'claudemd', 'launch', 'plans', 'plansDir', 'skills']);
+  assert.ok(b.checks.filter((c) => !c.ok).every((c) => c.fixPrompt || c.fixCmd), 'every gap has a fix');
+  assert.match(b.fixAll, /^Get this repository ready/);
+
+  // the already-registered fixture repo is not suggested again
+  const again = await (await get('/api/scan?dir=' + encodeURIComponent(tmp))).json();
+  assert.ok(!again.candidates.some((c) => c.root === repo));
+  assert.equal((await get('/api/scan?dir=' + encodeURIComponent(path.join(tmp, 'nope')))).status, 400);
+});
+
+test('adding a project keeps existing entries and registers the wrapper launcher', async () => {
+  const ready = path.join(tmp, 'ws', 'acme', 'ready-repo');
+  const r = await post('/api/add-project', { root: ready, name: 'ready-repo', client: 'Acme', plansDir: path.join(ready, '.plans') });
+  assert.equal(r.ok, true);
+  assert.equal((await post('/api/add-project', { root: ready, name: 'other' })).ok, false, 'same root twice');
+  assert.equal((await post('/api/add-project', { root: path.join(tmp, 'ws', 'bare-repo'), name: 'demo' })).ok, false, 'name taken');
+
+  const reg = JSON.parse(readFileSync(path.join(home, '.claude', 'pipeline-projects.json'), 'utf8')).projects;
+  assert.deepEqual(reg.map((e) => e.name), ['demo', 'ready-repo']);
+  assert.deepEqual(reg[1].launchers, [{ label: 'Implement', cmd: 'bash .claude/scripts/run-skill.sh implement {plan}' }]);
+
+  const s = await state();
+  assert.equal(s.find((p) => p.name === 'ready-repo').setupLevel, 'green');
+  assert.equal(s.find((p) => p.name === 'demo').setupLevel, 'red');  // fixture has no .git, no launcher
+});
