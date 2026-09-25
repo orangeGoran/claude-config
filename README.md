@@ -11,6 +11,7 @@ Version-controlled global Claude Code configuration. Symlinked into `~/.claude/`
   time, following one request through the code, pausing on a question after each
 - `scripts/plans-dashboard.mjs` — local web dashboard for plan files across projects
 - `scripts/launcher-template.sh` — starting point for a repo's dashboard launcher
+- `scripts/worktree-run.sh` — run a plan in its own git worktree, so plans can run in parallel
 
 ## Setup on a new machine
 
@@ -105,7 +106,9 @@ Two modes, picked automatically per project:
 - **Pipeline** — the repo has `.claude/scripts/auto-pipeline.sh`. The dashboard delegates
   to it and reads back its reports, worktrees and lanes. Nothing to configure.
 - **Generic** — everything else. You define one or more launcher commands; the dashboard
-  runs the chosen one with `bash -lc`, captures its output, and tracks it to completion.
+  runs the chosen one with `bash -lc` **in the repo root itself — no worktree** — captures
+  its output, and tracks it to completion. A second run of the same plan is refused while
+  one is live; two different plans launched at once would edit the same tree.
   `{plan}`, `{root}` and `{slug}` are substituted. The ⚙ setup dialog pre-fills commands
   from the repo's own `.claude/skills` and `.claude/scripts`.
 
@@ -137,6 +140,47 @@ ids behind and the panel stays empty; and sessions you ran by hand in that repo 
 appear, because claude stores transcripts per working directory and nothing records which
 plan one was about. Pipeline projects give each plan its own worktree, so their transcript
 folder is already plan-specific and is listed whole.
+
+### Running several plans at once
+
+Generic launchers run in the repo root, so two plans launched together would edit the same
+files. [`scripts/worktree-run.sh`](scripts/worktree-run.sh) gives each plan its own git
+worktree and branch, which is what makes a batch safe: tick several plans, hit ▶, and each
+one gets an isolated tree.
+
+Point the project's launcher at it and the dashboard needs no other change:
+
+```json
+{
+  "label": "Parallel: worktree → implement → review",
+  "cmd": "bash ~/Workspace/claude-config/scripts/worktree-run.sh --repo {root} --plan {plan} --prompt \"/implement %PLAN%\""
+}
+```
+
+Use `%PLAN%` inside `--prompt`, not `{plan}` — the dashboard substitutes `{plan}` in the
+command before the script ever runs.
+
+Per plan it creates `<parent-of-repo>/worktrees/<slug>` on branch `auto/<slug>`, forked from
+the repo's **current** branch (`--base` overrides), initialises submodules, copies gitignored
+local files in (`--copy`, default `.env` — often the credentials a private package feed
+needs), marks the new path trusted in `~/.claude.json` so the headless run honours your
+allowlist, runs `--setup` if the repo needs an install step, then runs two phases: your
+prompt, then `/code-review high --fix` with a re-test (`--review none` to skip). The work is
+left uncommitted in the worktree for you to review.
+
+One prerequisite catches people out: **a worktree is a checkout of the base branch, not a
+copy of your working tree.** Anything the run needs — the plan, and every skill the prompt
+invokes — must be committed there first. The script checks both and refuses rather than
+launching a run that fails confusingly.
+
+Clean up after merging:
+
+```bash
+scripts/worktree-run.sh --repo <repo> --cleanup <slug>
+```
+
+It deinitialises submodules first (they block `git worktree remove`) and refuses to discard
+uncommitted work or delete an unmerged branch.
 
 ### Running it at login (macOS)
 

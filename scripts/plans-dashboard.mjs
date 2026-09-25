@@ -826,13 +826,16 @@ const PAGE = /* html */ `<!doctype html>
   h2.fname { margin:0; font:600 17px/1.4 ui-monospace,monospace; word-break:break-all; }
   .subtitle { color:var(--dim); margin:4px 0 0; }
   .badges { display:flex; gap:6px; margin:12px 0; flex-wrap:wrap; }
-  .summary { padding:12px 15px; background:var(--card); border:1px solid var(--line);
-             border-radius:10px; margin:12px 0; }
-  .metabox, .modes { display:flex; gap:12px; margin:12px 0; padding:11px 14px; background:var(--card);
-           border:1px solid var(--line); border-radius:10px; align-items:center; flex-wrap:wrap; }
+  .summary { padding:10px 13px; background:var(--card); border:1px solid var(--line);
+             border-radius:10px; margin:12px 0; max-width:820px; font-size:13px; line-height:1.55; }
+  .metabox, .modes { display:flex; gap:9px; margin:8px 0; padding:6px 11px; background:var(--card);
+           border:1px solid var(--line); border-radius:9px; align-items:center; flex-wrap:wrap;
+           max-width:820px; font-size:12px; }
   .metabox select, .metabox input { background:var(--input); color:var(--fg); border:1px solid var(--line);
-           border-radius:7px; padding:5px 9px; font-size:13px; }
-  .modes label { display:flex; gap:6px; align-items:center; color:var(--dim); cursor:pointer; }
+           border-radius:6px; padding:3px 7px; font-size:12px; }
+  .metabox button, .modes button { padding:4px 9px; font-size:12px; border-radius:6px; }
+  .modes label { display:flex; gap:5px; align-items:center; color:var(--dim); cursor:pointer; }
+  .modes input[type=radio] { margin:0; }
   .btns { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
   button { background:var(--btn); color:var(--fg); border:1px solid var(--line); border-radius:8px;
            padding:7px 13px; cursor:pointer; font-size:13px; }

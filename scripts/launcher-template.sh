@@ -14,6 +14,13 @@
 # never happened ("git status failed", "the test suite is missing"). Rules passed
 # on the command line via --allowedTools are honoured, so this script reads the
 # repo's own settings files and replays them. One source of truth, both modes.
+#
+# It runs in the repo itself, NOT a worktree. The dashboard spawns generic
+# launchers with the repo root as their working directory, so a run edits the
+# files you have open in your editor. It refuses a second run of the same plan
+# while one is live, but nothing stops two different plans running at once — in
+# one tree they would edit each other's work. Launch one at a time, or add
+# worktree handling here.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
