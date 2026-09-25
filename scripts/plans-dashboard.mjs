@@ -37,6 +37,7 @@ const REG_FILE = path.join(HOME, '.claude', 'pipeline-projects.json');
 const CENTRAL = path.join(HOME, '.claude', 'pipeline-dashboard');
 const PORT = +(process.env.DASH_PORT || 4899);
 const NO_SUMMARY = !!process.env.DASH_NO_SUMMARY;
+const SUMMARY_MODEL = process.env.DASH_SUMMARY_MODEL || 'haiku';
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
   console.log(VERSION);
@@ -59,6 +60,9 @@ Environment
   DASH_NO_SUMMARY=1   do not call the claude CLI to summarize plans. Summaries
                       send plan text to the Anthropic API — set this for repos
                       whose contents must not leave the machine.
+  DASH_SUMMARY_MODEL=<m>
+                      model the claude CLI uses for summaries (default haiku),
+                      e.g. sonnet or claude-opus-5-5
 
 Files
   ${REG_FILE}
@@ -346,7 +350,7 @@ const explain = (proj, slug) =>
     const prompt =
       'Summarize this implementation plan in 3-5 plain-English sentences for someone completely new to the project. ' +
       'No jargon, no file paths. Say WHAT will be built and WHY it matters. Reply with the summary only.\n\n' + content;
-    execFile('claude', ['-p', prompt, '--model', 'haiku'],
+    execFile('claude', ['-p', prompt, '--model', SUMMARY_MODEL],
       { env: ENV, timeout: 180000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
         if (err) return reject(err);
         const s = loadSummaries(proj);

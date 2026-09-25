@@ -218,6 +218,7 @@ but `plans.localhost` is the smoother option. Safari resolves neither automatica
 | `DASH_PORT` | port to listen on (default `4899`) |
 | `DASH_NO_OPEN=1` | do not open a browser at startup |
 | `DASH_NO_SUMMARY=1` | do not generate plain-language plan summaries |
+| `DASH_SUMMARY_MODEL` | model the `claude` CLI uses for summaries (default `haiku`; e.g. `claude-opus-5-5`) |
 
 Summaries are produced by calling the `claude` CLI, which **sends plan text to the
 Anthropic API**. Set `DASH_NO_SUMMARY=1` for repos whose contents must not leave the machine.
