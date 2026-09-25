@@ -178,13 +178,16 @@ uncommitted work or delete an unmerged branch.
 scripts/setup-macos.sh    # asks for a domain; Enter keeps plans.test
 ```
 
+`scripts/setup.sh` runs this for you when you pick the dashboard part.
+
 Then open **https://plans.test**. The script installs [Caddy](https://caddyserver.com)
 if missing, a launchd agent that keeps the dashboard running on `127.0.0.1:4899`, and a
 Caddy site that serves it over HTTPS and drops requests from other machines. It adds the
 domain to `/etc/hosts` and trusts Caddy's certificate (both ask for your password). Re-run
-it to change the domain. HTTPS is what lets the browser use the clipboard and
-notifications; if Firefox still warns, set `security.enterprise_roots.enabled` in
-`about:config`.
+it to change the domain or port. A re-run with unchanged settings leaves the running
+dashboard and Caddy alone. When a restart is needed, plan runs already in progress keep
+going. HTTPS is what lets the browser use the clipboard and notifications; if Firefox
+still warns, set `security.enterprise_roots.enabled` in `about:config`.
 
 - Restart after editing the dashboard: `launchctl kickstart -k gui/$(id -u)/com.plans-dashboard`
 - Logs: `~/.claude/pipeline-dashboard/server.log`, `$(brew --prefix)/var/log/caddy.log`

@@ -61,30 +61,54 @@ step "Caddy"
 if brew list caddy >/dev/null 2>&1; then echo "already installed"; else brew install caddy; fi
 
 step "Dashboard login agent (port $PORT)"
+JOB="gui/$(id -u)/com.plans-dashboard"
+NEW_PLIST="$(mktemp)"
+trap 'rm -f "$NEW_PLIST"' EXIT
 sed -e "s|__NODE__|$NODE|" \
     -e "s|__SCRIPT__|$HERE/plans-dashboard.mjs|" \
     -e "s|__LOG__|$STATE/server.log|" \
-    "$HERE/launchd/com.plans-dashboard.plist.template" > "$PLIST"
-plutil -replace EnvironmentVariables.DASH_PORT -string "$PORT" "$PLIST"
-# bootout returns before the old process is gone; bootstrapping too early fails.
-if launchctl bootout "gui/$(id -u)/com.plans-dashboard" 2>/dev/null; then
-  for _ in $(seq 50); do
-    launchctl print "gui/$(id -u)/com.plans-dashboard" >/dev/null 2>&1 || break
-    sleep 0.2
+    "$HERE/launchd/com.plans-dashboard.plist.template" > "$NEW_PLIST"
+plutil -replace EnvironmentVariables.DASH_PORT -string "$PORT" "$NEW_PLIST"
+if cmp -s "$NEW_PLIST" "$PLIST" && launchctl print "$JOB" >/dev/null 2>&1; then
+  # a re-run with the same settings leaves the running dashboard alone
+  echo "already running with these settings — left untouched"
+else
+  cp "$NEW_PLIST" "$PLIST"
+  # bootout returns before the old process is gone; bootstrapping too early fails.
+  # Plan runs it launched are detached into their own process group and survive this.
+  if launchctl bootout "$JOB" 2>/dev/null; then
+    for _ in $(seq 50); do
+      launchctl print "$JOB" >/dev/null 2>&1 || break
+      sleep 0.2
+    done
+  fi
+  for _ in $(seq 10); do
+    launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null && break
+    sleep 0.5
   done
+  launchctl print "$JOB" >/dev/null 2>&1 \
+    || die "the dashboard did not start again. Start it with: launchctl bootstrap gui/$(id -u) $PLIST"
+  echo "installed $PLIST"
 fi
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "installed $PLIST"
 
 step "Caddy site for $DOMAIN"
+CHANGED=0
+NEW_SITE="$(mktemp)"
+trap 'rm -f "$NEW_PLIST" "$NEW_SITE"' EXIT
 sed -e "s|__DOMAIN__|$DOMAIN|" -e "s|__PORT__|$PORT|" \
-    "$HERE/caddy/plans.caddy.template" > "$SITE"
+    "$HERE/caddy/plans.caddy.template" > "$NEW_SITE"
+cmp -s "$NEW_SITE" "$SITE" || { cp "$NEW_SITE" "$SITE"; CHANGED=1; }
 touch "$CADDYFILE"
-grep -qxF "$IMPORT" "$CADDYFILE" || printf '%s\n' "$IMPORT" >> "$CADDYFILE"
+grep -qxF "$IMPORT" "$CADDYFILE" || { printf '%s\n' "$IMPORT" >> "$CADDYFILE"; CHANGED=1; }
 caddy validate --config "$CADDYFILE" >/dev/null 2>&1 \
   || { caddy validate --config "$CADDYFILE"; die "invalid Caddyfile: $CADDYFILE"; }
-brew services restart caddy >/dev/null
-echo "$CADDYFILE imports $SITE"
+# restart only when the config changed or Caddy is down — a restart drops the site briefly
+if [ "$CHANGED" = 1 ] || ! curl -s -o /dev/null http://localhost:2019/config/; then
+  brew services restart caddy >/dev/null
+  echo "$CADDYFILE imports $SITE — Caddy restarted"
+else
+  echo "already serving $DOMAIN — Caddy left running"
+fi
 
 step "/etc/hosts"
 if awk -v d="$DOMAIN" '$1 == "127.0.0.1" { for (i = 2; i <= NF; i++) if ($i == d) f = 1 }
