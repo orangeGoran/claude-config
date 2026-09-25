@@ -1,30 +1,54 @@
 # claude-config
 
-Version-controlled global Claude Code configuration. Symlinked into `~/.claude/`.
+Two things in one repo:
+
+- **Plans dashboard** — a local web page that lists the plan files of every project you
+  register, shows which are running, and launches them, each in its own git worktree so
+  plans run in parallel. See [Plans dashboard](#plans-dashboard).
+- **Global Claude Code configuration** — standing rules and skills, version-controlled
+  and symlinked into `~/.claude/`.
 
 ## Contents
 
-- `CLAUDE.md` — global standing rules loaded in every project
-- `skills/commit-message/` — `/commit-message`: copy-paste Conventional Commits message
-- `skills/pr/` — `/pr`: create a PR against a target branch
-- `skills/hand-review/` — `/hand-review`: walk a human through a diff one stop at a
-  time, following one request through the code, pausing on a question after each
-- `scripts/plans-dashboard.mjs` — local web dashboard for plan files across projects
-- `scripts/launcher-template.sh` — starting point for a repo's dashboard launcher
-- `scripts/worktree-run.sh` — run a plan in its own git worktree, so plans can run in parallel
-- `scripts/setup-macos.sh` — run the dashboard at login, served at `https://plans.test`
+### Skills
+
+Each skill is independent. Symlink only the ones you want (see
+[Setup](#setup-on-a-new-machine)).
+
+| Skill | Command | What it does |
+| --- | --- | --- |
+| [`commit-message`](skills/commit-message/SKILL.md) | `/commit-message` | Writes a copy-paste-ready Conventional Commits message for the current changes. Never stages or commits. |
+| [`pr`](skills/pr/SKILL.md) | `/pr [target-branch]` | Creates a pull request from the current branch against a target branch. Only runs when you call it. |
+| [`hand-review`](skills/hand-review/SKILL.md) | `/hand-review [target]` | Walks you through a diff one stop at a time, following one request through the code, and pauses for your answer after each. |
+
+### Everything else
+
+| Path | What it is |
+| --- | --- |
+| `CLAUDE.md` | Global standing rules, loaded in every project |
+| `scripts/setup-claude.sh` | Links `CLAUDE.md` and your chosen skills into `~/.claude/`, and optionally keeps session history |
+| `scripts/plans-dashboard.mjs` | The plans dashboard server |
+| `scripts/launcher-template.sh` | Starting point for a repo's dashboard launcher |
+| `scripts/worktree-run.sh` | Runs a plan in its own git worktree, so plans can run in parallel |
+| `scripts/setup-macos.sh` | Runs the dashboard at login, served at `https://plans.test` |
 
 ## Setup on a new machine
 
 ```bash
 git clone git@github.com:orangeGoran/claude-config.git ~/Workspace/claude-config
 cd ~/Workspace/claude-config
-ln -sf "$PWD/CLAUDE.md" ~/.claude/CLAUDE.md
-mkdir -p ~/.claude/skills
-ln -sfn "$PWD/skills/commit-message" ~/.claude/skills/commit-message
-ln -sfn "$PWD/skills/pr" ~/.claude/skills/pr
-ln -sfn "$PWD/skills/hand-review" ~/.claude/skills/hand-review
+scripts/setup-claude.sh         # asks before each step; --yes does them all
 ```
+
+The script asks before each step:
+
+- symlink `CLAUDE.md` into `~/.claude/`
+- symlink each skill into `~/.claude/skills/`, one question per skill
+- set `cleanupPeriodDays` to `99999` in `~/.claude/settings.json`, so Claude Code keeps
+  session transcripts instead of deleting them after 30 days
+
+A real file already in the way is moved aside to `<name>.bak-<timestamp>`, and
+`settings.json` is merged, never replaced.
 
 Project-level skills with the same name take precedence over these global ones.
 
