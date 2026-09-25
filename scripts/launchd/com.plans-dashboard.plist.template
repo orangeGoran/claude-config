@@ -3,21 +3,21 @@
 <!--
   Template — not usable as-is. The three __PLACEHOLDERS__ below must be replaced
   with absolute paths, because launchd resolves nothing itself: no ~, no $HOME,
-  no PATH lookup. See "Running it at login" in the README for the one command
-  that fills them in and installs the result.
+  no PATH lookup. scripts/setup-macos.sh fills them in and installs the result
+  (see docs/plans-dashboard.md).
 
   Runs the dashboard at login and restarts it if it crashes.
 
   Deliberately not run under node’s watch flag: it restarts the server on every
   edit to the script, which kills in-flight requests and leaves the browser showing
-  an empty dashboard. Restart by hand after editing (bootout, then bootstrap).
+  an empty dashboard. Restart by hand after editing (launchctl kickstart -k).
 
   __NODE__    absolute path to the node binary   (command -v node)
   __SCRIPT__  absolute path to plans-dashboard.mjs
   __LOG__     absolute path to the log file, in a directory that already exists
 
   If you manage node with nvm, __NODE__ points into a versioned directory —
-  after switching node versions, regenerate this file and re-bootstrap.
+  after switching node versions, re-run scripts/setup-macos.sh.
 -->
 <plist version="1.0">
 <dict>

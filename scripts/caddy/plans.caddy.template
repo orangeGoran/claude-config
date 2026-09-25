@@ -1,0 +1,15 @@
+# Template — scripts/setup-macos.sh fills __DOMAIN__ and __PORT__ and imports the
+# result from the main Caddyfile. See docs/plans-dashboard.md.
+#
+# An unprivileged Caddy can bind 80/443 on macOS only on 0.0.0.0, so it is reachable
+# from the LAN. The dashboard's own loopback check sees every proxied request as
+# coming from Caddy on 127.0.0.1, so the check has to happen here instead.
+
+__DOMAIN__ {
+	tls internal
+
+	@remote not remote_ip 127.0.0.1 ::1
+	abort @remote
+
+	reverse_proxy 127.0.0.1:__PORT__
+}

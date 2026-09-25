@@ -8,7 +8,7 @@
 //                     "plansDir": "<any folder with *.md plans>",
 //                     "launchers": [ { "label": "...", "cmd": "... {plan} ..." } ] } ] }
 // See pipeline-projects.example.json next to this file, `--help` for the options,
-// and the README for the full field reference.
+// and docs/plans-dashboard.md for the full field reference.
 //
 // Two flavors per project, auto-detected:
 //  - auto-pipeline: <root>/.claude/scripts/auto-pipeline.sh exists → full solver-style
