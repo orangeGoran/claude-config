@@ -275,14 +275,26 @@ Then these parts, in this order, and nothing else:
 1. **What happens.** Three to six short sentences. What the request is doing here, opening on
    the concrete trace of Rule 2 — real call, real values, what comes back.
 2. **The lines that actually run.** A handful — 3 to 10. Not the file. If the file is 200 lines
-   and 6 of them execute on this path, show the 6 and say so.
+   and 6 of them execute on this path, show the 6 and say so. **Put a clickable link to the
+   first shown line directly above the code block** — the reviewer should jump to the code in
+   one click, not search for it. Code blocks are not clickable, so the link must be outside
+   the block. Use the host's link form: in an IDE extension a markdown link with a line anchor,
+   `[rollback.ts:42](src/rollback.ts#L42)` (a range as `#L42-L51`); in a plain terminal,
+   `src/rollback.ts:42`. If the lines come from two places, one link above each snippet.
 3. **Why it is built that way.** Two to four sentences on the design choice, and what would go
    wrong with the obvious alternative. This is where the real names arrive.
-4. **The link.** Clickable `file:line`.
-5. **Done after this stop.** One line naming the files now fully covered — *"safe to stage:
-   `x.cs`, `y.cs`"* — or *"nothing finishes here; the filter comes back at stop 6"*. Never
-   leave it out, and never let it drift from the ledger. **Do not stage anything yourself**;
-   this line tells the reviewer what they may stage, it is not permission to run `git add`.
+4. **Done after this stop.** Either the files now fully covered, followed by a ready-to-copy
+   staging command for exactly those files, paths relative to the repo root:
+
+   ```bash
+   git add -- src/rollback.ts src/snapshot.ts
+   ```
+
+   Or, when no file finishes here, just **"Done after this stop: none."** — nothing more. Do not
+   explain when the file comes back or at which stop; the reviewer only needs to know there is
+   nothing to stage yet. Never leave the line out, and never let it drift from the ledger.
+   **Do not run the command yourself**; it is for the reviewer to copy, not permission to
+   stage.
 
 **Hard limits, because the failure mode here is volume, not inaccuracy:**
 
@@ -372,7 +384,8 @@ correct it** rather than defending it.
   rather than execution
 - **The coverage ledger**, if it was not asked for earlier — stop against the files finished
   after it, so the reviewer can stage with confidence. Here it is a checklist; at the opening it
-  was noise
+  was noise. Follow it with one `git add -- …` command covering every file the tour finished
+  (or one per commit, when it splits into several)
 - **How it splits into commits**, if the repo's rules or the file count mean it cannot be one,
   with the actual messages
 - Offer the next step **through the gate**: run the tests, produce a commit message, write the
@@ -388,6 +401,7 @@ correct it** rather than defending it.
 2. **Track position** — "Stop 4 of 10" in every heading, so a long review survives a break.
    Above ~8 units, offer once to write the map and findings to a scratch file so the tour can
    resume in a later session.
-3. **Link everything clickable** as relative `file:line` paths.
+3. **Link everything clickable** as relative paths in the host's link form (Step 2, part 2) —
+   a markdown link with a `#L` anchor in an IDE, `file:line` in a plain terminal.
 4. **Never claim a test passes without running it.** If you cannot run the suite, say so.
 5. **Do not stage or commit** unless explicitly asked. Fixes go in the working tree.
