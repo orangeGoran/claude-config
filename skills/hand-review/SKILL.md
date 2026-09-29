@@ -284,10 +284,14 @@ Then these parts, in this order, and nothing else:
 3. **Why it is built that way.** Two to four sentences on the design choice, and what would go
    wrong with the obvious alternative. This is where the real names arrive.
 4. **Done after this stop.** Either the files now fully covered, followed by a ready-to-copy
-   staging command for exactly those files, paths relative to the repo root:
+   staging command for exactly those files, paths relative to the repo root. **One file per
+   line**, each line but the last ending in ` \`, so it reads as a list but still pastes as one
+   command — even for a single file, keep `git add --` on its own line:
 
    ```bash
-   git add -- src/rollback.ts src/snapshot.ts
+   git add -- \
+     src/rollback.ts \
+     src/snapshot.ts
    ```
 
    Or, when no file finishes here, just **"Done after this stop: none."** — nothing more. Do not
@@ -385,7 +389,7 @@ correct it** rather than defending it.
 - **The coverage ledger**, if it was not asked for earlier — stop against the files finished
   after it, so the reviewer can stage with confidence. Here it is a checklist; at the opening it
   was noise. Follow it with one `git add -- …` command covering every file the tour finished
-  (or one per commit, when it splits into several)
+  (or one per commit, when it splits into several), one file per line as in Step 2, part 4
 - **How it splits into commits**, if the repo's rules or the file count mean it cannot be one,
   with the actual messages
 - Offer the next step **through the gate**: run the tests, produce a commit message, write the
