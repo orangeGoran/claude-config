@@ -18,7 +18,7 @@ Each skill is independent. Symlink only the ones you want (see
 | Skill | Command | What it does |
 | --- | --- | --- |
 | [`commit-message`](skills/commit-message/SKILL.md) | `/commit-message` | Writes a copy-paste-ready Conventional Commits message for the current changes. Never stages or commits. |
-| [`pr`](skills/pr/SKILL.md) | `/pr [target-branch]` | Creates a pull request from the current branch against a target branch. Only runs when you call it. |
+| [`pr`](skills/pr/SKILL.md) | `/pr [source-branch] [destination-branch]` | Creates a pull request from a source branch (default: current branch) into a destination branch. Only runs when you call it. |
 | [`hand-review`](skills/hand-review/SKILL.md) | `/hand-review [target]` | Walks you through a diff one stop at a time, following one request through the code, and pauses for your answer after each. |
 
 ### Everything else

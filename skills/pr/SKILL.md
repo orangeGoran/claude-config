@@ -1,43 +1,60 @@
 ---
 name: pr
-description: Create a pull request comparing current branch against a target branch
+description: Create a pull request from a source branch into a destination branch
 disable-model-invocation: true
 allowed-tools: Bash(git *), Bash(gh *)
-argument-hint: "[target-branch]"
+argument-hint: "[source-branch] [destination-branch]"
 ---
 
-Create a pull request for the current branch.
+Create a pull request from a source branch into a destination branch.
 
-Target branch argument: `$ARGUMENTS`. If no argument is provided, detect the repo's default PR target: prefer a `develop` branch if it exists on origin, otherwise the repository default branch (`gh repo view --json defaultBranchRef -q .defaultBranchRef.name`).
+Arguments: `$ARGUMENTS`. Read them like this:
+
+- **Two arguments** → first is the source branch, second is the destination branch.
+- **One argument** → it is the destination branch; the source is the current branch.
+- **No arguments** → the source is the current branch (`git branch --show-current`); the
+  destination is `develop` if it exists on origin, otherwise the repository default branch
+  (`gh repo view --json defaultBranchRef -q .defaultBranchRef.name`).
+
+Before doing anything else, state the resolved pair in one line, e.g.
+`PR: feature/login → develop`.
 
 ## Steps
 
-1. **Normalize the target**: strip any leading `origin/` from the argument so you have a bare
-   branch name (e.g. `staging`). All downstream commands use `origin/<target>` explicitly —
-   never compare against the local branch, which may be behind.
+1. **Normalize both names**: strip any leading `origin/` so you have bare branch names
+   (`<source>`, `<destination>`). If they are the same branch, STOP and tell the user.
 
-2. **`git fetch origin <target>`** — the local `origin/<target>` ref may be stale. Skipping
-   this makes `origin/<target>..HEAD` include commits already merged, producing a wrong PR
-   with inflated commit count. This step is non-negotiable.
+2. **Pick the source ref**:
+   - If `<source>` is the current branch → use `HEAD` as `<source-ref>` (includes local,
+     unpushed commits).
+   - Otherwise → use `origin/<source>` as `<source-ref>`. If it doesn't exist on origin,
+     STOP and tell the user to push it first.
 
-3. **Sanity-check the range** before drafting anything:
-   - `git rev-list --count origin/<target>..HEAD` — record this number.
-   - If the count looks surprisingly large (e.g. >15 for a feature branch), STOP and ask the
-     user before continuing. A bloated range usually means the wrong target branch.
+3. **`git fetch origin <destination> <source>`** (drop `<source>` if it has never been pushed) —
+   local `origin/*` refs may be stale. Skipping this makes the range include commits already
+   merged, producing a wrong PR with an inflated commit count. Non-negotiable. Always compare
+   against `origin/<destination>`, never the local branch.
 
-4. Run these in parallel:
-   - `git status` (never use `-uall`)
-   - `git diff --stat origin/<target>..HEAD`
-   - `git log --oneline --reverse origin/<target>..HEAD`
+4. **Sanity-check the range** before drafting anything:
+   - `git rev-list --count origin/<destination>..<source-ref>` — record this number.
+   - If it is 0, STOP: there is nothing to merge.
+   - If it looks surprisingly large (e.g. >15 for a feature branch), STOP and ask the user
+     before continuing. A bloated range usually means the wrong destination branch.
 
-5. Analyze ALL commits in the range (not just the latest) and draft:
+5. Run these in parallel:
+   - `git status` (never use `-uall`) — only when the source is the current branch
+   - `git diff --stat origin/<destination>..<source-ref>`
+   - `git log --oneline --reverse origin/<destination>..<source-ref>`
+
+6. Analyze ALL commits in the range (not just the latest) and draft:
    - **Title**: under 70 chars, conventional commit style matching the repo pattern
    - **Body**: use the template below
 
-6. Push to remote if needed (`git push -u origin <branch>`), then create the PR:
+7. If the source is the current branch, push it if needed (`git push -u origin <source>`).
+   Never push a branch you are not on. Then create the PR:
 
 ```
-gh pr create --base <target> --title "<title>" --body "$(cat <<'EOF'
+gh pr create --base <destination> --head <source> --title "<title>" --body "$(cat <<'EOF'
 ## Summary
 <1-3 bullet points>
 
