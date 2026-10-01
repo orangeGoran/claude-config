@@ -2,7 +2,7 @@
 name: pr
 description: Create a pull request from a source branch into a destination branch
 disable-model-invocation: true
-allowed-tools: Bash(git *), Bash(gh *)
+allowed-tools: Bash(git *), Bash(gh *), AskUserQuestion
 argument-hint: "[source-branch] [destination-branch]"
 ---
 
@@ -12,9 +12,26 @@ Arguments: `$ARGUMENTS`. Read them like this:
 
 - **Two arguments** → first is the source branch, second is the destination branch.
 - **One argument** → it is the destination branch; the source is the current branch.
-- **No arguments** → the source is the current branch (`git branch --show-current`); the
-  destination is `develop` if it exists on origin, otherwise the repository default branch
-  (`gh repo view --json defaultBranchRef -q .defaultBranchRef.name`).
+- **No arguments** → ask the user to pick both branches (see below).
+
+### Picking branches when no arguments are given
+
+1. `git fetch origin --prune`, then gather candidates:
+   - Current branch: `git branch --show-current`
+   - Default branch: `gh repo view --json defaultBranchRef -q .defaultBranchRef.name`
+   - Recently updated remote branches:
+     `git for-each-ref --sort=-committerdate --count=10 --format='%(refname:short)' refs/remotes/origin`
+     (drop `origin/HEAD` and strip the `origin/` prefix)
+
+2. Ask both questions in a single `AskUserQuestion` call (2–4 options each; the tool adds a
+   free-text "Other" option automatically, so the user can always type a branch name):
+   - **Source** — first option: the current branch, labeled "(Recommended)". Fill the rest
+     with the most recently updated remote branches.
+   - **Destination** — first option: `develop` if it exists on origin, otherwise the default
+     branch, labeled "(Recommended)". Fill the rest with other long-lived branches that exist
+     on origin (e.g. `main`, `master`, `staging`, `release/*`), then recent branches.
+   - Never offer the same branch as both the recommended source and recommended destination.
+   - Each option's description says when it was last updated (e.g. "updated 2 hours ago").
 
 Before doing anything else, state the resolved pair in one line, e.g.
 `PR: feature/login → develop`.
