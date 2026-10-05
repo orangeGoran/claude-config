@@ -1722,9 +1722,15 @@ async function renderDetail(loadPlan) {
       btn('⟳ Resume', () => post('/api/resume', { project: p.project, slug: p.slug, mode: modeOf(p) }, true));
       btn('🖥 Open in VS Code', vsc, null, moreWrap);
       btn('🗑 Clean up run', clean, 'danger', moreWrap);
-    } else { // fresh: primary action is the queue checkbox + mode above
+    } else { // fresh: launch this one now, or queue it with others via the checkbox
       if (p.worktree) { btn('🖥 Open in VS Code', vsc); btn('🗑 Clean up run', clean, 'danger', moreWrap); }
-      else btn('📦 Archive plan → done/', () => archive(p), 'danger', moreWrap);
+      else {
+        btn('▶ Launch now', () => {
+          picked.delete(p.key); renderBar();
+          post('/api/launch', { project: p.project, items: [{ slug: p.slug, mode: modeOf(p) }] }, true);
+        }, 'primary');
+        btn('📦 Archive plan → done/', () => archive(p), 'danger', moreWrap);
+      }
     }
   } else {
     if (stt === 'live') {
