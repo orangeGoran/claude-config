@@ -72,7 +72,36 @@ simplify them.
 - **One topic per paragraph, six sentences maximum.**
 - **Warnings come first.** If a stop holds a risk of data loss or a security gap, say it before
   the explanation.
-- **Use a vertical list** for three or more items, or for steps that occur in sequence.
+- **Use a vertical list** for three or more items that have no order.
+- **Use a flowchart for steps that occur in sequence** — a request that moves through the code,
+  a process, a retry, a branch on a condition. Do not use a bullet list for a flow. Draw it as
+  text in a fenced code block, so it looks the same in a terminal and in an IDE:
+
+  ```
+  ┌──────────────────────────┐
+  │ GET /devices/42/wink     │
+  └────────────┬─────────────┘
+               ▼
+  ┌──────────────────────────┐
+  │ guard reads role claim   │
+  └────────────┬─────────────┘
+         role = viewer?
+        ┌──────┴──────┐
+       yes            no
+        ▼             ▼
+  ┌───────────┐ ┌────────────────┐
+  │ 403       │ │ handler        │
+  │ Forbidden │ │ flashes LED    │
+  └───────────┘ └────────────────┘
+  ```
+
+  - **Top to bottom.** One step per box. Arrows (`▼`, `►`) show the order.
+  - **Write the condition on the branch,** with the real value: `role = viewer?`, `retries > 3?`.
+  - **Use real names and real values** in the boxes — the endpoint, the function, the status
+    code. The text in each box follows STE.
+  - **Twelve boxes maximum, 70 characters wide maximum.** If the flow is longer, draw the part
+    this stop decides and put `…` at the two ends.
+  - **Two steps or fewer:** write a sentence. A flowchart is not necessary.
 
 **Content (these were already the rules, now in STE form)**
 
@@ -349,7 +378,8 @@ Then these parts, in this order, and nothing else:
   form yet. A stop holding two *independent* decisions is still two stops.
 - **No tables, no shell checks, no findings, no "consequences" block inline.** Each of those
   breaks the narrative, and stacking them is exactly what makes a reviewer lose the thread.
-- **One code block per stop**, unless the second is three lines showing a contrast.
+- **One code block per stop**, unless the second is three lines showing a contrast. A flowchart
+  (Rule 1) does not count against this limit, but a stop gets one flowchart at most.
 - **If a stop runs past roughly 40 lines of prose, split it** — but only where the reviewer
   could genuinely judge the first half on its own. If there is no such seam, keep it whole and
   trim the prose instead.
