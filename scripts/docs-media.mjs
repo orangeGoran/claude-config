@@ -2,7 +2,7 @@
 // Regenerates the images and the demo video in docs/.
 //
 //   node scripts/docs-media.mjs           every screenshot, in a light and a dark version
-//   node scripts/docs-media.mjs --video   docs/demo.mp4 (dark), the walkthrough for the README
+//   node scripts/docs-media.mjs --video   docs/demo.mp4 (dark): add a repo, run plans in parallel, check one
 //
 // The video needs ffmpeg with H.264 (brew install ffmpeg). GitHub does not play a video
 // stored in the repo: after recording, drag docs/demo.mp4 into the README on github.com
@@ -54,6 +54,28 @@ const newHome = () => {
 const ALLOW = JSON.stringify({ permissions: { allow: ['Bash(npm test)'] } });
 const SKILL = (n) => `---\nname: ${n}\n---\n`;
 
+// Stands in for a headless Claude run: prints what Claude would do and exits 0. Like a real
+// stream-json run it leaves a session id in the log and a transcript where claude keeps them,
+// so the plan's session panel fills in. rate-limit-login finishes in seconds, the rest keep going.
+const FAKE_RUN = `#!/usr/bin/env bash
+case "$(basename "$2")" in rate-limit-login.md) d=0.5 ;; *) d=6 ;; esac
+say() { printf '%s\\n' "$1"; sleep "$d"; }
+id=$(uuidgen | tr 'A-Z' 'a-z')
+dir="$HOME/.claude/projects/$(pwd | sed 's/[^a-zA-Z0-9]/-/g')"
+mkdir -p "$dir" && echo '{}' > "$dir/$id.jsonl"
+say "session  \\"session_id\\": \\"$id\\""
+say "reading the plan  .plans/$(basename "$2")"
+say "edit    src/auth/login.controller.ts"
+say "create  src/auth/rate-limit.guard.ts"
+say "create  test/auth/rate-limit.spec.ts"
+say "run     npm test   48 passed, 0 failed"
+say "review  no findings"
+echo "done: ready for your review"
+`;
+const SUMMARIES = {
+  'rate-limit-login': 'Anyone can try passwords on the login page as fast as they like, which makes guessing attacks cheap. This work allows five attempts per minute from one address and answers the sixth with a clear \u201ctoo many attempts\u201d error. It matters because it closes an easy way into customer accounts without bothering normal users.',
+};
+
 // no projects registered: three repos to find, one per readiness level
 function onboardingWorld() {
   const w = newHome();
@@ -61,8 +83,10 @@ function onboardingWorld() {
   repoDir(ready, {
     '.plans/checkout-idempotency-keys.md': '# Plan: Idempotency keys for checkout\n\nA retried checkout must not create a second order.\n\n## Steps\n\n1. Add the `idempotency_keys` table.\n2. Wrap the checkout handler in a lookup-or-create.\n3. Test that a repeat request returns the first order.\n',
     '.plans/split-inventory-reads.md': '# Plan: Split inventory reads\n\nMove stock reads to the replica.\n',
+    '.plans/rate-limit-login.md': '# Plan: Rate-limit the login endpoint\n\nFive attempts per minute per IP address, then `429 Too Many Requests`.\n\n## Steps\n\n1. Add a rate-limit guard in `src/auth/`.\n2. Apply it to `POST /login`.\n3. Test that the sixth attempt in a minute fails.\n',
+    '.plans/webhook-retry-backoff.md': '# Plan: Exponential backoff for webhook retries\n\nStop retrying failed webhooks every second.\n',
     '.claude/settings.json': ALLOW,
-    '.claude/scripts/run-skill.sh': '#!/usr/bin/env bash\n',
+    '.claude/scripts/run-skill.sh': FAKE_RUN,
     '.claude/skills/implement/SKILL.md': SKILL('implement'),
     'CLAUDE.md': '# Rules\n',
   });
@@ -73,6 +97,7 @@ function onboardingWorld() {
   });
   const bare = path.join(w.ws, 'legacy-admin');
   repoDir(bare, {});
+  put(path.join(w.home, '.claude/pipeline-dashboard/state/storefront-api/plan-summaries.json'), JSON.stringify(SUMMARIES));
   return { ...w, ready, bare };
 }
 
@@ -92,29 +117,6 @@ Repeated checkout submissions currently create duplicate orders when a client re
 2. Wrap the checkout handler in a lookup-or-create around that table.
 3. Return \`409\` when the same key is reused with a different request body.
 4. Test a retried request, a reused key with a new body, and an expired key.
-`;
-
-const RATE_LIMIT_PLAN = `# Plan: Rate-limit the login endpoint
-
-Five attempts per minute per IP address, then \`429 Too Many Requests\`.
-
-## Steps
-
-1. Add a rate-limit guard in \`src/auth/\`.
-2. Apply it to \`POST /login\`.
-3. Test that the sixth attempt in a minute fails and the first after the window passes.
-`;
-const FAKE_RUN = `#!/usr/bin/env bash
-say() { printf '%s\\n' "$1"; sleep "\${2:-0.9}"; }
-say "reading the plan  .plans/$(basename "$2")"
-say "create  src/auth/rate-limit.guard.ts"
-say "edit    src/auth/login.controller.ts"
-say "create  test/auth/rate-limit.spec.ts"
-say "run     npm test" 1.4
-say "        48 passed, 0 failed"
-say "review  /code-review high"
-say "        no findings" 0.5
-say "done: ready for your review" 0
 `;
 
 // a working set: one pipeline project and one generic project, in every run state
@@ -156,11 +158,9 @@ function busyWorld() {
   const billing = path.join(w.ws, 'acme', 'billing-service');
   repoDir(billing, {
     '.claude/settings.json': ALLOW,
-    // stands in for a real headless run in the video: prints what Claude would do, then exits 0
-    '.claude/scripts/run-skill.sh': FAKE_RUN,
+    '.claude/scripts/run-skill.sh': '#!/usr/bin/env bash\n',
     '.claude/skills/implement/SKILL.md': SKILL('implement'),
     '.claude/skills/review/SKILL.md': SKILL('review'),
-    '.plans/rate-limit-login.md': RATE_LIMIT_PLAN,
     'CLAUDE.md': '# Rules\n',
     '.plans/proration-on-plan-change.md': '# Plan: Proration on plan change\n\nCharge the difference when a customer upgrades mid-cycle.\n',
     '.plans/invoice-pdf-localization.md': '# Plan: Localize invoice PDFs\n\nRender invoices in the customer’s language.\n',
@@ -176,9 +176,6 @@ function busyWorld() {
   };
   idle('skill-auto-pipeline retire-legacy-cart-endpoint.md');
   const state = path.join(w.home, '.claude', 'pipeline-dashboard', 'state', 'billing-service');
-  put(path.join(state, 'plan-summaries.json'), JSON.stringify({
-    'rate-limit-login': 'Anyone can try passwords on the login page as fast as they like, which makes guessing attacks cheap. This work allows five attempts per minute from one address and answers the sixth with a clear \u201ctoo many attempts\u201d error. It matters because it closes an easy way into customer accounts without bothering normal users.',
-  }));
   put(path.join(state, 'runs.json'), JSON.stringify({
     'proration-on-plan-change': { pid: idle(), label: 'Implement', startedAt: '2026-08-25T10:12:00.000Z', exitCode: null },
     'invoice-pdf-localization': { pid: 1, label: 'Implement', startedAt: '2026-08-25T07:40:00.000Z',
@@ -329,19 +326,29 @@ async function dashboardShots(b, theme) {
 
 // ---------- video ----------
 
-// headless Chrome draws no mouse pointer and no captions, so the page gets both
+// Headless Chrome draws no pointer, captions or title cards, so the page gets them.
+// They hang off <html>, not <body>: the zoom scales <body>, and the overlay must not scale with it.
 const OVERLAY = `(() => {
+  if (document.getElementById('demo-cursor')) return;
   const st = document.createElement('style');
-  st.textContent = '#demo-cursor{position:fixed;left:800px;top:600px;width:26px;height:26px;margin:-13px 0 0 -13px;' +
-    'border-radius:50%;background:rgba(139,92,246,.35);border:2px solid #8b5cf6;z-index:99999;pointer-events:none;' +
+  st.textContent =
+    'body{transform-origin:0 0;transition:transform .9s cubic-bezier(.45,0,.2,1)}' +
+    '#demo-cursor{position:fixed;left:800px;top:600px;width:26px;height:26px;margin:-13px 0 0 -13px;' +
+    'border-radius:50%;background:rgba(139,92,246,.35);border:2px solid #8b5cf6;z-index:2147483646;pointer-events:none;' +
     'transition:left .7s ease-in-out,top .7s ease-in-out,transform .15s}' +
     '#demo-cursor.down{transform:scale(.7);background:rgba(139,92,246,.7)}' +
-    '#demo-cap{position:fixed;left:50%;bottom:70px;transform:translateX(-50%);z-index:99999;pointer-events:none;' +
-    'background:rgba(15,15,25,.88);color:#fff;font:600 22px/1.3 system-ui,sans-serif;padding:12px 22px;border-radius:12px;' +
-    'box-shadow:0 8px 30px rgba(0,0,0,.35);transition:opacity .3s;white-space:nowrap}';
+    '#demo-cap{position:fixed;left:50%;bottom:60px;transform:translateX(-50%);z-index:2147483646;pointer-events:none;' +
+    'background:rgba(15,15,25,.9);color:#fff;font:600 24px/1.3 system-ui,sans-serif;padding:14px 26px;border-radius:14px;' +
+    'box-shadow:0 8px 30px rgba(0,0,0,.4);transition:opacity .3s;white-space:nowrap;opacity:0}' +
+    '#demo-card{position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;align-items:center;' +
+    'justify-content:center;gap:18px;background:#0d0d14;color:#fff;font-family:system-ui,sans-serif;' +
+    'transition:opacity .6s;opacity:0;pointer-events:none}' +
+    '#demo-card h1{margin:0;font-size:64px;letter-spacing:-1px}#demo-card p{margin:0;font-size:28px;color:#b8b8cc}' +
+    '#demo-card small{font-size:18px;color:#8b5cf6;font-weight:600;letter-spacing:2px;text-transform:uppercase}';
   document.head.appendChild(st);
-  for (const id of ['demo-cursor', 'demo-cap']) { const d = document.createElement('div'); d.id = id; document.body.appendChild(d); }
-  document.getElementById('demo-cap').style.opacity = 0;
+  for (const id of ['demo-cursor', 'demo-cap', 'demo-card']) {
+    const d = document.createElement('div'); d.id = id; document.documentElement.appendChild(d);
+  }
 })()`;
 
 async function demoVideo(b) {
@@ -349,76 +356,156 @@ async function demoVideo(b) {
   try { execFileSync(ffmpeg, ['-hide_banner', '-encoders'], { stdio: 'pipe' }).toString().includes('libx264') || (() => { throw 0; })(); }
   catch { console.error('The video needs ffmpeg with libx264: brew install ffmpeg (or set FFMPEG=/path/to/ffmpeg)'); process.exit(1); }
 
-  const w = busyWorld();
-  const d = await startDashboard(w);
   const frames = mkdtempSync(path.join(os.tmpdir(), 'dash-video-'));
   cleanup.push(() => rmSync(frames, { recursive: true, force: true }));
 
-  await b.open(d.base + '/', 'dark');
-  await b.waitFor('.item[data-key="billing-service/rate-limit-login"]');
-  await b.js(OVERLAY);
-
+  // frames arrive only when the screen changes; each is held until the next one arrives
   const shots = [];
   b.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
+    b.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
     const f = path.join(frames, String(shots.length).padStart(5, '0') + '.jpg');
     writeFileSync(f, Buffer.from(data, 'base64'));
     shots.push({ f, t: metadata.timestamp });
-    b.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
   });
-  await b.send('Page.startScreencast', { format: 'jpeg', quality: 92, maxWidth: W, maxHeight: H });
+  const record = () => b.send('Page.startScreencast', { format: 'jpeg', quality: 92, maxWidth: W, maxHeight: H });
 
+  const q = (sel) => `document.querySelector(${JSON.stringify(sel)})`;
   const cap = (text) => b.js(`(() => { const c = document.getElementById('demo-cap');
-    c.textContent = ${JSON.stringify(text)}; c.style.opacity = ${text ? 1 : 0}; })()`);
+    if (${JSON.stringify(text)}) c.textContent = ${JSON.stringify(text)}; c.style.opacity = ${text ? 1 : 0}; })()`);
+  const card = (small, title, sub) => b.js(`(() => { const c = document.getElementById('demo-card');
+    c.innerHTML = '<small>${small}</small><h1>${title}</h1><p>${sub}</p>'; c.style.opacity = 1; })()`);
+  const uncard = () => b.js(`document.getElementById('demo-card').style.opacity = 0`);
+
+  // camera: scale <body> so everything matching sel fills the screen (up to max), centred,
+  // never past the page edge
+  let cam = { s: 1, tx: 0, ty: 0 };
+  const zoom = async (sel, max = 1.8) => {
+    await b.waitFor(sel);
+    const r = await b.js(`(() => {
+      const rs = [...document.querySelectorAll(${JSON.stringify(sel)})].map((e) => e.getBoundingClientRect());
+      const l = Math.min(...rs.map((r) => r.left)), t = Math.min(...rs.map((r) => r.top));
+      return [l, t, Math.max(...rs.map((r) => r.right)) - l, Math.max(...rs.map((r) => r.bottom)) - t]; })()`);
+    const [x, y, w, h] = [(r[0] - cam.tx) / cam.s, (r[1] - cam.ty) / cam.s, r[2] / cam.s, r[3] / cam.s];
+    const s = Math.max(1, Math.min(max, (W * 0.9) / w, (H * 0.8) / h));
+    const clamp = (v, lo) => Math.min(0, Math.max(lo, v));
+    cam = { s, tx: clamp(W / 2 - (x + w / 2) * s, W - W * s), ty: clamp(H / 2 - (y + h / 2) * s, H - H * s) };
+    await b.js(`document.body.style.transform = 'translate(${cam.tx}px, ${cam.ty}px) scale(${s})'`);
+    await sleep(1000);
+  };
+  const unzoom = async () => {
+    cam = { s: 1, tx: 0, ty: 0 };
+    await b.js(`document.body.style.transform = ''`);
+    await sleep(1000);
+  };
   const point = async (sel) => {
     await b.waitFor(sel);
-    await b.js(`document.querySelector(${JSON.stringify(sel)}).scrollIntoView({ block: 'center' })`);
-    await b.js(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect();
-      const c = document.getElementById('demo-cursor'); c.style.left = (r.left + Math.min(r.width / 2, 120)) + 'px';
-      c.style.top = (r.top + r.height / 2) + 'px'; })()`);
+    await b.js(`${q(sel)}.scrollIntoView({ block: 'nearest' })`);
+    await b.js(`(() => { const r = ${q(sel)}.getBoundingClientRect(), c = document.getElementById('demo-cursor');
+      c.style.left = (r.left + Math.min(r.width / 2, 120)) + 'px'; c.style.top = (r.top + r.height / 2) + 'px'; })()`);
     await sleep(900);
   };
   const click = async (sel) => {
     await point(sel);
     await b.js(`document.getElementById('demo-cursor').classList.add('down')`);
     await sleep(150);
-    await b.js(`document.getElementById('demo-cursor').classList.remove('down'); document.querySelector(${JSON.stringify(sel)}).click()`);
+    await b.js(`document.getElementById('demo-cursor').classList.remove('down'); ${q(sel)}.click()`);
   };
-  const KEY = 'billing-service/rate-limit-login';
-  const launchBtn = `[...document.querySelectorAll('#detail button')].find((x) => x.textContent.includes('Launch now'))`;
-
-  await sleep(800);
-  await cap('Every plan from every project, in one list');
-  await sleep(2600);
-
-  await cap('Open a plan: a plain-language summary sits on top');
-  await click(`.item[data-key="${KEY}"]`);
-  await b.waitFor('#detail .summary');
+  // ---- one project, from first run to reviewing a finished plan ----
+  const ow = onboardingWorld();
+  const od = await startDashboard(ow);
+  await b.open(od.base + '/', 'dark');
+  await b.waitFor('#onb.open');
+  await b.js(OVERLAY);
+  await card('for Claude Code', 'Plans', 'Hand off the work. Review the result.');
+  await record();
   await sleep(3200);
+  await uncard();
+  await sleep(800);
 
-  await cap('Launch it. Claude works in the background');
-  await b.js(`${launchBtn}.id = 'demo-launch'`);
-  await click('#demo-launch');
-  await b.until(`!!document.querySelector('#runstrip [data-log="${KEY}"]')`, 'run in the running strip');
+  await cap('First run: a short guide shows how it works');
+  await zoom('.demo', 1.6);
+  await sleep(1200);
+  await click('.demo-nav .nx');
+  await sleep(1600);
+  await click('.demo-nav .nx');
   await sleep(1800);
+  await unzoom();
+  await click('#onbnext');
 
-  await cap('Watch the log while it runs');
-  await click(`#runstrip [data-log="${KEY}"]`);
-  // the page polls every 5 s; reload the log faster so the video shows it streaming
-  for (let i = 0; i < 22; i++) { await b.js('loadLog()'); await sleep(450); }
+  await cap('It finds your repos and checks each one');
+  await b.waitFor('.prow');
+  await zoom('#onbbody', 1.5);
+  await sleep(2000);
+  await cap('Anything missing comes with a prompt that fixes it');
+  await click(`.prow-head[data-card="${ow.bare}"]`);
+  await b.waitFor('.prow-body');
+  await zoom('.prow-body', 1.7);
+  await sleep(2600);
+  await zoom('#onbbody', 1.5);
+  await click(`.prow-head[data-card="${ow.bare}"]`);
+  await sleep(400);
+  await cap('Add a repo with one click');
+  await b.js(`document.getElementById('onbbody').scrollTo(0, 0)`);
+  await click(`[data-add="${ow.ready}"]`);
+  await b.until(`[...document.querySelectorAll('#onbbody h3')].some((h) => h.textContent === 'Added')`, 'Added list');
+  await sleep(1600);
+  await unzoom();
+  await click('#onbskip');
 
-  await cap('Done. It waits for your review');
-  await b.js('closeLog()');
-  await b.js('refresh()');
-  await b.until(`[...document.querySelectorAll('#runstrip .okp')].some((x) => x.dataset.go === '${KEY}')`, 'awaiting review');
-  await point(`#runstrip .okp[data-go="${KEY}"]`);
-  await sleep(3000);
-  await cap('');
+  const K = (slug) => 'storefront-api/' + slug;
+  const PICK = ['rate-limit-login', 'checkout-idempotency-keys', 'webhook-retry-backoff'];
+  await cap('All its plans are on the dashboard');
+  await b.waitFor(`.item[data-key="${K(PICK[0])}"]`);
+  await zoom('#side .item', 1.8);
+  await sleep(2400);
+
+  await cap('Tick the plans you want done');
+  for (const slug of PICK) {
+    const sel = `input[data-check="${K(slug)}"]`;
+    await point(sel);
+    await b.js(`(() => { const c = ${q(sel)}; c.checked = true; c.dispatchEvent(new Event('change')); })()`);
+    await sleep(500);
+  }
   await sleep(600);
+  await unzoom();
+  await cap('Run them all at once');
+  await click('#launchbtn');
+  await b.until(`document.querySelectorAll('#runstrip .rp').length >= ${PICK.length}`, 'runs in the running strip');
+  await unzoom();
+  await cap('They work in parallel, in the background');
+  await zoom('#runstrip', 1.7);
+  await sleep(1500);
+  // the page polls every 5 s; ask sooner so the first finish shows without a pause
+  await b.until(`(refresh(), [...document.querySelectorAll('#runstrip .okp')].some((x) => x.dataset.go === '${K(PICK[0])}'))`, 'first finish');
+  await cap('One is done and waits for your review');
+  await sleep(2400);
+  await unzoom();
 
+  await cap('Open it to check the work');
+  await click(`#runstrip .okp[data-go="${K(PICK[0])}"]`);
+  await b.until(`[...document.querySelectorAll('#detail button')].some((x) => x.textContent.includes('Open in VS Code'))`, 'finished plan');
+  await b.js(`[...document.querySelectorAll('#detail button')].find((x) => x.textContent.includes('Open in VS Code')).id = 'demo-code'`);
+  await cap('Open the changes in your editor');
+  await zoom('#demo-code', 1.6);
+  await point('#demo-code');  // pointed at, not clicked: a click would open VS Code on this machine
+  await sleep(2400);
+  await unzoom();
+
+  await cap('Or pick up the Claude session where it stopped');
+  await b.until(`!!document.querySelector('#sessbox summary')`, 'session history');
+  await click('#sessbox summary');
+  // a real user sees their own path here, not the demo's temp folder
+  await b.js(`document.querySelectorAll('#sessbox input').forEach((i) => { i.value = i.value.split(${JSON.stringify(ow.home)}).join('~'); })`);
+  await zoom('#sessbox', 1.6);
+  await sleep(3400);
+  await cap('');
+  await unzoom();
+
+  await card('Set it up in three commands', 'github.com/orangeGoran/claude-config', 'Open source, MIT licensed');
+  await sleep(3500);
   await b.send('Page.stopScreencast');
-  d.stop();
+  od.stop();
 
-  // frames arrive only when the screen changes: hold each one until the next arrives
   const list = shots.map((s, i) => `file '${s.f}'\nduration ${((shots[i + 1]?.t ?? s.t + 1) - s.t).toFixed(3)}`);
   const listFile = path.join(frames, 'frames.txt');
   writeFileSync(listFile, list.join('\n') + `\nfile '${shots.at(-1).f}'\n`);
