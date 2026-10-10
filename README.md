@@ -12,10 +12,9 @@ Claude Code is good at implementing a well-written plan. Three things got in the
 | **You lose track.** Plan files are spread across many repos and clients. Nothing shows which plans are running, finished, or waiting for your review. | One page lists the plans of every registered project, with what is running and what needs your review pinned to the top. |
 | **Your setup drifts.** Rules and skills get copied by hand to each machine and slowly go out of sync. | `CLAUDE.md` and the skills live here, under version control, and are symlinked into `~/.claude/`. A `git pull` brings a change to every machine. |
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/plans-dashboard-dark.png">
-  <img alt="Plans dashboard: running, in-progress and awaiting-review strips down the left, the selected plan with its plain-language summary, status, tags and rendered markdown on the right" src="docs/plans-dashboard-light.png">
-</picture>
+
+https://github.com/user-attachments/assets/f2a27baf-f43b-48ec-a134-6e65cf3dfc58
+
 
 ## Quick start
 
