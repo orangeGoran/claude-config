@@ -29,31 +29,70 @@ Two different situations, and conflating them is the main way this skill goes wr
 Never carry claims from a previous session as if they were established here. If context is
 missing, say so and read the code.
 
-## Rule 1 — the register
+## Rule 1 — the register: ASD-STE100 Simplified Technical English
 
 The most common failure is not being wrong. It is being **unreadable** — dense, jargon-stacked
 paragraphs that are individually accurate and collectively useless. Assume the reviewer is a
 capable engineer who does not know **this codebase**.
 
-- **Headline the consequence, not the mechanism.** *"Saving a form with nothing changed logged
-  people out"* — then explain that the database counts a rewritten row as affected. Never the
-  other way round.
-- **Short sentences, one idea each.** If a sentence has three clauses and two pieces of jargon,
-  split it.
-- **Define the domain fact before you lean on it.** One or two sentences, then use the term.
-- **Effect on first use, precise term second.** *"they get logged out on every device"*
-  before *"the session is revoked"*. This is a plain description of what happens, not a
-  substitute story.
-- **Concrete numbers beat adjectives.** *"waited 32 seconds, not the 5 it claimed"*, not
-  *"a significant discrepancy"*.
-- **Never make them hold two new concepts at once.**
-- **Bold the load-bearing sentence** in a long section so a skim still lands.
-- If a paragraph needs two readings, rewrite it. Litmus test before sending: *could someone
-  who knows programming but not this repo follow this on one pass?*
+**Write all prose to the reviewer in ASD-STE100 style.** This covers the brief, every stop, the
+gate questions and options, tangents and the wrap-up. Code, identifiers, file paths, commands,
+error text and quotes from commits or plans are **technical names** — show them exactly, never
+simplify them.
 
-**When the reviewer says they do not understand: do not add detail.** Stop, throw the
-explanation away, and re-explain from the top in fewer, simpler words. Adding more is the
-wrong instinct and makes it worse.
+**Words**
+
+- **One word, one meaning.** Pick one term for a thing and keep it for the whole tour. If the
+  brief says "snapshot", stop 7 does not say "backup".
+- **Use simple, common words.** "use", not "leverage" or "utilize". "start", not "initiate".
+  "show", not "surface". "help", not "facilitate".
+- **No phrasal verbs.** "remove", not "get rid of". "continue", not "carry on". "examine", not
+  "look into".
+- **Technical names and technical verbs are permitted** — `revoke`, `deserialize`, `rebase`,
+  repo-local names. Define a repo-local name once (Rule 2), then use it.
+- **Keep the articles.** Write "the guard reads the token", not "guard reads token".
+- **No noun clusters longer than three words.** "the retry limit for device sessions", not
+  "device session retry limit value".
+
+**Sentences**
+
+- **Descriptive sentences: 25 words maximum. Instructions: 20 words maximum.**
+- **One topic per sentence.** If a sentence has three clauses and two pieces of jargon, split it.
+- **Active voice.** "The guard returns 403", not "403 is returned". Use passive voice only when
+  the actor is unknown or not important.
+- **Simple tenses only:** simple present, simple past, simple future. "The handler writes the
+  row", not "the handler is going to be writing the row". Use the `-ing` form only in technical
+  names.
+- **Instructions use the imperative,** one action per sentence: "Open `rollback.ts`. Read line 42."
+- **No contractions, no "basically", no "essentially",** no "simply", no "just".
+- **Use "can" and "must", not "be able to" or "should be".**
+
+**Paragraphs and order**
+
+- **One topic per paragraph, six sentences maximum.**
+- **Warnings come first.** If a stop holds a risk of data loss or a security gap, say it before
+  the explanation.
+- **Use a vertical list** for three or more items, or for steps that occur in sequence.
+
+**Content (these were already the rules, now in STE form)**
+
+- **Give the result first, then the mechanism.** *"When a user saved a form with no changes, the
+  system logged the user out."* Then explain: the database counts a rewritten row as a changed
+  row. Do not use the opposite order.
+- **Define the domain fact before you use it.** One or two sentences, then use the term.
+- **Give the effect first and the precise term second.** *"The user is logged out on all
+  devices"*, then *"the session is revoked"*. This is a description of what occurs, not a
+  substitute story.
+- **Use numbers, not adjectives.** *"The call waited 32 seconds, not 5 seconds."*, not *"a
+  significant discrepancy"*.
+- **Do not give the reviewer two new concepts in one sentence.**
+- **Bold the most important sentence** in a long section. Then a fast reader still gets the point.
+- If a paragraph needs two readings, write it again. Test before you send: *can an engineer who
+  does not know this repo understand this in one reading?*
+
+**When the reviewer says they do not understand: do not add detail.** Stop. Discard the
+explanation. Explain again from the start, with fewer and simpler words, and with stricter STE.
+More detail makes the problem worse.
 
 Do not lecture. They lack context, not ability. Skip language basics unless the construct is
 genuinely load-bearing.
@@ -67,9 +106,9 @@ optional. It is how the reviewer gets their footing before the abstraction arriv
 **Concrete does not mean invented.** No car shop, no doorman, no bakery queue, no luggage tags.
 The reviewer is an engineer; a made-up setting gives them a second world to learn and then map
 back onto the code, and the mapping is where they get lost. Name the real mechanism instead:
-*"a `GET /devices/42/wink` comes in with a viewer's token — the guard reads the role claim,
-sees `viewer`, and returns 403 before the handler runs"*, not *"a doorman checks the guest
-list"*.
+*"A `GET /devices/42/wink` request arrives with a viewer token. The guard reads the role claim
+and finds `viewer`. It returns 403 before the handler starts."*, not *"a doorman checks the
+guest list"*.
 
 **Do not then repeat the same point in senior register.** Saying everything twice doubles every
 message, and the reviewer gets lost faster, not slower. More words is the wrong fix for
@@ -116,7 +155,7 @@ turn cannot continue until the reviewer answers, so a stop physically cannot run
 
 The first option is always the next stop, named in plain words — never "Next" alone:
 
-- **`Next — stop 4: is the delete path safe?`** — the teaser names what the next stop
+- **`Next — stop 4: is the delete path safe?`** — the teaser (in STE, Rule 1) names what the next stop
   **decides**, not where it sits, so the reviewer arrives already knowing what to judge
 - **`Simpler`** — throw the explanation away and re-tell it from the top in fewer words (Rule 1)
 - **`Senior version`** — the same point in full engineering register (Rule 2)
@@ -144,8 +183,9 @@ the job of the first message.
 So the first message is a brief, not a scoping report. Four short parts, in this order:
 
 1. **The problem.** What was broken, missing or painful before this change — two to four
-   sentences, with one concrete instance. *"A rolled-back device kept the database from the
-   failed version, so the operator had to copy the old file back by hand and usually forgot."*
+   sentences, with one concrete instance. *"After a rollback, the device kept the database from
+   the failed version. The operator restored the old file manually. Operators often forgot
+   this step."*
 2. **What was done about it.** The shape of the solution in two to four sentences, plus the one
    decision that most shaped it and what it was chosen over.
 3. **What is different when this ships.** Before → after, stated as something observable: what
@@ -189,14 +229,13 @@ stop where the size misleads, not an opening statistic.
 bundle by bundle. A file-ordered tour is a parts list, and nobody learns a machine from a parts
 list — they learn it by watching it run once.
 
-1. **Pick one real thing a person does**, and name it the way that person would: *"someone
-   clicks Wink — the button that flashes the LED so you can tell which device you are looking
-   at."* Prefer the action the change exists for. Verify the endpoint or handler is real, and
+1. **Pick one real thing a person does**, and name it the way that person would: *"A user
+   clicks Wink. This button flashes the LED, so the user can identify the device."* Prefer the action the change exists for. Verify the endpoint or handler is real, and
    link it.
 2. **List the stops** — 6 to 12, one line each, in execution order. Each line says *what
-   happens there*, in the reviewer's terms, carrying over from the brief — *"the rollback picks
-   which snapshot to restore, and refuses three cases that would silently restore the wrong
-   one"*. Never a filename, and never a label so short it only makes sense to someone who
+   happens there*, in the reviewer's terms, carrying over from the brief — *"The rollback
+   selects the snapshot to restore. It rejects three cases that restore the wrong snapshot
+   without an error."* Never a filename, and never a label so short it only makes sense to someone who
    already read the code (*"the guard"*, *"version selection"*).
 2a. **Merge before you publish the list.** Read the neighbours: if a reviewer could not form an
    opinion on one without the next — the write and the checks that guard it, the parse and the
@@ -259,12 +298,12 @@ mechanism** — landing straight in *what happens* is a cold start, and the revi
 first half of the stop working out why they are here:
 
 - **Where we came from.** One sentence naming what the previous stop established and **what is
-  carried into this one**, as a real value where there is one. *"Stop 3 left us holding the
-  string `iriis.db`, read from the device's own config."* At stop 1 this line instead connects
+  carried into this one**, as a real value where there is one. *"Stop 3 read the string
+  `iriis.db` from the device config."* At stop 1 this line instead connects
   back to the brief.
 - **What this stop decides.** One **bold** sentence: the judgement made here and where it could
-  go wrong. *"This stop turns that name into an absolute path — and it is where a broken config
-  could aim the delete outside the backup folder."* Not a summary of the code; the reason the
+  go wrong. *"This stop changes that name into an absolute path. Here, a bad config can send
+  the delete outside the backup folder."* Not a summary of the code; the reason the
   stop exists.
 
 Two lines, never more. If the recap needs a paragraph, the previous stop did not land and the
@@ -326,7 +365,7 @@ this bundle decides — then adapt these parts to what the unit deserves:
 
 | Part | What it does |
 |---|---|
-| **The one thing to understand first** ⭐ | A short primer on the domain fact the change rests on, when there is one. *"Accounts and login sessions live in the same file — that is what makes this work."* Often the most valuable paragraph in the bundle |
+| **The one thing to understand first** ⭐ | A short primer on the domain fact the change rests on, when there is one. *"Accounts and login sessions are in the same file. This change depends on that fact."* Often the most valuable paragraph in the bundle |
 | **What it is** | One paragraph, plain language. What this code is for |
 | **How big it really is** | *"324 lines, 124 of them run."* Only when the raw diff size would mislead — never as a routine opening statistic |
 | **The changes, numbered** ⭐ | For each: **headline the user-visible consequence**, then *what went wrong*, then *the fix*, with `file:line` links. This narrative shape is what makes a bundle readable; prefer it over "read the file in this order" |
@@ -337,7 +376,7 @@ this bundle decides — then adapt these parts to what the unit deserves:
 | **Honesty markers** | Pre-existing vs introduced here · deliberately not fixed and why · verified by reading vs by running · **and which findings were caught by someone else rather than by you** |
 
 **Attribute your misses.** If a reviewer, a test or a later pass caught something, say so
-plainly — *"this was a reviewer's catch, not mine"*. It tells the reviewer where your blind
+plainly — *"A reviewer found this. I did not."*. It tells the reviewer where your blind
 spots are, which is the most useful thing they can learn about a change.
 
 **Name near-misses.** If following the task literally would have caused harm and you did
@@ -380,7 +419,7 @@ correct it** rather than defending it.
 ## Step 5 — wrap-up
 
 - **The findings list** — everything you held back during the journey, in engineering
-  register, most serious first. This is the payoff for keeping the stops clean; do not
+  register and still in STE (Rule 1), most serious first. This is the payoff for keeping the stops clean; do not
   shorten it
 - **What the reviewer raised**, and what you did about each, in a table
 - **Still open** — deliberately not addressed, and who owns it
