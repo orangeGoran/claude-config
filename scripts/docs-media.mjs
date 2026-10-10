@@ -2,7 +2,7 @@
 // Regenerates the images and the demo video in docs/.
 //
 //   node scripts/docs-media.mjs           every screenshot, in a light and a dark version
-//   node scripts/docs-media.mjs --video   docs/demo.mp4 (dark): add a repo, run plans in parallel, check one
+//   node scripts/docs-media.mjs --video   docs/demo.mp4 (dark): the problem, then add a repo, run plans in parallel, check one
 //
 // The video needs ffmpeg with H.264 (brew install ffmpeg). GitHub does not play a video
 // stored in the repo: after recording, drag docs/demo.mp4 into the README on github.com
@@ -343,8 +343,19 @@ const OVERLAY = `(() => {
     '#demo-card{position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;align-items:center;' +
     'justify-content:center;gap:18px;background:#0d0d14;color:#fff;font-family:system-ui,sans-serif;' +
     'transition:opacity .6s;opacity:0;pointer-events:none}' +
+    '#demo-card>div{display:flex;flex-direction:column;align-items:center;gap:18px;transition:opacity .6s}' +
     '#demo-card h1{margin:0;font-size:64px;letter-spacing:-1px}#demo-card p{margin:0;font-size:28px;color:#b8b8cc}' +
-    '#demo-card small{font-size:18px;color:#8b5cf6;font-weight:600;letter-spacing:2px;text-transform:uppercase}';
+    '#demo-card small{font-size:18px;color:#8b5cf6;font-weight:600;letter-spacing:2px;text-transform:uppercase}' +
+    '#demo-card small.bad{color:#f87171}' +
+    '.demo-term{width:860px;background:#16161f;border:1px solid #2a2a3a;border-radius:12px;overflow:hidden;' +
+    'box-shadow:0 20px 60px rgba(0,0,0,.5);text-align:left}' +
+    '.demo-term .bar{padding:10px 14px;background:#1e1e2a;color:#77778a;font:13px ui-monospace,monospace}' +
+    '.demo-term pre{margin:0;padding:18px 22px;height:250px;font:17px/1.6 ui-monospace,monospace;color:#d8d8e8;white-space:pre-wrap}' +
+    '.demo-term .ask{color:#fbbf24}.demo-term .dim{color:#77778a}' +
+    '.demo-repos{display:flex;gap:22px}.demo-repo{width:300px;background:#16161f;border:1px solid #2a2a3a;border-radius:12px;' +
+    'padding:16px 18px;text-align:left;font:15px/2 ui-monospace,monospace;color:#d8d8e8}' +
+    '.demo-repo b{display:block;font:600 16px system-ui,sans-serif;color:#fff;margin-bottom:6px}' +
+    '.demo-repo i{float:right;font-style:normal;color:#f87171;font-weight:700}';
   document.head.appendChild(st);
   for (const id of ['demo-cursor', 'demo-cap', 'demo-card']) {
     const d = document.createElement('div'); d.id = id; document.documentElement.appendChild(d);
@@ -375,6 +386,18 @@ async function demoVideo(b) {
   const card = (small, title, sub) => b.js(`(() => { const c = document.getElementById('demo-card');
     c.innerHTML = '<small>${small}</small><h1>${title}</h1><p>${sub}</p>'; c.style.opacity = 1; })()`);
   const uncard = () => b.js(`document.getElementById('demo-card').style.opacity = 0`);
+  // change the full-screen card's content: the dark background stays, only the content fades,
+  // so the page underneath never shows between scenes
+  const scene = async (html) => {
+    await b.js(`(() => { const c = document.getElementById('demo-card'); c.style.opacity = 1;
+      if (c.firstChild) c.firstChild.style.opacity = 0; })()`);
+    await sleep(650);
+    await b.js(`(() => { const c = document.getElementById('demo-card');
+      c.innerHTML = '<div style="opacity:0">' + ${JSON.stringify(html)} + '</div>';
+      requestAnimationFrame(() => requestAnimationFrame(() => { c.firstChild.style.opacity = 1; })); })()`);
+    await sleep(650);
+  };
+  const termLine = (html) => b.js(`document.getElementById('demo-tty').insertAdjacentHTML('beforeend', ${JSON.stringify(html + '\n')})`);
 
   // camera: scale <body> so everything matching sel fills the screen (up to max), centred,
   // never past the page edge
@@ -416,9 +439,38 @@ async function demoVideo(b) {
   await b.open(od.base + '/', 'dark');
   await b.waitFor('#onb.open');
   await b.js(OVERLAY);
-  await card('for Claude Code', 'Plans', 'Hand off the work. Review the result.');
+  await b.js(`(() => { const c = document.getElementById('demo-card'); c.style.transition = 'none'; c.style.opacity = 1;
+    c.offsetHeight; c.style.transition = ''; })()`);
   await record();
-  await sleep(3200);
+
+  // the problem first: the two pains this video goes on to solve
+  await scene('<small class="bad">The problem</small><h1>You babysit it</h1>' +
+    '<div class="demo-term"><div class="bar">claude — storefront-api</div><pre id="demo-tty"></pre></div>' +
+    '<p>One task at a time. Every step waits for your yes.</p>');
+  for (const [line, wait] of [
+    ['<span class="dim">&gt;</span> Implement .plans/rate-limit-login.md', 900],
+    ['⏺ Edit src/auth/login.controller.ts', 500],
+    ['  <span class="ask">Allow this edit? (y/n)</span> y', 1100],
+    ['⏺ Bash(npm test)', 500],
+    ['  <span class="ask">Allow this command? (y/n)</span> y', 1100],
+    ['⏺ Edit test/auth/rate-limit.spec.ts', 500],
+    ['  <span class="ask">Allow this edit? (y/n)</span> █', 1600],
+    ['<span class="dim">3 more plans waiting for this terminal</span>', 1800],
+  ]) { await termLine(line); await sleep(wait); }
+
+  const repo = (name, files) => '<div class="demo-repo"><b>' + name + '</b>' +
+    files.map((f) => f + '<i>?</i>').join('<br>') + '</div>';
+  await scene('<small class="bad">The problem</small><h1>You lose track</h1><div class="demo-repos">' +
+    repo('storefront-api', ['checkout-keys.md', 'rate-limit.md', 'split-reads.md']) +
+    repo('billing-service', ['proration.md', 'invoice-pdf.md']) +
+    repo('admin-portal', ['audit-log.md', 'sso-login.md', 'csv-export.md']) +
+    '</div><p>Plans spread across repos. Which one ran? Which is done? Which needs your review?</p>');
+  await sleep(4200);
+
+  await scene('<h1>There is a better way</h1>');
+  await sleep(1600);
+  await scene('<small>for Claude Code</small><h1>Plans</h1><p>Hand off the work. Review the result.</p>');
+  await sleep(3000);
   await uncard();
   await sleep(800);
 

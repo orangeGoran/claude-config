@@ -2,18 +2,17 @@
 
 A Claude Code setup in one repo: a local dashboard that runs plan files in the background, plus global rules and skills linked into `~/.claude/`.
 
-https://github.com/user-attachments/assets/f2a27baf-f43b-48ec-a134-6e65cf3dfc58
-
 ## Why
+
+https://github.com/user-attachments/assets/f2a27baf-f43b-48ec-a134-6e65cf3dfc58
 
 Claude Code is good at implementing a well-written plan. Three things got in the way of using it that way:
 
-| Problem | What this repo does |
-| --- | --- |
-| **You babysit it.** A task runs in your terminal, one at a time, and you sit there approving each step. | The dashboard launches a plan in the background, with its permissions set up front, and runs several plans at once, each in its own git worktree. You come back to a finished diff. |
-| **You lose track.** Plan files are spread across many repos and clients. Nothing shows which plans are running, finished, or waiting for your review. | One page lists the plans of every registered project, with what is running and what needs your review pinned to the top. |
-| **Your setup drifts.** Rules and skills get copied by hand to each machine and slowly go out of sync. | `CLAUDE.md` and the skills live here, under version control, and are symlinked into `~/.claude/`. A `git pull` brings a change to every machine. |
-
+| Problem                                                                                                                                               | What this repo does                                                                                                                                                                 |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **You babysit it.** A task runs in your terminal, one at a time, and you sit there approving each step.                                               | The dashboard launches a plan in the background, with its permissions set up front, and runs several plans at once, each in its own git worktree. You come back to a finished diff. |
+| **You lose track.** Plan files are spread across many repos and clients. Nothing shows which plans are running, finished, or waiting for your review. | One page lists the plans of every registered project, with what is running and what needs your review pinned to the top.                                                            |
+| **Your setup drifts.** Rules and skills get copied by hand to each machine and slowly go out of sync.                                                 | `CLAUDE.md` and the skills live here, under version control, and are symlinked into `~/.claude/`. A `git pull` brings a change to every machine.                                    |
 
 ## Quick start
 
@@ -51,11 +50,11 @@ To change your choices later, run `scripts/setup.sh` again. Every question it as
 - **`CLAUDE.md`**: global rules, loaded in every project.
 - **Skills**: each one is optional. A project skill with the same name wins over the global one.
 
-| Skill | What it does |
-| --- | --- |
+| Skill                                               | What it does                                                           |
+| --------------------------------------------------- | ---------------------------------------------------------------------- |
 | [`/commit-message`](skills/commit-message/SKILL.md) | Writes a Conventional Commits message for your changes. Never commits. |
-| [`/pr`](skills/pr/SKILL.md) | Opens a pull request from one branch into another. |
-| [`/hand-review`](skills/hand-review/SKILL.md) | Walks you through a diff one stop at a time. |
+| [`/pr`](skills/pr/SKILL.md)                         | Opens a pull request from one branch into another.                     |
+| [`/hand-review`](skills/hand-review/SKILL.md)       | Walks you through a diff one stop at a time.                           |
 
 ## Author
 
