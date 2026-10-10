@@ -4,7 +4,11 @@ A Claude Code setup in one repo: a local dashboard that runs plan files in the b
 
 ## Why
 
-https://github.com/user-attachments/assets/f2a27baf-f43b-48ec-a134-6e65cf3dfc58
+
+
+https://github.com/user-attachments/assets/51867778-8650-4512-a50c-2b0b002580b3
+
+
 
 Claude Code is good at implementing a well-written plan. Three things got in the way of using it that way:
 
