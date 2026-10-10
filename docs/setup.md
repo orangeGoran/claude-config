@@ -1,9 +1,14 @@
 # Setup on a new machine
 
 ```bash
-git clone git@github.com:orangeGoran/claude-config.git ~/Workspace/claude-config
+# Download this repo to ~/Workspace/claude-config
+git clone https://github.com/orangeGoran/claude-config.git ~/Workspace/claude-config
+
+# Go into it
 cd ~/Workspace/claude-config
-scripts/setup.sh            # asks what to set up; --yes sets up everything
+
+# Set it up: asks which parts you want and confirms each change (--yes skips the questions)
+scripts/setup.sh
 ```
 
 It asks which parts you want, then runs each one:

@@ -7,7 +7,7 @@ A single-file, dependency-free Node server that lists the `*.md` plan files of e
   <img alt="Plans dashboard: running, in-progress and awaiting-review strips down the left, the selected plan with its plain-language summary, status, tags and rendered markdown on the right" src="plans-dashboard-light.png">
 </picture>
 
-*Screenshots show a demo project set, not real work. To regenerate them after a UI change, run `node scripts/docs-screenshots.mjs`.*
+*Screenshots show a demo project set, not real work. To regenerate them after a UI change, run `node scripts/docs-media.mjs`, and add `--video` for the README's demo video.*
 
 ## Quick reference
 
@@ -24,8 +24,11 @@ A single-file, dependency-free Node server that lists the `*.md` plan files of e
 ## Start it
 
 ```bash
-node scripts/plans-dashboard.mjs          # → http://127.0.0.1:4899
-node scripts/plans-dashboard.mjs --help   # options and file locations
+# Start the dashboard, then open http://127.0.0.1:4899
+node scripts/plans-dashboard.mjs
+
+# Show the options and where the dashboard keeps its files
+node scripts/plans-dashboard.mjs --help
 ```
 
 Requires Node 18+ (developed on 24).
@@ -33,7 +36,8 @@ Requires Node 18+ (developed on 24).
 ## Install it to run at login (macOS)
 
 ```bash
-scripts/setup-macos.sh    # asks for a domain; Enter keeps plans.test
+# Install the dashboard to run at login. It asks for a domain; press Enter to keep plans.test
+scripts/setup-macos.sh
 ```
 
 `scripts/setup.sh` runs this for you when you pick the dashboard part.
@@ -48,6 +52,7 @@ Re-run it only to change the domain or port, or after switching Node versions wi
 > plans.test does **not** pick up edits by itself. The agent runs `scripts/plans-dashboard.mjs` straight from this repo but reads it only at startup. After every change, restart it:
 >
 > ```bash
+> # Restart the dashboard so it loads your changes
 > launchctl kickstart -k gui/$(id -u)/com.plans-dashboard
 > ```
 
@@ -130,6 +135,7 @@ Per plan it creates `<parent-of-repo>/worktrees/<slug>` on branch `auto/<slug>`,
 Clean up after merging:
 
 ```bash
+# Remove the plan's worktree and its branch
 scripts/worktree-run.sh --repo <repo> --cleanup <slug>
 ```
 
@@ -150,6 +156,7 @@ It deinitialises submodules first (they block `git worktree remove`) and refuses
 ## Tests
 
 ```bash
+# Run all dashboard tests
 node --test 'scripts/test/*.test.mjs'
 ```
 

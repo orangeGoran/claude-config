@@ -1,15 +1,20 @@
 #!/usr/bin/env node
-// Regenerates the screenshots in docs/ — every one in a light and a dark version.
+// Regenerates the images and the demo video in docs/.
 //
-//   node scripts/docs-screenshots.mjs
+//   node scripts/docs-media.mjs           every screenshot, in a light and a dark version
+//   node scripts/docs-media.mjs --video   docs/demo.mp4 (dark), the walkthrough for the README
+//
+// The video needs ffmpeg with H.264 (brew install ffmpeg). GitHub does not play a video
+// stored in the repo: after recording, drag docs/demo.mp4 into the README on github.com
+// and use the link GitHub gives back.
 //
 // Runs throwaway copies of the dashboard against a fake HOME filled with demo
 // repositories, so no real project ever shows up in an image. Drives Chrome over
 // the DevTools protocol with Node's built-in WebSocket: no npm dependencies.
 // Needs Node 22+ and Chrome; set CHROME=/path/to/chrome if it is not in /Applications.
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, cpSync, realpathSync,
-  existsSync, rmSync } from 'node:fs';
+  existsSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,6 +94,29 @@ Repeated checkout submissions currently create duplicate orders when a client re
 4. Test a retried request, a reused key with a new body, and an expired key.
 `;
 
+const RATE_LIMIT_PLAN = `# Plan: Rate-limit the login endpoint
+
+Five attempts per minute per IP address, then \`429 Too Many Requests\`.
+
+## Steps
+
+1. Add a rate-limit guard in \`src/auth/\`.
+2. Apply it to \`POST /login\`.
+3. Test that the sixth attempt in a minute fails and the first after the window passes.
+`;
+const FAKE_RUN = `#!/usr/bin/env bash
+say() { printf '%s\\n' "$1"; sleep "\${2:-0.9}"; }
+say "reading the plan  .plans/$(basename "$2")"
+say "create  src/auth/rate-limit.guard.ts"
+say "edit    src/auth/login.controller.ts"
+say "create  test/auth/rate-limit.spec.ts"
+say "run     npm test" 1.4
+say "        48 passed, 0 failed"
+say "review  /code-review high"
+say "        no findings" 0.5
+say "done: ready for your review" 0
+`;
+
 // a working set: one pipeline project and one generic project, in every run state
 function busyWorld() {
   const w = newHome();
@@ -128,9 +156,11 @@ function busyWorld() {
   const billing = path.join(w.ws, 'acme', 'billing-service');
   repoDir(billing, {
     '.claude/settings.json': ALLOW,
-    '.claude/scripts/run-skill.sh': '#!/usr/bin/env bash\n',
+    // stands in for a real headless run in the video: prints what Claude would do, then exits 0
+    '.claude/scripts/run-skill.sh': FAKE_RUN,
     '.claude/skills/implement/SKILL.md': SKILL('implement'),
     '.claude/skills/review/SKILL.md': SKILL('review'),
+    '.plans/rate-limit-login.md': RATE_LIMIT_PLAN,
     'CLAUDE.md': '# Rules\n',
     '.plans/proration-on-plan-change.md': '# Plan: Proration on plan change\n\nCharge the difference when a customer upgrades mid-cycle.\n',
     '.plans/invoice-pdf-localization.md': '# Plan: Localize invoice PDFs\n\nRender invoices in the customer’s language.\n',
@@ -146,6 +176,9 @@ function busyWorld() {
   };
   idle('skill-auto-pipeline retire-legacy-cart-endpoint.md');
   const state = path.join(w.home, '.claude', 'pipeline-dashboard', 'state', 'billing-service');
+  put(path.join(state, 'plan-summaries.json'), JSON.stringify({
+    'rate-limit-login': 'Anyone can try passwords on the login page as fast as they like, which makes guessing attacks cheap. This work allows five attempts per minute from one address and answers the sixth with a clear \u201ctoo many attempts\u201d error. It matters because it closes an easy way into customer accounts without bothering normal users.',
+  }));
   put(path.join(state, 'runs.json'), JSON.stringify({
     'proration-on-plan-change': { pid: idle(), label: 'Implement', startedAt: '2026-08-25T10:12:00.000Z', exitCode: null },
     'invoice-pdf-localization': { pid: 1, label: 'Implement', startedAt: '2026-08-25T07:40:00.000Z',
@@ -198,8 +231,10 @@ async function openChrome() {
   await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
   let id = 0;
   const pending = new Map();
+  const listeners = {};
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
+    if (m.method) return listeners[m.method]?.(m.params);
     if (!pending.has(m.id)) return;
     const { res, rej } = pending.get(m.id);
     pending.delete(m.id);
@@ -229,7 +264,8 @@ async function openChrome() {
       await until(`document.readyState === 'complete' && document.documentElement.dataset.theme === '${theme}'`,
         theme + ' page load');
     },
-    js, until,
+    js, until, send,
+    on: (method, fn) => { listeners[method] = fn; },
     waitFor: (sel) => until(`!!${q(sel)}`, sel),
     click: (sel) => js(`${q(sel)}.click()`),
     async shot(file, sel) {
@@ -291,8 +327,111 @@ async function dashboardShots(b, theme) {
   d.stop();
 }
 
+// ---------- video ----------
+
+// headless Chrome draws no mouse pointer and no captions, so the page gets both
+const OVERLAY = `(() => {
+  const st = document.createElement('style');
+  st.textContent = '#demo-cursor{position:fixed;left:800px;top:600px;width:26px;height:26px;margin:-13px 0 0 -13px;' +
+    'border-radius:50%;background:rgba(139,92,246,.35);border:2px solid #8b5cf6;z-index:99999;pointer-events:none;' +
+    'transition:left .7s ease-in-out,top .7s ease-in-out,transform .15s}' +
+    '#demo-cursor.down{transform:scale(.7);background:rgba(139,92,246,.7)}' +
+    '#demo-cap{position:fixed;left:50%;bottom:70px;transform:translateX(-50%);z-index:99999;pointer-events:none;' +
+    'background:rgba(15,15,25,.88);color:#fff;font:600 22px/1.3 system-ui,sans-serif;padding:12px 22px;border-radius:12px;' +
+    'box-shadow:0 8px 30px rgba(0,0,0,.35);transition:opacity .3s;white-space:nowrap}';
+  document.head.appendChild(st);
+  for (const id of ['demo-cursor', 'demo-cap']) { const d = document.createElement('div'); d.id = id; document.body.appendChild(d); }
+  document.getElementById('demo-cap').style.opacity = 0;
+})()`;
+
+async function demoVideo(b) {
+  const ffmpeg = process.env.FFMPEG || 'ffmpeg';
+  try { execFileSync(ffmpeg, ['-hide_banner', '-encoders'], { stdio: 'pipe' }).toString().includes('libx264') || (() => { throw 0; })(); }
+  catch { console.error('The video needs ffmpeg with libx264: brew install ffmpeg (or set FFMPEG=/path/to/ffmpeg)'); process.exit(1); }
+
+  const w = busyWorld();
+  const d = await startDashboard(w);
+  const frames = mkdtempSync(path.join(os.tmpdir(), 'dash-video-'));
+  cleanup.push(() => rmSync(frames, { recursive: true, force: true }));
+
+  await b.open(d.base + '/', 'dark');
+  await b.waitFor('.item[data-key="billing-service/rate-limit-login"]');
+  await b.js(OVERLAY);
+
+  const shots = [];
+  b.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
+    const f = path.join(frames, String(shots.length).padStart(5, '0') + '.jpg');
+    writeFileSync(f, Buffer.from(data, 'base64'));
+    shots.push({ f, t: metadata.timestamp });
+    b.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+  });
+  await b.send('Page.startScreencast', { format: 'jpeg', quality: 92, maxWidth: W, maxHeight: H });
+
+  const cap = (text) => b.js(`(() => { const c = document.getElementById('demo-cap');
+    c.textContent = ${JSON.stringify(text)}; c.style.opacity = ${text ? 1 : 0}; })()`);
+  const point = async (sel) => {
+    await b.waitFor(sel);
+    await b.js(`document.querySelector(${JSON.stringify(sel)}).scrollIntoView({ block: 'center' })`);
+    await b.js(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect();
+      const c = document.getElementById('demo-cursor'); c.style.left = (r.left + Math.min(r.width / 2, 120)) + 'px';
+      c.style.top = (r.top + r.height / 2) + 'px'; })()`);
+    await sleep(900);
+  };
+  const click = async (sel) => {
+    await point(sel);
+    await b.js(`document.getElementById('demo-cursor').classList.add('down')`);
+    await sleep(150);
+    await b.js(`document.getElementById('demo-cursor').classList.remove('down'); document.querySelector(${JSON.stringify(sel)}).click()`);
+  };
+  const KEY = 'billing-service/rate-limit-login';
+  const launchBtn = `[...document.querySelectorAll('#detail button')].find((x) => x.textContent.includes('Launch now'))`;
+
+  await sleep(800);
+  await cap('Every plan from every project, in one list');
+  await sleep(2600);
+
+  await cap('Open a plan: a plain-language summary sits on top');
+  await click(`.item[data-key="${KEY}"]`);
+  await b.waitFor('#detail .summary');
+  await sleep(3200);
+
+  await cap('Launch it. Claude works in the background');
+  await b.js(`${launchBtn}.id = 'demo-launch'`);
+  await click('#demo-launch');
+  await b.until(`!!document.querySelector('#runstrip [data-log="${KEY}"]')`, 'run in the running strip');
+  await sleep(1800);
+
+  await cap('Watch the log while it runs');
+  await click(`#runstrip [data-log="${KEY}"]`);
+  // the page polls every 5 s; reload the log faster so the video shows it streaming
+  for (let i = 0; i < 22; i++) { await b.js('loadLog()'); await sleep(450); }
+
+  await cap('Done. It waits for your review');
+  await b.js('closeLog()');
+  await b.js('refresh()');
+  await b.until(`[...document.querySelectorAll('#runstrip .okp')].some((x) => x.dataset.go === '${KEY}')`, 'awaiting review');
+  await point(`#runstrip .okp[data-go="${KEY}"]`);
+  await sleep(3000);
+  await cap('');
+  await sleep(600);
+
+  await b.send('Page.stopScreencast');
+  d.stop();
+
+  // frames arrive only when the screen changes: hold each one until the next arrives
+  const list = shots.map((s, i) => `file '${s.f}'\nduration ${((shots[i + 1]?.t ?? s.t + 1) - s.t).toFixed(3)}`);
+  const listFile = path.join(frames, 'frames.txt');
+  writeFileSync(listFile, list.join('\n') + `\nfile '${shots.at(-1).f}'\n`);
+  const out = path.join(DOCS, 'demo.mp4');
+  execFileSync(ffmpeg, ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', listFile,
+    '-vf', `fps=30,scale=${W}:${H},format=yuv420p`, '-c:v', 'libx264', '-crf', '22', '-preset', 'slow',
+    '-movflags', '+faststart', out], { stdio: ['ignore', 'ignore', 'inherit'] });
+  console.log(`  docs/demo.mp4 (${(statSync(out).size / 1e6).toFixed(1)} MB, ${shots.length} frames)`);
+}
+
 const b = await openChrome();
-for (const theme of ['light', 'dark']) {
+if (process.argv.includes('--video')) await demoVideo(b);
+else for (const theme of ['light', 'dark']) {
   console.log(theme);
   await onboardingShots(b, theme);
   await dashboardShots(b, theme);
