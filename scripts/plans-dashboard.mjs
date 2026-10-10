@@ -81,6 +81,47 @@ Files
 const BIND = PORT < 1024 ? '0.0.0.0' : '127.0.0.1';
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
+// The loopback check keeps other machines out, but the browser on this machine is
+// loopback too: any website open in it could POST here and run a launcher. So every
+// request must also name a local host (blocks DNS rebinding — a public name pointed
+// at 127.0.0.1) and must not come from another site (Origin / Sec-Fetch-Site).
+// Local hosts: loopback IPs, localhost, *.localhost, and any name /etc/hosts maps to
+// loopback (e.g. plans.test) — a web page cannot add one. /etc/hosts is re-read on a
+// miss, at most every 5 s, so a domain added while the server runs still works.
+let hostsNames = new Set(), hostsReadAt = 0;
+const readHostsFile = () => {
+  hostsReadAt = Date.now();
+  const names = new Set();
+  try {
+    for (const line of readFileSync('/etc/hosts', 'utf8').split('\n')) {
+      const [ip, ...rest] = line.replace(/#.*/, '').trim().split(/\s+/);
+      if (LOOPBACK.has(ip) || ip === '127.0.1.1') rest.forEach((n) => names.add(n.toLowerCase()));
+    }
+  } catch {}
+  hostsNames = names;
+};
+const isLocalHost = (hostname) => {
+  const h = hostname.toLowerCase().replace(/\.$/, '');
+  if (h === 'localhost' || h.endsWith('.localhost') || h === '127.0.0.1' || h === '[::1]') return true;
+  if (hostsNames.has(h)) return true;
+  if (Date.now() - hostsReadAt > 5000) { readHostsFile(); return hostsNames.has(h); }
+  return false;
+};
+const hostOf = (s) => { try { return new URL(s).host; } catch { return null; } };
+// returns a reason string when the request must be refused, null when it is fine
+const crossSiteReason = (req) => {
+  let url;
+  try { url = new URL('http://' + (req.headers.host || '')); } catch { return 'unknown host'; }
+  if (!url.hostname || !isLocalHost(url.hostname)) return 'unknown host';
+  const site = req.headers['sec-fetch-site'];
+  if (site && site !== 'same-origin' && site !== 'none') return 'cross-site request';
+  const origin = req.headers.origin;
+  // behind Caddy the Origin is https://plans.test and Host is plans.test — compare host[:port]
+  if (origin !== undefined && hostOf(origin) !== url.host) return 'cross-site request';
+  return null;
+};
+readHostsFile();
+
 const expand = (p) => (p && p.startsWith('~') ? path.join(HOME, p.slice(1)) : p);
 // under launchd the PATH is minimal (/usr/bin:/bin:…) — no nvm node, no claude,
 // no code. Augment it for every child process this server spawns.
@@ -840,6 +881,8 @@ const server = http.createServer(async (req, res) => {
   if (BIND !== '127.0.0.1' && !LOOPBACK.has(req.socket.remoteAddress)) {
     res.writeHead(403); return res.end('local access only');
   }
+  const refused = crossSiteReason(req);
+  if (refused) { res.writeHead(403); return res.end('refused: ' + refused); }
   const url = new URL(req.url, 'http://x');
   const slug = url.searchParams.get('slug');
   const pname = url.searchParams.get('project');
@@ -2047,13 +2090,13 @@ async function openSuggest(projName) {
     for (const p of d.recommendedBatch) {
       const v = p.validation || {};
       // the skill takes the plan file as its argument, so bake it into the copied command
-      const vcmd = '/skill-auto-validate ' + (p.file || '.plans/' + p.slug + '.md');
+      const vcmd = '/skill-auto-validate-plan ' + (p.file || '.plans/' + p.slug + '.md');
       h += '<li><code class="plink" data-open="' + esc(K(p.slug)) + '">' + esc(p.slug) + '</code><br><span class="dim">areas: ' +
         esc((p.areas || []).join(', ') || '—') +
         ((v.claude || v.codex)
           ? ' · validated ' + (v.claude || 0) + '×claude / ' + (v.codex || 0) + '×codex'
           : ' · <b class="copycmd" data-copy="' + escA(vcmd) + '" title="click to copy: ' + escA(vcmd) + '">'
-            + 'not validated — click to copy /skill-auto-validate</b>') +
+            + 'not validated — click to copy /skill-auto-validate-plan</b>') +
         '</span></li>';
     }
     h += '</ul><button class="primary" id="queueBatch">✓ Queue this batch</button>';

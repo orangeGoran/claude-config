@@ -5,6 +5,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import http from 'node:http';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -200,4 +201,34 @@ test('adding a project keeps existing entries and registers the wrapper launcher
   const s = await state();
   assert.equal(s.find((p) => p.name === 'ready-repo').setupLevel, 'green');
   assert.equal(s.find((p) => p.name === 'demo').setupLevel, 'red');  // fixture has no .git, no launcher
+});
+
+// fetch() forbids setting Host, so raw http.request plays the hostile browser here
+const raw = (method, p, headers, data) => new Promise((resolve, reject) => {
+  const r = http.request({ host: '127.0.0.1', port, method, path: p, headers }, (res) => {
+    res.resume(); res.on('end', () => resolve(res.statusCode));
+  });
+  r.on('error', reject);
+  r.end(data);
+});
+
+test('refuses requests from other websites and from unknown host names', async () => {
+  const self = `127.0.0.1:${port}`;
+  const launchers = JSON.stringify({ project: 'demo', launchers: [{ label: 'x', cmd: 'touch pwned' }] });
+  const registry = async () => (await get('/api/registry')).text();
+  const before = await registry();
+  // a page on another site POSTing a launcher (text/plain → no CORS preflight)
+  assert.equal(await raw('POST', '/api/launchers', { Host: self, Origin: 'https://evil.example', 'Content-Type': 'text/plain' }, launchers), 403);
+  assert.equal(await raw('POST', '/api/launchers', { Host: self, Origin: 'null' }, launchers), 403);
+  assert.equal(await raw('GET', '/api/state', { Host: self, 'Sec-Fetch-Site': 'cross-site' }), 403);
+  // DNS rebinding: a public name resolving to 127.0.0.1
+  assert.equal(await raw('GET', '/api/state', { Host: `evil.example:${port}` }), 403);
+  assert.equal(await registry(), before, 'nothing was saved');
+
+  // the dashboard's own page, under every local name it is served on
+  assert.equal(await raw('GET', '/api/state', { Host: self, 'Sec-Fetch-Site': 'same-origin' }), 200);
+  assert.equal(await raw('GET', '/api/state', { Host: `localhost:${port}` }), 200);
+  assert.equal(await raw('GET', '/', { Host: `plans.localhost:${port}`, 'Sec-Fetch-Site': 'none' }), 200);
+  assert.equal(await raw('POST', '/api/meta', { Host: self, Origin: `http://${self}`, 'Content-Type': 'application/json' },
+    JSON.stringify({ project: 'demo', slug: 'demo-plan', status: 'todo', tags: [] })), 200);
 });
