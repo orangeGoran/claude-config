@@ -180,6 +180,7 @@ const resolveProject = (p) => {
     autoRunsDir,
     metaFile: existsSync(trackedMeta) ? trackedMeta : path.join(stateDir, 'plan-meta.json'),
     summaryFile: existsSync(pipeSummaries) ? pipeSummaries : path.join(stateDir, 'plan-summaries.json'),
+    summaryStyleFile: path.join(stateDir, 'summary-style.json'),
     stateDir,
     logsDir: path.join(CENTRAL, 'logs', p.name),
     runsFile: path.join(stateDir, 'runs.json'),
@@ -205,6 +206,9 @@ const saveMeta = (proj, m) => {
   writeFileSync(proj.metaFile, JSON.stringify(m, null, 2) + '\n');
 };
 const loadSummaries = (proj) => loadJson(proj.summaryFile);
+// slug -> SUMMARY_STYLE the summary was written with. Kept apart from plan-summaries.json
+// (which can live in the project repo) so that file stays a plain slug -> text map.
+const loadSummaryStyles = (proj) => loadJson(proj.summaryStyleFile);
 const saveSummaries = (proj, s) => {
   mkdirSync(path.dirname(proj.summaryFile), { recursive: true });
   writeFileSync(proj.summaryFile, JSON.stringify(s, null, 2));
@@ -391,18 +395,30 @@ let summarizing = null; // key = "<project>/<slug>"
 const summaryQueue = [];
 const summaryFailed = new Set();
 
+// bump when the prompt below changes: every summary written with an older style is remade
+const SUMMARY_STYLE = 2;
 const explain = (proj, slug) =>
   new Promise((resolve, reject) => {
     const content = readFileSync(path.join(proj.plansDir, slug + '.md'), 'utf8').slice(0, 24000);
     const prompt =
-      'Summarize this implementation plan in 3-5 plain-English sentences for someone completely new to the project. ' +
-      'No jargon, no file paths. Say WHAT will be built and WHY it matters. Reply with the summary only.\n\n' + content;
+      'Summarize this implementation plan in 3-5 sentences for someone completely new to the project. ' +
+      'Say WHAT will be built and WHY it matters. No jargon, no file paths.\n' +
+      'Write in ASD-STE100 Simplified Technical English: ' +
+      'one word for one meaning; simple, common words ("use", not "leverage"); no phrasal verbs ("remove", not "get rid of"); ' +
+      'keep the articles; no noun clusters longer than three words; ' +
+      'one topic per sentence, 25 words maximum; active voice; simple present, past or future tense only; ' +
+      '"can" and "must", not "be able to" or "should be"; no contractions, no "basically", "simply" or "just". ' +
+      'Reply with the summary only.\n\n' + content;
     execFile('claude', ['-p', prompt, '--model', SUMMARY_MODEL],
       { env: ENV, timeout: 180000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
         if (err) return reject(err);
         const s = loadSummaries(proj);
         s[slug] = stdout.trim();
         saveSummaries(proj, s);
+        const v = loadSummaryStyles(proj);
+        v[slug] = SUMMARY_STYLE;
+        mkdirSync(path.dirname(proj.summaryStyleFile), { recursive: true });
+        writeFileSync(proj.summaryStyleFile, JSON.stringify(v, null, 2));
         resolve(s[slug]);
       });
   });
@@ -421,10 +437,11 @@ const enqueueMissingSummaries = () => {
   if (NO_SUMMARY) return;
   for (const proj of allProjects()) {
     const s = loadSummaries(proj);
+    const v = loadSummaryStyles(proj);
     for (const f of planFiles(proj)) {
       const slug = f.replace(/\.md$/, '');
       const key = proj.name + '/' + slug;
-      if (!s[slug] && !summaryFailed.has(key) && summarizing !== key
+      if ((!s[slug] || v[slug] !== SUMMARY_STYLE) && !summaryFailed.has(key) && summarizing !== key
           && !summaryQueue.some((q) => q.key === key))
         summaryQueue.push({ key, project: proj.name, slug });
     }
@@ -1152,10 +1169,12 @@ const PAGE = /* html */ `<!doctype html>
   .copycmd { cursor:pointer; color:var(--warn); font-weight:700;
              text-decoration:underline dotted; text-underline-offset:2px; }
   .copycmd:hover { text-decoration:underline; }
-  .launchbar { border-top:1px solid var(--line); background:var(--panel); padding:10px 20px;
-               display:flex; gap:14px; align-items:center; flex-shrink:0; }
+  .launchbar { border-top:1px solid var(--line); background:var(--panel); padding:10px 12px;
+               display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; flex-shrink:0; }
+  .launchbar #selmodes { flex-basis:100%; order:3; font-size:calc(11px * var(--fs)); }
+  .launchbar #selmodes:empty { display:none; }
   .dim { color:var(--dim); } .laststep { font-size:calc(12px * var(--fs)); color:var(--dim); margin-top:6px; }
-  #logpane { position:fixed; top:0; right:0; bottom:0; width:46%; min-width:430px;
+  #logpane { position:fixed; top:0; right:0; bottom:0; width:36%; min-width:400px;
              background:var(--codebg); border-left:1px solid var(--line);
              box-shadow:-10px 0 34px rgba(0,0,0,.3);
              display:none; flex-direction:column; z-index:10; }
@@ -1351,14 +1370,14 @@ const PAGE = /* html */ `<!doctype html>
     </div>
     <div class="runstrip" id="runstrip"></div>
     <div class="items" id="side"></div>
+    <div class="launchbar">
+      <span id="selcount" class="dim">0 queued</span>
+      <span class="dim" id="selmodes"></span>
+      <span style="flex:1"></span>
+      <button class="primary" id="launchbtn">▶ Launch queued in parallel</button>
+    </div>
   </aside>
   <section id="detail"><span class="dim">Select a plan on the left.</span></section>
-</div>
-<div class="launchbar">
-  <span id="selcount" class="dim">0 queued</span>
-  <span class="dim" id="selmodes" style="font-size:12px"></span>
-  <span style="flex:1"></span>
-  <button class="primary" id="launchbtn">▶ Launch queued in parallel</button>
 </div>
 <div id="logpane">
   <header><h1 id="logtitle"></h1><span style="margin-left:auto"></span>
@@ -1534,6 +1553,7 @@ function visiblePlans() {
     && (!st || p.status === st)
     && (!p.archived || showDone || selected === p.key));
 }
+let lastItemClick = {};
 const itemHtml = (p) => \`
     <div class="item \${selected === p.key ? 'sel' : ''} \${dotClass(p)}" data-key="\${p.key}">
       <input type="checkbox" data-check="\${p.key}" \${picked.has(p.key) ? 'checked' : ''}
@@ -1673,7 +1693,19 @@ function renderList() {
   byId('side').querySelectorAll('.item').forEach((el) =>
     el.addEventListener('click', (e) => {
       if (e.target.dataset.check) return;
-      selected = el.dataset.key; renderList(); renderDetail(true);
+      const key = el.dataset.key, now = Date.now();
+      // double-click queues the plan, same as ticking its box. Timed by hand because
+      // the first click re-renders the list, so the browser's dblclick never fires.
+      if (lastItemClick.key === key && now - lastItemClick.at < 400) {
+        lastItemClick = {};
+        getSelection().removeAllRanges();
+        if (el.querySelector('input[data-check]').disabled) return;
+        picked.has(key) ? picked.delete(key) : picked.add(key);
+        renderBar(); renderList();
+        return;
+      }
+      lastItemClick = { key, at: now };
+      selected = key; renderList(); renderDetail(true);
     }));
   byId('side').querySelectorAll('input[data-check]').forEach((el) =>
     el.addEventListener('change', () => {
@@ -2409,7 +2441,7 @@ const TOUR = [
     body: 'A plain-language summary, its status and tags, the controls to launch it, and the full plan text. ' +
       'A launched plan runs in the background; you can close the tab.' },
   { el: () => document.querySelector('.launchbar'), title: 'Run several at once',
-    body: 'Tick plans in the list and they queue down here. One press starts them all.' },
+    body: 'Tick plans in the list (or double-click them) and they queue down here. One press starts them all.' },
   { el: () => [byId('guidebtn'), byId('settingsbtn')], title: 'Guide and Settings',
     body: 'Guide brings back the walkthrough and the list of repos found on this machine. ' +
       'Settings is where you rename projects, change folders and edit launchers.' },

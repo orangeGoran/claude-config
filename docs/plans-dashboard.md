@@ -153,6 +153,8 @@ It deinitialises submodules first (they block `git worktree remove`) and refuses
 > [!WARNING]
 > Summaries are produced by calling the `claude` CLI, which **sends plan text to the Anthropic API**. Set `DASH_NO_SUMMARY=1` for repos whose contents must not leave the machine.
 
+Summaries are written in ASD-STE100 Simplified Technical English. If you change the summary prompt in `scripts/plans-dashboard.mjs`, increase `SUMMARY_STYLE` next to it. The dashboard then remakes every existing summary in the background.
+
 ## Tests
 
 ```bash
