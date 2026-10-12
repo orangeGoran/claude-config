@@ -211,23 +211,76 @@ question arrive — treat free text as the answer and follow it, not the options
 the author, what was tried, or what is supposed to be different afterwards. Closing that gap is
 the job of the first message.
 
-So the first message is a brief, not a scoping report. Four short parts, in this order. Write
-each part as a paragraph and do not print the part names as labels (Step 2 says why):
+So the first message is a brief, not a scoping report. **The reviewer must be able to scan it.**
+Long paragraphs one after another look like a wall of text, even when each sentence is clear.
+Give the brief this shape:
 
-1. **The problem.** What was broken, missing or painful before this change — two to four
-   sentences, with one concrete instance. *"After a rollback, the device kept the database from
-   the failed version. The operator restored the old file manually. Operators often forgot
-   this step."*
-2. **What was done about it.** The shape of the solution in two to four sentences, plus the one
-   decision that most shaped it and what it was chosen over.
-3. **What is different when this ships.** Before → after, stated as something observable: what
-   an operator, caller or user now sees that they did not before. If something they would expect
-   to change deliberately did not, say that here — it is the cheapest place to prevent a
-   misunderstanding that would otherwise surface at stop 6.
-4. **How the review will go.** Two or three lines: the request the tour follows, how many stops,
-   that every stop ends in a question whose first option is the next stop, that **Other** takes
-   anything ("terser", "skip to 8", a question of your own), and that findings are held to one
-   list at the end.
+- **A short heading for each part**, on its own line: `### The problem`, `### What changed`,
+  `### Before and after`, `### The tour`.
+- **The first line under each heading is the main point, in bold.** A reader who reads only the
+  bold lines still gets the brief.
+- **Paragraphs of three sentences maximum.** Put a blank line between parts.
+- **A vertical list for parallel items**: the changes, the defects, the new endpoints.
+- **A table for before and after**, and **a table for the stop list**.
+
+The four parts, in this order:
+
+1. **The problem.** What was broken, missing or painful before this change. A bold main point,
+   then one concrete instance in two or three sentences. A second, smaller defect is a separate
+   bullet, not a sentence added to the same paragraph.
+2. **What changed.** One bullet for each change, one sentence each. Then the one decision that
+   most shaped the change, and what it was chosen over, in one or two sentences.
+3. **Before and after.** A table with one row for each thing that a user, operator or caller can
+   see. If something that they expect to change deliberately did not change, put it in the table
+   too. This is the cheapest place to prevent a misunderstanding that would otherwise appear at
+   stop 6.
+4. **The tour.** One sentence on the request that the tour follows. Then the stop table from
+   Step 1. Then one line: every stop ends with a question, the first option goes to the next
+   stop, **Other** takes anything ("terser", "skip to 8", a question), and all findings come as
+   one list at the end.
+
+Example of the shape, shortened:
+
+```markdown
+### The problem
+
+**A superadmin could not see why an AI question failed.**
+
+The list on `/admin/brain` showed only the question, its status and its owner id. A question
+that failed after 41 seconds gave no step, no AI call and no model response.
+
+- Second defect: when the retry of an invalid JSON response also failed, the AI log kept one
+  row. The first attempt and its tokens were lost.
+
+### What changed
+
+- The Brain worker writes a **run record** on each question row: step times, AI log ids, the
+  failed step and the search hits.
+- Three new columns hold the outcome, so the list can filter without JSON queries.
+- A thrown AI error carries its failed attempts, and the tracker logs them.
+
+**The main decision:** the run record is on the question row, not read back from the AI log.
+The AI log deletes its content after 90 days.
+
+### Before and after
+
+| | Before | After |
+|---|---|---|
+| Question list | Question, status, owner id; one tenant | Asker, tenant, outcome, latency; all tenants; filter and sort |
+| Question detail | No steps | Each step with timing, model, tokens and error |
+| Old questions | — | Empty trace, not rebuilt from old data |
+
+### The tour
+
+The tour follows one question: the answerer step fails, then a superadmin opens the list, the
+detail and the stats.
+
+| # | What happens | You judge |
+|---|---|---|
+| 1 | The answerer AI call fails, and the error keeps the failed attempt | **Is it safe to attach data to an error object?** |
+| 2 | The tracker logs the attempt row and the final row | Skim: follows from stop 1 |
+| … | … | … |
+```
 
 **What does not go in this message:** file counts, line counts, comment-to-code ratios, language
 inventories, a bridge-language announcement, a coverage ledger, a commit plan, or a recap of how
@@ -264,8 +317,9 @@ list — they learn it by watching it run once.
 1. **Pick one real thing a person does**, and name it the way that person would: *"A user
    clicks Wink. This button flashes the LED, so the user can identify the device."* Prefer the action the change exists for. Verify the endpoint or handler is real, and
    link it.
-2. **List the stops** — 6 to 12, one line each, in execution order. Each line says *what
-   happens there*, in the reviewer's terms, carrying over from the brief — *"The rollback
+2. **List the stops** — 6 to 12, in execution order, as the table in Step 0: number, what
+   happens, and what the reviewer judges (bold for a decision, "Skim" for mechanical stops).
+   The "what happens" cell says *what happens there*, in the reviewer's terms, carrying over from the brief — *"The rollback
    selects the snapshot to restore. It rejects three cases that restore the wrong snapshot
    without an error."* Never a filename, and never a label so short it only makes sense to someone who
    already read the code (*"the guard"*, *"version selection"*).
@@ -337,7 +391,8 @@ order:
 - It says in **bold** what the reviewer must decide here, and where it can go wrong.
 
 **Do not print the jobs as labels.** Do not write "Where we came from:", "What this stop
-decides:", "What happens." or "Why:", as prefixes or as headings. A label makes the reader
+decides:", "What happens." or "Why:", as prefixes or as headings. A stop is short, so prose
+carries it. The brief is longer, so it uses headings (Step 0). A label makes the reader
 stop, work out what it refers to, and then read the sentence again with that in mind. Write
 sentences that carry their own meaning.
 
