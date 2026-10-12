@@ -25,7 +25,7 @@
 import http from 'node:http';
 import {
   readFileSync, readdirSync, existsSync, openSync, mkdirSync, unlinkSync,
-  writeFileSync, renameSync, statSync,
+  writeFileSync, renameSync, statSync, closeSync,
 } from 'node:fs';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import path from 'node:path';
@@ -131,6 +131,8 @@ const ENV = {
     process.env.PATH || '',
     path.dirname(process.execPath),        // the node running this server (nvm)
     path.join(HOME, '.local', 'bin'),      // claude CLI
+    ...[process.env.PNPM_HOME || path.join(HOME, 'Library', 'pnpm')]
+      .flatMap((d) => [path.join(d, 'bin'), d]), // pnpm standalone install (repo launchers)
     '/usr/local/bin', '/opt/homebrew/bin', // code, brew tools
   ].filter(Boolean).join(':'),
 };
@@ -344,6 +346,7 @@ const listPlans = async (proj) => {
         title: planTitle(content) || slug,
         summary: summaries[slug] || null,
         summarizing: summarizing === key || summaryQueue.some((q) => q.key === key),
+        launch: live ? null : launches.get(key) || null,
         validations: validationRounds(proj, slug),
         run, live,
         worktree: proj.hasPipeline && existsSync(path.join(proj.worktrees, slug)),
@@ -456,18 +459,37 @@ const dashLog = (proj) => {
   mkdirSync(proj.autoRunsDir, { recursive: true });
   return openSync(path.join(proj.autoRunsDir, '_dashboard.log'), 'a');
 };
-const runLauncher = (proj, args) => {
+// "<project>/<slug>" -> { state: 'starting' | 'failed', at, output }. The launcher sets up
+// a worktree and runs pnpm install for each plan in turn before the run appears, so this
+// is what the list shows in between. In memory only: a restart forgets it, which is fine.
+const launches = new Map();
+const runLauncher = (proj, args, slugs) => {
+  const logFile = path.join(proj.autoRunsDir, '_dashboard.log');
   const fd = dashLog(proj);
+  const from = statSync(logFile).size;
+  const keys = slugs.map((s) => proj.name + '/' + s);
+  for (const k of keys) launches.set(k, { state: 'starting', at: Date.now() });
   const child = spawn('bash', [proj.launcherScript, ...args], {
     cwd: proj.root, env: ENV, detached: true, stdio: ['ignore', fd, fd],
+  });
+  closeSync(fd); // the child holds its own copy
+  child.on('exit', (code) => {
+    if (code === 0) { for (const k of keys) launches.delete(k); return; }
+    // the launcher stopped early: keep what it printed, so the list can say why
+    let output = '';
+    try { output = readFileSync(logFile, 'utf8').slice(from).trim().split('\n').slice(-20).join('\n'); } catch {}
+    for (const k of keys)
+      launches.set(k, { state: 'failed', at: Date.now(), output: output || 'launcher exited with code ' + code });
   });
   child.unref();
 };
 const launchPipeline = (proj, items) => {
   const groups = { verify: [], full: [] };
-  for (const it of items) groups[it.mode === 'full' ? 'full' : 'verify'].push(it.slug + '.md');
-  if (groups.verify.length) runLauncher(proj, ['--stop-at-verify', ...groups.verify]);
-  if (groups.full.length) runLauncher(proj, ['--full', ...groups.full]);
+  for (const it of items) groups[it.mode === 'full' ? 'full' : 'verify'].push(it.slug);
+  if (groups.verify.length)
+    runLauncher(proj, ['--stop-at-verify', ...groups.verify.map((s) => s + '.md')], groups.verify);
+  if (groups.full.length)
+    runLauncher(proj, ['--full', ...groups.full.map((s) => s + '.md')], groups.full);
 };
 
 // generic flavor: spawn the configured launcher command, capture log, track pid
@@ -1016,7 +1038,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (url.pathname === '/api/resume') {
         if (!proj.hasPipeline) return json(res, 400, { error: 'not a pipeline project' });
-        runLauncher(proj, ['--resume', b.slug, b.mode === 'full' ? '--full' : '--stop-at-verify']);
+        runLauncher(proj, ['--resume', b.slug, b.mode === 'full' ? '--full' : '--stop-at-verify'], [b.slug]);
         return json(res, 200, { ok: true });
       }
       if (url.pathname === '/api/cleanup') {
@@ -1121,6 +1143,10 @@ const PAGE = /* html */ `<!doctype html>
   .runstrip .cap.wc { color:var(--warn); margin-top:8px; }
   .runstrip .rp.wp { border-color:var(--warn); background:rgba(251,191,36,.10); }
   .runstrip .rp.wp:hover { background:rgba(251,191,36,.18); }
+  .runstrip .cap.bc { color:var(--bad); margin-top:8px; }
+  .runstrip .cap:first-child { margin-top:0; }
+  .runstrip .rp.bp { border-color:var(--bad); background:rgba(248,113,113,.10); }
+  .runstrip .rp.bp:hover { background:rgba(248,113,113,.18); }
   .hdok { font-size:calc(12px * var(--fs)); color:var(--ok); border:1px solid var(--ok); border-radius:99px;
           padding:2px 11px; font-weight:600; }
   .hdrun { font-size:calc(12px * var(--fs)); color:var(--run); border:1px solid var(--run); border-radius:99px;
@@ -1526,7 +1552,10 @@ function md(src) {
 }
 
 // --- rendering ---
+const starting = (p) => !p.live && p.launch && p.launch.state === 'starting';
+const notStarted = (p) => !p.live && p.launch && p.launch.state === 'failed';
 const dotClass = (p) => p.live ? 'live'
+  : starting(p) ? 'warn' : notStarted(p) ? 'bad'
   : !p.run ? ''
   : OKRE.test(p.run.status) ? 'ok'
   : BADRE.test(p.run.status) ? 'bad' : 'warn';
@@ -1534,6 +1563,8 @@ const dotClass = (p) => p.live ? 'live'
 const autoChips = (p) => {
   let c = '';
   if (p.live) c += '<span class="chip live">● running</span>';
+  else if (starting(p)) c += '<span class="chip warn">⏳ starting…</span>';
+  else if (notStarted(p)) c += '<span class="chip bad">⚠ didn’t start</span>';
   else if (p.run) c += '<span class="chip ' +
     (OKRE.test(p.run.status) ? 'ok' : BADRE.test(p.run.status) ? 'bad' : 'warn') +
     '">' + esc(p.run.status.split(/[.—]/)[0].slice(0, 42)) + '</span>';
@@ -1557,7 +1588,7 @@ let lastItemClick = {};
 const itemHtml = (p) => \`
     <div class="item \${selected === p.key ? 'sel' : ''} \${dotClass(p)}" data-key="\${p.key}">
       <input type="checkbox" data-check="\${p.key}" \${picked.has(p.key) ? 'checked' : ''}
-             \${p.live || p.worktree || p.archived ? 'disabled' : ''}>
+             \${p.live || starting(p) || p.worktree || p.archived ? 'disabled' : ''}>
       <div class="t">
         <div class="name">\${p.file}</div>
         <div class="chiprow">
@@ -1595,15 +1626,24 @@ function renderList() {
   // pinned "running now" strip + header counters — running must be unmissable
   const live = plans.filter((p) => p.live);
   // launched but between sessions: report/run exists, neither done nor failed, no live process
-  const inflight = plans.filter((p) =>
-    !p.live && p.run && !OKRE.test(p.run.status) && !BADRE.test(p.run.status));
-  const ready = plans.filter((p) => !p.live && p.run && OKRE.test(p.run.status));
+  const inflight = plans.filter((p) => !p.live && !p.launch &&
+    p.run && !OKRE.test(p.run.status) && !BADRE.test(p.run.status));
+  const ready = plans.filter((p) => !p.live && !p.launch && p.run && OKRE.test(p.run.status));
+  const launching = plans.filter(starting);
+  const failed = plans.filter(notStarted);
   const bad = plans.filter((p) => !p.live && p.run && BADRE.test(p.run.status));
   setMood({ live: live.length, inflight: inflight.length, bad: bad.length, ready: ready.length });
   const rs = byId('runstrip');
-  rs.className = 'runstrip' + (live.length || inflight.length || ready.length ? ' on' : '');
+  rs.className = 'runstrip' +
+    (live.length || inflight.length || ready.length || launching.length || failed.length ? ' on' : '');
   let sh = '';
   const stripName = (p) => '<span class="pfx">[' + esc(p.project) + ']</span> ' + p.file;
+  if (failed.length) sh += '<div class="cap bc">⚠ DIDN’T START — ' + failed.length + '</div>' +
+    failed.map((p) => '<div class="rp bp" data-go="' + p.key + '"><span class="dot bad"></span><span class="n">' +
+      stripName(p) + '</span><button class="mini" data-why="' + p.key + '">why?</button></div>').join('');
+  if (launching.length) sh += '<div class="cap wc">⏳ STARTING — ' + launching.length + '</div>' +
+    launching.map((p) => '<div class="rp wp" data-go="' + p.key + '"><span class="dot warn"></span><span class="n">' +
+      stripName(p) + '</span><span class="dim mini">setting up…</span></div>').join('');
   if (live.length) sh += '<div class="cap">● RUNNING NOW — ' + live.length + '</div>' +
     live.map((p) => '<div class="rp" data-go="' + p.key + '"><span class="dot live"></span><span class="n">' +
       stripName(p) + '</span><button class="mini" data-log="' + p.key + '">📜 log</button></div>').join('');
@@ -1618,6 +1658,8 @@ function renderList() {
   rs.innerHTML = sh;
   rs.querySelectorAll('[data-go]').forEach((el) =>
     el.addEventListener('click', () => { selected = el.dataset.go; renderList(); renderDetail(true); }));
+  rs.querySelectorAll('[data-why]').forEach((el) =>
+    el.addEventListener('click', (e) => { e.stopPropagation(); showLaunchError(find(el.dataset.why)); }));
   rs.querySelectorAll('[data-log]').forEach((el) =>
     el.addEventListener('click', (e) => { e.stopPropagation(); openLog(el.dataset.log, 'log'); }));
   rs.querySelectorAll('[data-rep]').forEach((el) =>
@@ -1778,6 +1820,7 @@ async function renderDetail(loadPlan) {
     return b;
   };
   const stt = p.live ? 'live'
+    : starting(p) ? 'starting'
     : p.run ? (OKRE.test(p.run.status) ? 'review' : 'stuck')
     : 'fresh';
   const rep = () => openLog(p.key, 'report');
@@ -1786,7 +1829,10 @@ async function renderDetail(loadPlan) {
   const clean = () => p.hasPipeline ? cleanupRun(p) : clearRun(p);
   const launchNow = () => post('/api/launch-generic',
     { project: p.project, slug: p.slug, launcher: +modeOf(p) }, true);
-  if (p.archived) {
+  if (notStarted(p)) btn('⚠ Why it didn’t start', () => showLaunchError(p), 'danger');
+  if (stt === 'starting') {
+    btn('⏳ Starting… setting up the worktree', () => {}).disabled = true;
+  } else if (p.archived) {
     btn('↩ Unarchive plan', () => post('/api/unarchive', { project: p.project, slug: p.slug }, true));
     btn('🖥 Open in VS Code', vsc, null, moreWrap);
   } else if (p.hasPipeline) {
@@ -1798,7 +1844,7 @@ async function renderDetail(loadPlan) {
       btn('🗑 Clean up run', clean, 'danger', moreWrap);
     } else if (stt === 'stuck') {
       btn('📋 Report', rep); btn('📜 Log', log);
-      btn('⟳ Resume', () => post('/api/resume', { project: p.project, slug: p.slug, mode: modeOf(p) }, true));
+      btn('⟳ Resume', () => post('/api/resume', { project: p.project, slug: p.slug, mode: modeOf(p) }).then(afterLaunch));
       btn('🖥 Open in VS Code', vsc, null, moreWrap);
       btn('🗑 Clean up run', clean, 'danger', moreWrap);
     } else { // fresh: launch this one now, or queue it with others via the checkbox
@@ -1806,7 +1852,7 @@ async function renderDetail(loadPlan) {
       else {
         btn('▶ Launch now', () => {
           picked.delete(p.key); renderBar();
-          post('/api/launch', { project: p.project, items: [{ slug: p.slug, mode: modeOf(p) }] }, true);
+          post('/api/launch', { project: p.project, items: [{ slug: p.slug, mode: modeOf(p) }] }).then(afterLaunch);
         }, 'primary');
         btn('📦 Archive plan → done/', () => archive(p), 'danger', moreWrap);
       }
@@ -1918,8 +1964,20 @@ byId('launchbtn').addEventListener('click', async () => {
       }
   }
   picked.clear(); renderBar();
-  setTimeout(refresh, 1200);
+  afterLaunch();
 });
+// show the launch at once, then check every second while anything is still starting
+let fastUntil = 0;
+function afterLaunch() { fastUntil = Date.now() + 15000; refresh(); }
+function showLaunchError(p) {
+  if (!p || !p.launch) return;
+  logKey = null;
+  setBack(null);
+  byId('logtitle').textContent = '⚠ didn’t start — ' + p.slug;
+  byId('logpane').classList.add('open');
+  byId('logbody').textContent = p.launch.output +
+    '\\n\\n(the launcher’s full output is in ' + p.project + '/.plans/auto-runs/_dashboard.log)';
+}
 async function cleanupRun(p) {
   if (!confirm('Clean up "' + p.slug + '"?\\n\\nRemoves its worktree and auto/ branch.\\n(Automatically refused if the worktree has uncommitted changes or the branch is unmerged — nothing can be lost.)')) return;
   const artifacts = confirm('Also delete its breadcrumbs — report, log and settings in auto-runs/?\\n\\nOK = delete too · Cancel = keep for history');
@@ -2575,7 +2633,13 @@ async function refreshOnce() {
 }
 selected = new URLSearchParams(location.search).get('sel') || null;
 byId('side').innerHTML = '<div class="dim" style="padding:14px">loading plans…</div>';
-refresh(); setInterval(refresh, 5000);
+refresh();
+let lastTick = Date.now();
+setInterval(() => {
+  const fast = Date.now() < fastUntil || plans.some(starting);
+  if (!fast && Date.now() - lastTick < 5000) return;
+  lastTick = Date.now(); refresh();
+}, 1000);
 if (new URLSearchParams(location.search).get('settings')) openSettings();
 if (new URLSearchParams(location.search).get('tour')) {
   const tourWhenPainted = () => (firstPaint ? startTour() : setTimeout(tourWhenPainted, 200));

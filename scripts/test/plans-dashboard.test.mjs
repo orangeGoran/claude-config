@@ -232,3 +232,25 @@ test('refuses requests from other websites and from unknown host names', async (
   assert.equal(await raw('POST', '/api/meta', { Host: self, Origin: `http://${self}`, 'Content-Type': 'application/json' },
     JSON.stringify({ project: 'demo', slug: 'demo-plan', status: 'todo', tags: [] })), 200);
 });
+
+test('a pipeline launch shows as starting, then as failed with the launcher output', async () => {
+  const pipe = path.join(tmp, 'pipe-repo');
+  mkdirSync(path.join(pipe, '.plans'), { recursive: true });
+  mkdirSync(path.join(pipe, '.claude', 'scripts'), { recursive: true });
+  writeFileSync(path.join(pipe, '.plans', 'pipe-plan.md'), '# Plan: Pipe\n');
+  // stands in for the repo's auto-pipeline.sh stopping during its own setup
+  writeFileSync(path.join(pipe, '.claude', 'scripts', 'auto-pipeline.sh'),
+    'sleep 1\necho "FATAL: pnpm is not runnable"\nexit 1\n');
+  const reg = JSON.parse(readFileSync(path.join(home, '.claude', 'pipeline-projects.json'), 'utf8')).projects;
+  assert.equal((await post('/api/registry', { projects: [...reg, { name: 'pipe', root: pipe, launchers: [] }] })).ok, true);
+  const pipePlan = async () => (await state()).find((p) => p.name === 'pipe').plans[0];
+
+  assert.deepEqual(await post('/api/launch', { project: 'pipe', items: [{ slug: 'pipe-plan', mode: 'verify' }] }), { ok: true });
+  assert.equal((await pipePlan()).launch.state, 'starting', 'shown before the launcher has done anything');
+
+  const deadline = Date.now() + 10000;
+  let p;
+  do { await sleep(200); p = await pipePlan(); } while (Date.now() < deadline && p.launch.state === 'starting');
+  assert.equal(p.launch.state, 'failed');
+  assert.match(p.launch.output, /FATAL: pnpm is not runnable/);
+});
