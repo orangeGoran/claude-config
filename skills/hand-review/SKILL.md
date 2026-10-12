@@ -211,7 +211,8 @@ question arrive — treat free text as the answer and follow it, not the options
 the author, what was tried, or what is supposed to be different afterwards. Closing that gap is
 the job of the first message.
 
-So the first message is a brief, not a scoping report. Four short parts, in this order:
+So the first message is a brief, not a scoping report. Four short parts, in this order. Write
+each part as a paragraph and do not print the part names as labels (Step 2 says why):
 
 1. **The problem.** What was broken, missing or painful before this change — two to four
    sentences, with one concrete instance. *"After a rollback, the device kept the database from
@@ -324,26 +325,51 @@ Then start unit 1, in the per-unit shape at the end of Step 2. Do not dump sever
 
 ## Step 2 — per stop
 
-Head each one **"Stop N of M — <plain-words title>"**. **Then two lines of handrail before any
-mechanism** — landing straight in *what happens* is a cold start, and the reviewer spends the
-first half of the stop working out why they are here:
+Head each one **"Stop N of M — <plain-words title>"**. Then, before any mechanism, write one
+short paragraph that tells the reviewer why they are here. If the stop starts with the
+mechanism, the reviewer spends the first half of it working out why they are here.
 
-- **Where we came from.** One sentence naming what the previous stop established and **what is
-  carried into this one**, as a real value where there is one. *"Stop 3 read the string
-  `iriis.db` from the device config."* At stop 1 this line instead connects
-  back to the brief.
-- **What this stop decides.** One **bold** sentence: the judgement made here and where it could
-  go wrong. *"This stop changes that name into an absolute path. Here, a bad config can send
-  the delete outside the backup folder."* Not a summary of the code; the reason the
-  stop exists.
+**The opening paragraph** is two to four sentences of normal prose. It does two jobs, in this
+order:
 
-Two lines, never more. If the recap needs a paragraph, the previous stop did not land and the
-fix is to re-tell that one, not to prefix this one.
+- It connects to the previous stop with the real value that the request carries into this one.
+  At stop 1, it connects to the problem from the brief.
+- It says in **bold** what the reviewer must decide here, and where it can go wrong.
 
-Then these parts, in this order, and nothing else:
+**Do not print the jobs as labels.** Do not write "Where we came from:", "What this stop
+decides:", "What happens." or "Why:", as prefixes or as headings. A label makes the reader
+stop, work out what it refers to, and then read the sentence again with that in mind. Write
+sentences that carry their own meaning.
 
-1. **What happens.** Three to six short sentences. What the request is doing here, opening on
-   the concrete trace of Rule 2 — real call, real values, what comes back.
+**Each sentence continues from the one before it.** The reader must not keep a term from the
+first line in mind while the next lines change subject. Where you can, start a sentence with
+the thing that the previous sentence ended on. Do not point to "the brief" or "stop 3" alone.
+State the fact again in a few words.
+
+Bad: labels, compressed lines, and each line needs decoding:
+
+> Where we came from: the brief. One role change wrote three groups of rows that did not share
+> a key.
+> What this stop decides: an older file gets the column without data loss, and only rows of a
+> request that came through the edge carry it.
+> What happens.
+
+Good: one paragraph, where each sentence follows from the one before:
+
+> One role change writes three groups of audit rows, and before this change nothing tied the
+> groups together. This stop adds a `request_id` column, so one ID links all three groups.
+> **Decide two things here: whether an older database file gets the column without losing rows,
+> and whether only requests that came through the edge get an ID.**
+
+If the connection to the previous stop needs more than one sentence, the previous stop was not
+clear. Explain that stop again. Do not make this paragraph longer.
+
+Then these parts, in this order, and nothing else. **No labels between them.** The reader sees
+a paragraph, a link and the code, then a paragraph. The page must not look like a form.
+
+1. **The trace.** Three to six short sentences that continue the opening paragraph. Follow the
+   request through this stop with the concrete trace of Rule 2: the real call, the real values,
+   and what comes back.
 2. **The lines that actually run.** A handful — 3 to 10. Not the file. If the file is 200 lines
    and 6 of them execute on this path, show the 6 and say so. **Put a clickable link to the
    first shown line directly above the code block** — the reviewer should jump to the code in
@@ -352,8 +378,10 @@ Then these parts, in this order, and nothing else:
    `[rollback.ts:42](src/rollback.ts#L42)` (a range as `#L42-L51`); in a plain terminal,
    `src/rollback.ts:42`. If the lines come from two places, one link above each snippet.
 3. **Why it is built that way.** Two to four sentences on the design choice, and what would go
-   wrong with the obvious alternative. This is where the real names arrive.
-4. **Done after this stop.** Either the files now fully covered, followed by a ready-to-copy
+   wrong with the obvious alternative. This is where the real names arrive. Start from the code
+   just shown: *"The migration gives the column a default value, because…"*
+4. **Done after this stop.** This is the only part with a printed label, because the reviewer
+   scans for it. Either the files now fully covered, followed by a ready-to-copy
    staging command for exactly those files, paths relative to the repo root. **One file per
    line**, each line but the last ending in ` \`, so it reads as a list but still pastes as one
    command — even for a single file, keep `git add --` on its own line:
@@ -392,8 +420,8 @@ the last thing in the turn** — no trailing prose after it, and never more than
 ### Fallback: the per-unit shape (use with Step 1b only)
 
 Head each **"Bundle N of M — <theme>"** or *"File N of M — `path`"*, with clickable links and
-real sizes. **The two-line handrail of Step 2 applies here too** — where we came from, and what
-this bundle decides — then adapt these parts to what the unit deserves:
+real sizes. **The opening paragraph of Step 2 applies here too**: the connection to the previous
+unit and what this bundle decides, as prose with no labels. Then adapt these parts to what the unit deserves:
 
 | Part | What it does |
 |---|---|
