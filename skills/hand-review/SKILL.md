@@ -151,8 +151,10 @@ So:
   would have written it themselves, give that same point again in full engineering register —
   real types, the mechanism, `file:line`, the trade-off that was made. This is the comparison
   they learn from, and it lands when they asked for it rather than when you decided they needed it.
-- **At the wrap-up:** the findings list is written in engineering register by default. By then
-  they have the whole story and want precision.
+- **At the wrap-up:** the findings list is written in engineering register by default, and
+  still in STE. By then they have the whole story and want precision.
+- **Engineering register changes the depth, not the language rules.** The senior version and the
+  findings list still follow STE (Rule 1).
 
 ### Rules for the opening
 

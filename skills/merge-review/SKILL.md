@@ -17,6 +17,7 @@ Explain a merge so the user knows exactly what changed, what to click through, a
 - The user's editor may reformat on save. If a file has to stay in a special format, say so and tell them how to save without formatting.
 - Shell is often zsh: quote globs (`--include='*.html'`, `"$ref:path"`), or results silently come back empty. If a search returns 0 where you expected hits, suspect the shell before you trust the zero.
 - Put temporary files in the session scratchpad, never in the repo.
+- Write all prose to the user in ASD-STE100 Simplified Technical English: simple common words, one word for one meaning, active voice, simple tenses, 25 words maximum per descriptive sentence and 20 per instruction, one instruction per step, warnings first. Code, file paths, commands, branch names and error text are technical names: show them exactly.
 
 ## Step 1: find out what state the merge is in
 
@@ -47,7 +48,7 @@ For each conflicted file:
    - **Format-only:** the content is identical and only whitespace, newlines or key order differ. Prove it (parse both sides and compare, or `cmp` and report the byte difference), then take the side that matches the repo's usual format.
 3. Large one-line files (minified JSON, generated data) can't be merged by hand. Rebuild them with a short script that loads both sides with `git show <ref>:<path>`, applies the intended change, keeps the order, and writes the original format.
 4. After resolving: no conflict markers left, nothing references removed names (grep for them), and the type check and build pass.
-5. If the user asks for a plain-language or controlled-language explanation (for example ASD-STE100), follow its rules: short sentences, active voice, one instruction per step, a summary first, numbered procedure.
+5. Explain each conflict in STE (Hard rules): a summary first, then a numbered procedure.
 
 Tell the user if a previous fix of yours caused this conflict. Own it.
 
