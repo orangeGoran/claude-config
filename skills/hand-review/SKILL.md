@@ -73,8 +73,9 @@ simplify them.
 - **Warnings come first.** If a stop holds a risk of data loss or a security gap, say it before
   the explanation.
 - **Use a vertical list** for three or more items that have no order.
-- **Use a flowchart for steps that occur in sequence** — a request that moves through the code,
-  a process, a retry, a branch on a condition. Do not use a bullet list for a flow. Draw it as
+- **Use a numbered list for steps that occur in a straight line,** one action per line.
+- **Use a flowchart when the steps branch or loop** — a retry, a branch on a condition, a
+  request that can stop at a guard. Do not use a bullet list for a flow. Draw it as
   text in a fenced code block, so it looks the same in a terminal and in an IDE:
 
   ```
@@ -379,67 +380,34 @@ Then start unit 1, in the per-unit shape at the end of Step 2. Do not dump sever
 
 ## Step 2 — per stop
 
-Head each one **"Stop N of M — <plain-words title>"**. Then, before any mechanism, write one
-short paragraph that tells the reviewer why they are here. If the stop starts with the
-mechanism, the reviewer spends the first half of it working out why they are here.
+Head each one `## Stop N of M — <plain-words title>`. **A stop must be easy to scan, like the
+brief (Step 0).** Paragraphs one after another look like a wall of text, even when each
+sentence is clear. Give every stop this shape, and nothing else:
 
-**The opening paragraph** is two to four sentences of normal prose. It does two jobs, in this
-order:
-
-- It connects to the previous stop with the real value that the request carries into this one.
-  At stop 1, it connects to the problem from the brief.
-- It says in **bold** what the reviewer must decide here, and where it can go wrong.
-
-**Do not print the jobs as labels.** Do not write "Where we came from:", "What this stop
-decides:", "What happens." or "Why:", as prefixes or as headings. A stop is short, so prose
-carries it. The brief is longer, so it uses headings (Step 0). A label makes the reader
-stop, work out what it refers to, and then read the sentence again with that in mind. Write
-sentences that carry their own meaning.
-
-**Each sentence continues from the one before it.** The reader must not keep a term from the
-first line in mind while the next lines change subject. Where you can, start a sentence with
-the thing that the previous sentence ended on. Do not point to "the brief" or "stop 3" alone.
-State the fact again in a few words.
-
-Bad: labels, compressed lines, and each line needs decoding:
-
-> Where we came from: the brief. One role change wrote three groups of rows that did not share
-> a key.
-> What this stop decides: an older file gets the column without data loss, and only rows of a
-> request that came through the edge carry it.
-> What happens.
-
-Good: one paragraph, where each sentence follows from the one before:
-
-> One role change writes three groups of audit rows, and before this change nothing tied the
-> groups together. This stop adds a `request_id` column, so one ID links all three groups.
-> **Decide two things here: whether an older database file gets the column without losing rows,
-> and whether only requests that came through the edge get an ID.**
-
-If the connection to the previous stop needs more than one sentence, the previous stop was not
-clear. Explain that stop again. Do not make this paragraph longer.
-
-Then these parts, in this order, and nothing else. **No labels between them.** The reader sees
-a paragraph, a link and the code, then a paragraph. The page must not look like a form.
-
-1. **The trace.** Three to six short sentences that continue the opening paragraph. Follow the
-   request through this stop with the concrete trace of Rule 2: the real call, the real values,
-   and what comes back.
-2. **The lines that actually run.** A handful — 3 to 10. Not the file. If the file is 200 lines
-   and 6 of them execute on this path, show the 6 and say so. **Put a clickable link to the
-   first shown line directly above the code block** — the reviewer should jump to the code in
-   one click, not search for it. Code blocks are not clickable, so the link must be outside
-   the block. Use the host's link form: in an IDE extension a markdown link with a line anchor,
-   `[rollback.ts:42](src/rollback.ts#L42)` (a range as `#L42-L51`); in a plain terminal,
-   `src/rollback.ts:42`. If the lines come from two places, one link above each snippet.
-3. **Why it is built that way.** Two to four sentences on the design choice, and what would go
-   wrong with the obvious alternative. This is where the real names arrive. Start from the code
-   just shown: *"The migration gives the column a default value, because…"*
-4. **Done after this stop.** This is the only part with a printed label, because the reviewer
-   scans for it. Either the files now fully covered, followed by a ready-to-copy
-   staging command for exactly those files, paths relative to the repo root. **One file per
-   line**, each line but the last ending in ` \`, so it reads as a list but still pastes as one
-   command — even for a single file, keep `git add --` on its own line:
+1. **Context: one sentence of plain prose.** It connects to the previous stop with the real
+   value that the request carries into this one. At stop 1, it connects to the problem from the
+   brief. State the fact again in a few words. Do not point to "the brief" or "stop 3" alone.
+2. **The decision, in a blockquote:** `> **You decide:** <the question>`. One question, or two
+   that cannot be judged apart. Say where it can go wrong.
+3. **`### What happens`** — the concrete trace of Rule 2: the real call, the real values, what
+   comes back. Write it as a numbered list, one action per line, three to six lines. Use a
+   flowchart (Rule 1) instead when the flow branches or loops.
+4. **The lines that actually run**, directly under the trace. A handful — 3 to 10. Not the
+   file. If the file is 200 lines and 6 of them execute on this path, show the 6 and say so.
+   **Put a clickable link to the first shown line directly above the code block** — the
+   reviewer should jump to the code in one click, not search for it. Code blocks are not
+   clickable, so the link must be outside the block. Use the host's link form: in an IDE
+   extension a markdown link with a line anchor, `[rollback.ts:42](src/rollback.ts#L42)` (a
+   range as `#L42-L51`); in a plain terminal, `src/rollback.ts:42`. If the lines come from two
+   places, one link above each snippet.
+5. **`### Why it is built this way`** — three or four bullets, one or two sentences each. **Each
+   bullet starts with a bold phrase that states the point**, not a category name: *"**Hidden
+   from logs.**"*, not *"**Visibility:**"*. Cover the design choice, the obvious alternative and
+   why it is worse, and any weak point that the change accepts.
+6. **`### Done after this stop`** — the files now fully covered, as a ready-to-copy staging
+   command for exactly those files, paths relative to the repo root. **One file per line**, each
+   line but the last ending in ` \`, so it reads as a list but still pastes as one command —
+   even for a single file, keep `git add --` on its own line:
 
    ```bash
    git add -- \
@@ -447,11 +415,51 @@ a paragraph, a link and the code, then a paragraph. The page must not look like 
      src/snapshot.ts
    ```
 
-   Or, when no file finishes here, just **"Done after this stop: none."** — nothing more. Do not
-   explain when the file comes back or at which stop; the reviewer only needs to know there is
-   nothing to stage yet. Never leave the line out, and never let it drift from the ledger.
-   **Do not run the command yourself**; it is for the reviewer to copy, not permission to
-   stage.
+   When no file finishes here, write only **"None."** under the heading. Do not explain when the
+   file comes back or at which stop; the reviewer only needs to know there is nothing to stage
+   yet. Never leave the part out, and never let it drift from the ledger. **Do not run the
+   command yourself**; it is for the reviewer to copy, not permission to stage.
+
+**Headings, not labels.** A heading on its own line shows where a part starts, so the eye can
+jump to it. A label glued to the front of a sentence ("Where we came from: the brief.") makes
+the reader stop and decode it. Use only the headings above, and never start a sentence with a
+label.
+
+Example of the shape, shortened:
+
+```markdown
+## Stop 1 of 5 — the failed AI call keeps its first attempt
+
+When a JSON call fails twice, the AI log writes one row and loses the first attempt.
+
+> **You decide:** is it safe to carry the attempt data on the error object? Can a caller lose
+> that data without any sign?
+
+### What happens
+
+1. Brain calls `executeWithJsonOutput` for the answerer.
+2. The first response fails the schema check. The service sends a corrective retry.
+3. The second response also fails. The service attaches `{ failedAttempts, lastResponse }` to
+   the error and throws `CodedBadRequestException(AiOutputInvalid)`.
+4. The tracker reads the data in its `finally` block. It writes the final row with
+   `attempt_number = 2` and one linked row for the first attempt.
+
+[ai-thrown-attempt-data.ts:36](src/domains/ai/application/services/ai-thrown-attempt-data.ts#L36)
+(the code block)
+
+### Why it is built this way
+
+- **Hidden from logs.** The key is a module-private `Symbol` and the property is not
+  enumerable, so `JSON.stringify` and the exception filter do not show the data.
+- **Existing handlers still match.** The class, `code` and `message` stay the same. A new
+  subclass would break the processors that test `instanceof CodedBadRequestException`.
+- **Accepted weak point.** A function that catches the error and throws a different one loses
+  the data, and nothing reports the loss.
+
+### Done after this stop
+
+(the git add command)
+```
 
 **Hard limits, because the failure mode here is volume, not inaccuracy:**
 
@@ -461,7 +469,7 @@ a paragraph, a link and the code, then a paragraph. The page must not look like 
   written wrong — they are **one stop**, even though that stop is longer. Splitting them puts a
   confirmation between two halves of one thought and asks for an opinion the reviewer cannot
   form yet. A stop holding two *independent* decisions is still two stops.
-- **No tables, no shell checks, no findings, no "consequences" block inline.** Each of those
+- **No tables, no shell checks, no findings, no "consequences" block inside a stop.** Each of those
   breaks the narrative, and stacking them is exactly what makes a reviewer lose the thread.
 - **One code block per stop**, unless the second is three lines showing a contrast. A flowchart
   (Rule 1) does not count against this limit, but a stop gets one flowchart at most.
@@ -475,8 +483,7 @@ the last thing in the turn** — no trailing prose after it, and never more than
 ### Fallback: the per-unit shape (use with Step 1b only)
 
 Head each **"Bundle N of M — <theme>"** or *"File N of M — `path`"*, with clickable links and
-real sizes. **The opening paragraph of Step 2 applies here too**: the connection to the previous
-unit and what this bundle decides, as prose with no labels. Then adapt these parts to what the unit deserves:
+real sizes. **The context sentence and the `You decide` blockquote of Step 2 apply here too.** Then adapt these parts to what the unit deserves:
 
 | Part | What it does |
 |---|---|
@@ -543,7 +550,7 @@ correct it** rather than defending it.
 - **The coverage ledger**, if it was not asked for earlier — stop against the files finished
   after it, so the reviewer can stage with confidence. Here it is a checklist; at the opening it
   was noise. Follow it with one `git add -- …` command covering every file the tour finished
-  (or one per commit, when it splits into several), one file per line as in Step 2, part 4
+  (or one per commit, when it splits into several), one file per line as in Step 2, part 6
 - **How it splits into commits**, if the repo's rules or the file count mean it cannot be one,
   with the actual messages
 - Offer the next step **through the gate**: run the tests, produce a commit message, write the
