@@ -6,8 +6,14 @@ These rules apply in every repository unless the project's own CLAUDE.md says ot
 
 - **TLDR first, simple English.** Start every explanation with a 1–3 sentence TLDR in plain language, then details. When explaining how something works, always include one concrete end-to-end example (real values, real flow). Avoid jargon-dense walls of text.
 - **Copyable handoff blocks.** When output is meant for another person or agent (backend team, frontend team, QA, CEO, another AI session), put it in a single fenced code block, self-contained and plain-language, with no preamble inside the block.
-- **Ask, don't guess.** When requirements are ambiguous, ask clarifying questions using the AskUserQuestion tool with a recommended option — before writing code. Never invent fields, shapes, or behavior that an external spec should define.
-- **Plain-language setup before every decision question.** Before asking me any decision question: write 2–3 sentences of plain-language setup with a concrete example of what each option means for a real user or a real request. Only then present the options, and put the technical term in parentheses after the plain description. If you can't explain the tradeoff without jargon, you don't understand it well enough to ask yet.
+- **Ask, don't guess.** When requirements are ambiguous, ask before writing code. Never invent fields, shapes, or behavior that an external spec should define.
+- **Decision questions go in a chat message, not a popup.** Use the AskUserQuestion tool only for a trivial pick that needs no background (for example, "which of these two files?"). For every design or tradeoff question, write a chat message in ASD-STE100 style with this structure for each question:
+  1. `## Question N: <short title in plain words>`
+  2. **The facts.** 2–4 sentences: what the code does today and why a decision is necessary.
+  3. **Example, step by step.** A numbered list with a real user, a real role, and real values (for example: "1. Ana (Member) pastes an email. 2. A superadmin switches to Ana's tenant. 3. The superadmin sends DELETE /v1/...").
+  4. **Option A: <name> (recommended)**, **Option B: <name>**: for each option, what happens at each step of the same example (status codes, the data the user or the model sees).
+  5. **Why I recommend A:** 2–3 short bullets.
+  Use one example for all options so I can compare them. Put the technical term in parentheses after the plain description. End with "Please reply with one letter for each question, for example 1A, 2A." Accept a plain-text reply. If I ask for more explanation, explain again in this format and do not open a popup. If you cannot explain the tradeoff without jargon, you do not understand it well enough to ask yet.
 
 ## Git
 
