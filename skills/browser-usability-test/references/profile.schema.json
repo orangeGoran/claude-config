@@ -1,0 +1,219 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "browser-usability-test/profile.schema.json",
+  "title": "browser-usability-test project profile (project.json)",
+  "description": "One per project in ~/.claude/browser-usability-test/projects/<project>/project.json. Field meanings: references/profile.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repos"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "name": { "type": "string", "description": "Project name; the folder name wins." },
+    "repos": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "path"],
+        "properties": {
+          "role": { "type": "string", "description": "frontend, backend, …" },
+          "path": { "type": "string", "description": "Main checkout, ~ allowed." },
+          "remote": { "type": ["string", "null"], "description": "Normalized origin, e.g. github.com/org/repo." }
+        }
+      }
+    },
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url"],
+      "properties": {
+        "url": { "$ref": "#/definitions/httpUrl" }
+      }
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": { "$ref": "#/definitions/httpUrl" },
+        "healthPath": { "$ref": "#/definitions/path" },
+        "openApiPath": { "$ref": "#/definitions/path" }
+      }
+    },
+    "services": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "docker": { "type": "array", "items": { "type": "string" }, "description": "Containers that must run." }
+      }
+    },
+    "db": {
+      "type": "object",
+      "required": ["kind"],
+      "discriminator": { "propertyName": "kind" },
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "required": ["kind", "container", "user", "database"],
+          "properties": {
+            "kind": { "const": "docker-psql" },
+            "container": { "type": "string" },
+            "user": { "type": "string" },
+            "database": { "type": "string" }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["kind", "url"],
+          "properties": {
+            "kind": { "const": "psql" },
+            "url": { "type": "string", "pattern": "^postgres(ql)?://" }
+          }
+        }
+      ]
+    },
+    "roles": { "type": "array", "items": { "type": "string" } },
+    "tenancy": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["usersTable"],
+          "properties": {
+            "usersTable": { "type": "string" },
+            "emailColumn": { "type": "string" },
+            "roleColumn": { "type": "string" },
+            "tenantColumn": { "type": "string" },
+            "superadminColumn": { "type": "string" },
+            "tenantsTable": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "accountSetup": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "anyOf": [{ "required": ["command"] }, { "required": ["steps"] }],
+          "properties": {
+            "command": { "type": "string" },
+            "steps": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "confirmedAt": { "type": "string", "description": "Date the user confirmed the recipe." }
+          }
+        }
+      ]
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session": { "enum": ["bearer", "cookie"] },
+        "loginPath": { "$ref": "#/definitions/path" },
+        "selectors": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "email": { "type": "string" },
+            "password": { "type": "string" },
+            "submit": { "type": "string" },
+            "twoFactor": { "type": "string" }
+          }
+        },
+        "tokenResponse": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["urlPattern", "path"],
+          "properties": {
+            "urlPattern": { "$ref": "#/definitions/regex" },
+            "path": { "type": "string", "description": "Dot path to the token in the JSON body." }
+          }
+        },
+        "throttlePattern": { "$ref": "#/definitions/regex" },
+        "tokenMaxAgeMinutes": { "type": "number", "exclusiveMinimum": 0 },
+        "api": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["loginPath", "tokenPath"],
+          "properties": {
+            "loginPath": { "$ref": "#/definitions/path" },
+            "tokenPath": { "type": "string" },
+            "emailKey": { "type": "string" },
+            "passwordKey": { "type": "string" },
+            "extraBody": { "type": "object" },
+            "twoFactor": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["challengePath", "path"],
+              "properties": {
+                "challengePath": { "type": "string" },
+                "path": { "$ref": "#/definitions/path" },
+                "challengeKey": { "type": "string" },
+                "codeKey": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "theme": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["toggle"],
+          "properties": {
+            "toggle": { "type": "string", "description": "CSS selector of the theme toggle." },
+            "attribute": { "type": "string", "description": "Attribute on <html> that holds the theme." }
+          }
+        },
+        "localeRewrite": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["urlPattern", "field"],
+          "properties": {
+            "urlPattern": { "$ref": "#/definitions/regex" },
+            "field": { "type": "string" }
+          }
+        },
+        "cssTokenPrefix": { "type": "string", "pattern": "^--" }
+      }
+    },
+    "noise": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind"],
+        "discriminator": { "propertyName": "kind" },
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": { "const": "http" },
+              "status": { "type": "integer" },
+              "method": { "type": "string" },
+              "urlIncludes": { "type": "string" }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "required": ["pattern"],
+            "properties": {
+              "kind": { "const": "console" },
+              "pattern": { "$ref": "#/definitions/regex" }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "httpUrl": { "type": "string", "pattern": "^https?://" },
+    "path": { "type": "string", "pattern": "^/" },
+    "regex": { "type": "string", "description": "JavaScript regular expression source." }
+  }
+}

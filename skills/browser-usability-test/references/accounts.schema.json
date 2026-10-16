@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "browser-usability-test/accounts.schema.json",
+  "title": "browser-usability-test test accounts (accounts.json)",
+  "description": "One per project in ~/.claude/browser-usability-test/projects/<project>/accounts.json, mode 600. Written by profile.mjs add-account.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["accounts"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "accounts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "email", "password"],
+        "properties": {
+          "label": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$", "description": "Short name for QA_ACCOUNT." },
+          "email": { "type": "string", "pattern": "^[^@\\s]+@[^@\\s]+$" },
+          "password": { "type": "string", "minLength": 1 },
+          "twoFactor": { "type": "string" },
+          "role": { "type": "string", "description": "One of the project's roles." },
+          "tenant": { "type": "string" },
+          "tenantId": { "type": "string" },
+          "superadmin": { "type": "boolean" },
+          "notes": { "type": "string" }
+        }
+      }
+    }
+  }
+}

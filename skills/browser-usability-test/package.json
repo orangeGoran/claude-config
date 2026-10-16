@@ -1,0 +1,11 @@
+{
+  "name": "browser-usability-test",
+  "private": true,
+  "type": "module",
+  "description": "Browser and accessibility engine for the browser-usability-test skill. Install once: npm install --prefix <this folder>.",
+  "dependencies": {
+    "@axe-core/playwright": "4.10.2",
+    "ajv": "8.17.1",
+    "playwright-core": "1.56.0"
+  }
+}

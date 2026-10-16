@@ -42,7 +42,7 @@ That's it. Setup opens your dashboard in the browser at **[https://plans.test](h
 1. **Add your first project.** The guide on the dashboard finds your repos and walks you through it. Step by step with screenshots: [Add a project to the dashboard](docs/add-project.md).
 2. **Write a plan.** Put a Markdown file in the project's plans folder (`.plans` by default) that says what to change and how to check it. It shows up on the dashboard.
 3. **Launch it.** Open the plan and click **▶ Launch now**. Come back to a finished diff.
-4. **Use the skills.** In Claude Code, in any project, type `/commit-message`, `/pr`, `/hand-review` or `/merge-review`.
+4. **Use the skills.** In Claude Code, in any project, type `/commit-message`, `/pr`, `/hand-review`, `/merge-review` or `/browser-usability-test`.
 
 Skipped the dashboard part? Run `node scripts/plans-dashboard.mjs` and open [http://127.0.0.1:4899](http://127.0.0.1:4899).
 
@@ -60,6 +60,7 @@ To change your choices later, run `scripts/setup.sh` again. Every question it as
 | [`/pr`](skills/pr/SKILL.md)                         | Opens a pull request from one branch into another.                     |
 | [`/hand-review`](skills/hand-review/SKILL.md)       | Walks you through a diff one stop at a time.                           |
 | [`/merge-review`](skills/merge-review/SKILL.md)     | Explains a merge: what users see, what to check, what changed inside.  |
+| [`/browser-usability-test`](skills/browser-usability-test/SKILL.md) | Tests a page of your local app in a real browser and reports bugs with evidence. Needs `npm install --prefix skills/browser-usability-test` once. |
 
 ## Author
 
