@@ -75,8 +75,7 @@ Plain language. No wall of jargon. Use tables where there is a before and after.
    - the exact URL, and the locale or variant (e.g. `/de/security`)
    - the viewport widths or devices
    - the action (click Play, switch language, view source)
-   - the expected result, including what must *not* happen (no height jump, no sideways scroll)
-   Put the riskiest item first and say why it's risky. Start with the commands to run (install, build, preview).
+   - the expected result, including what must *not* happen (no height jump, no sideways scroll) Put the riskiest item first and say why it's risky. Start with the commands to run (install, build, preview).
 4. **Architecture changes**: a table (What / Before / Now). Cover new dependencies and why they're needed (check whether they were already installed transitively), build or deploy steps, routing, shared data sources, rules now enforced by checks, removed files or keys, and the side effects for debugging or future upgrades. If nothing structural changed, say so in one line.
 5. **Still open**: decisions or risks from earlier merges in this session that are still unresolved. Carry them forward until the user closes them.
 6. **Next command**: what the user runs to finish (e.g. `git add <files>` then `git commit --no-edit`), noting anything they already staged that now differs.
