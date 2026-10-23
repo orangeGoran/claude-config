@@ -2100,7 +2100,7 @@ async function openLauncherSetup(projName, back) {
   if (d.hasPipeline)
     h += '<p style="border:1px solid var(--warn);border-radius:9px;padding:8px 12px;color:var(--warn)">' +
       '⚡ <b>This project has auto-pipeline.sh</b> — its plans launch through the pipeline ' +
-      '(stop-at-verify / full modes), and launchers here are <b>ignored</b>. ' +
+      '(in the modes the script offers), and launchers here are <b>ignored</b>. ' +
       'You only need launchers for projects without the pipeline.</p>';
   h += '<p style="margin-top:10px"><b>Existing launchers</b> — what ▶ Launch currently offers (✕ deletes immediately):</p>';
   h += (proj.launchers || []).length
@@ -2166,7 +2166,7 @@ async function openSettings() {
       'changes appear in the list within seconds.</p>';
     h += '<p class="hint"><b>How launching works:</b> if a repo contains ' +
       '<code>.claude/scripts/auto-pipeline.sh</code>, the dashboard detects it automatically and launches ' +
-      'that project\\u2019s plans through it (⚡ stop-at-verify / full, worktrees, reports) — nothing to ' +
+      'that project\\u2019s plans through it (⚡ the script\\u2019s own modes, worktrees, reports) — nothing to ' +
       'configure. Repos without it launch plans via the launcher commands you set up per project ' +
       '(⚙ Edit launchers below).</p>';
     rows.forEach((e, i) => {
@@ -2191,7 +2191,7 @@ async function openSettings() {
         '</div>';
       h += '<div class="pcard-foot">' +
         (e._hasPipeline
-          ? '⚡ launches via its own auto-pipeline.sh (stop-at-verify / full) — launchers not needed'
+          ? '⚡ launches via its own auto-pipeline.sh, in the modes it offers — launchers not needed'
           : ln + ' launcher' + (ln === 1 ? '' : 's') +
             (e._orig ? ' · <button class="pbtn" data-lset="' + escA(e._orig) + '">⚙ Edit launchers</button>'
                      : ' · save the project first, then configure launchers')) + '</div>';

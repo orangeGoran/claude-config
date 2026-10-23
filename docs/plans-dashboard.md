@@ -121,7 +121,7 @@ The report `<plansDir>/auto-runs/<slug>.md` can contain these lines:
 | Line | Effect |
 | --- | --- |
 | `## Status: <text>` | Shown as is. |
-| `- **Outcome**: running \| needs-you \| failed` | Puts the run in "in progress", "✓ waiting on you" or the failed state. Update it every time the status changes. Without this line, the dashboard uses the status words: `VERIFIED`, `REVIEWED`, `COMMITTED` and `FINISHED` mean needs-you; `BLOCKED`, `FAILED` and `ENDED` mean failed. |
+| `- **Outcome**: running \| needs-you \| failed` | Puts the run in "in progress", "✓ waiting on you" or the failed state. It must be correct when no session runs; while one runs, the dashboard shows "● running now" and ignores it. Without this line, the dashboard uses the status words: `VERIFIED`, `REVIEWED`, `COMMITTED` and `FINISHED` mean needs-you; `BLOCKED`, `FAILED` and `ENDED` mean failed. |
 | `- **Link**: <label> \| <url>` | One button per line (up to 5) in the "waiting on you" strip and in the plan view, for example `- **Link**: Open PR \| https://github.com/…/pull/42`. |
 
 Generic run state (pid, exit code, log) lives under `~/.claude/pipeline-dashboard/`. Statuses and tags are written to `<plansDir>/plan-meta.json` when the repo already tracks that file, otherwise centrally.
