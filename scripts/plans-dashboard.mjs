@@ -776,7 +776,7 @@ const projectHealth = (root, entry) => {
         'report, the dashboard knows when a run waits for you and shows its links.',
       fixPrompt: 'Read ' + tilde(docs) + ' (section "Pipeline modes and run reports"). Then change ' +
         '.claude/scripts/auto-pipeline.sh: add a --describe case that prints the modes this script really ' +
-        'supports as that JSON, and make each run report keep its "- **Outcome**:" line correct whenever ' +
+        'supports as that JSON (ask me which mode should be the "default"), and make each run report keep its "- **Outcome**:" line correct whenever ' +
         'no session runs, plus a "- **Link**:" line for each URL a reviewer needs. Do not commit.' });
   } else {
     // an unregistered repo with the wrapper is ready: adding it saves WRAPPER_LAUNCHER
