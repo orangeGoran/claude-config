@@ -12,7 +12,8 @@
 //
 // Two flavors per project, auto-detected:
 //  - auto-pipeline: <root>/.claude/scripts/auto-pipeline.sh exists → full solver-style
-//    features (verify/full modes, resume, worktrees, reports, cleanup, lanes).
+//    features (modes, resume, worktrees, reports, cleanup, lanes). The script can list
+//    its own modes (`--describe`) and say in its report when a run needs you.
 //  - generic: plans launch via per-project launcher commands ({plan}/{root}/{slug}
 //    placeholders). First launch opens a setup dialog that discovers the repo's
 //    .claude/skills and .claude/scripts. Runs are tracked by the dashboard itself
@@ -189,6 +190,35 @@ const resolveProject = (p) => {
     issuesUrl: issuesUrlFor(root),
   };
 };
+// Pipeline modes. A script that handles `--describe)` prints its own modes as JSON:
+//   { "modes": [ { "id": "verify", "flag": "--stop-at-verify", "label": "..." }, ... ] }
+// `id` is what the report's `**Mode**:` line holds, `flag` what launch and resume pass.
+// Without it, the two modes every auto-pipeline.sh has. The script is only run when its
+// text has the case, so a script that would read --describe as a plan file never sees it.
+const DEFAULT_MODES = [
+  { id: 'verify', flag: '--stop-at-verify', label: 'stop at verify — I review by hand' },
+  { id: 'commit', flag: '--full', label: 'full — through local commit' },
+];
+const modesCache = {}; // script path -> { key: mtime, modes }
+const pipelineModes = (proj) => {
+  if (!proj.hasPipeline) return [];
+  let key;
+  try { key = statSync(proj.launcherScript).mtimeMs; } catch { return DEFAULT_MODES; }
+  const hit = modesCache[proj.launcherScript];
+  if (hit && hit.key === key) return hit.modes;
+  let modes = DEFAULT_MODES;
+  try {
+    if (/^\s*--describe\)/m.test(readFileSync(proj.launcherScript, 'utf8'))) {
+      const out = execFileSync('bash', [proj.launcherScript, '--describe'],
+        { cwd: proj.root, env: ENV, timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+      const list = (JSON.parse(out).modes || []).filter((m) => m && safeName(m.id)
+        && /^--[a-z0-9-]+$/.test(m.flag || '') && typeof m.label === 'string');
+      if (list.length) modes = list.map(({ id, flag, label }) => ({ id, flag, label: label.slice(0, 80) }));
+    }
+  } catch (e) { console.log(`--describe failed for ${proj.name}: ${e.message || e}`); }
+  modesCache[proj.launcherScript] = { key, modes };
+  return modes;
+};
 const allProjects = () => loadRegistry().map(resolveProject);
 const projByName = (name) => allProjects().find((p) => p.name === name);
 
@@ -228,14 +258,29 @@ const validationRounds = (proj, slug) => {
   } catch { return 0; }
 };
 
+// Where a run stands, for the strips and buttons: 'running' | 'needs-you' | 'failed'.
+// A report that has no `**Outcome**:` line is judged by its status words.
+const OUTCOMES = ['running', 'needs-you', 'failed'];
+const outcomeOf = (status) =>
+  /^(VERIFIED|REVIEWED|COMMITTED|FINISHED)/i.test(status) ? 'needs-you'
+  : /^(BLOCKED|FAILED|ENDED)/i.test(status) ? 'failed' : 'running';
+
 // pipeline flavor: report lives in <plansDir>/auto-runs/<slug>.md
 const pipelineRunInfo = (proj, slug) => {
   const report = path.join(proj.autoRunsDir, slug + '.md');
   if (!existsSync(report)) return null;
   const content = readFileSync(report, 'utf8');
-  const status = (content.match(/^## Status:\s*(.+)$/m) || [])[1] || 'unknown';
+  const status = ((content.match(/^## Status:\s*(.+)$/m) || [])[1] || 'unknown').trim();
+  const outcome = ((content.match(/^- \*\*Outcome\*\*:\s*(\S+)/m) || [])[1] || '').toLowerCase();
   const timeline = [...content.matchAll(/^- (20\d\d[^\n]+)$/gm)].map((m) => m[1]);
-  return { status: status.trim(), lastEvent: timeline.at(-1) || '' };
+  return {
+    status, lastEvent: timeline.at(-1) || '',
+    outcome: OUTCOMES.includes(outcome) ? outcome : outcomeOf(status),
+    mode: (content.match(/^- \*\*Mode\*\*:\s*([\w-]+)/m) || [])[1] || null,
+    // `- **Link**: <label> | <url>` — one button each in the strip and the plan view
+    links: [...content.matchAll(/^- \*\*Link\*\*:\s*(.+?)\s*\|\s*(https?:\/\/\S+)\s*$/gm)]
+      .map((m) => ({ label: m[1].slice(0, 40), url: m[2] })).slice(0, 5),
+  };
 };
 const pipelineLive = (slug) =>
   new Promise((resolve) => {
@@ -276,7 +321,8 @@ const genericRunInfo = (proj, slug) => {
   else if (code != null) status = 'FAILED: exit ' + code;
   else status = 'ENDED — process is gone and recorded no exit code';
   return {
-    run: { status, lastEvent: (finishedAt ? 'finished ' + finishedAt : 'started ' + r.startedAt) || '' },
+    run: { status, outcome: outcomeOf(status),
+      lastEvent: (finishedAt ? 'finished ' + finishedAt : 'started ' + r.startedAt) || '' },
     live,
   };
 };
@@ -384,6 +430,7 @@ const fullState = async () => {
     out.push({
       name: proj.name, client: proj.client, root: proj.root, plansDir: proj.plansDir,
       hasPipeline: proj.hasPipeline, hasLanes: proj.hasLanes,
+      modes: pipelineModes(proj).map(({ id, label }) => ({ id, label })),
       launchers: proj.launchers, issuesUrl: proj.issuesUrl,
       setupLevel: projectHealth(proj.root, entry).level,
       plans: await listPlans(proj),
@@ -483,14 +530,22 @@ const runLauncher = (proj, args, slugs) => {
   });
   child.unref();
 };
-const launchPipeline = (proj, items) => {
-  const groups = { verify: [], full: [] };
-  for (const it of items) groups[it.mode === 'full' ? 'full' : 'verify'].push(it.slug);
-  if (groups.verify.length)
-    runLauncher(proj, ['--stop-at-verify', ...groups.verify.map((s) => s + '.md')], groups.verify);
-  if (groups.full.length)
-    runLauncher(proj, ['--full', ...groups.full.map((s) => s + '.md')], groups.full);
+// an unknown mode id falls back to the script's first mode
+const modeFlag = (proj, id) => {
+  const modes = pipelineModes(proj);
+  return (modes.find((m) => m.id === id) || modes[0]).flag;
 };
+const launchPipeline = (proj, items) => {
+  const groups = {}; // flag -> slugs
+  for (const it of items) (groups[modeFlag(proj, it.mode)] ||= []).push(it.slug);
+  for (const [flag, slugs] of Object.entries(groups))
+    runLauncher(proj, [flag, ...slugs.map((s) => s + '.md')], slugs);
+};
+// The plan view preselects the mode the run was launched with (the report's `**Mode**:`
+// line), so `picked` is that mode unless the user changed it. Without a pick, the line.
+const resumeFlag = (proj, slug, picked) =>
+  modeFlag(proj, pipelineModes(proj).some((m) => m.id === picked)
+    ? picked : (pipelineRunInfo(proj, slug) || {}).mode);
 
 // generic flavor: spawn the configured launcher command, capture log, track pid
 const launchGeneric = (proj, slug, launcherIdx) => {
@@ -1038,7 +1093,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (url.pathname === '/api/resume') {
         if (!proj.hasPipeline) return json(res, 400, { error: 'not a pipeline project' });
-        runLauncher(proj, ['--resume', b.slug, b.mode === 'full' ? '--full' : '--stop-at-verify'], [b.slug]);
+        runLauncher(proj, ['--resume', b.slug, resumeFlag(proj, b.slug, b.mode)], [b.slug]);
         return json(res, 200, { ok: true });
       }
       if (url.pathname === '/api/cleanup') {
@@ -1452,8 +1507,11 @@ const saveCollapsed = () => {
   try { localStorage.setItem('dash-collapsed', JSON.stringify([...collapsedProjects])); } catch {}
 };
 let showDone = false;
-const modes = {};         // per key: 'verify'|'full' (pipeline) or launcher index (generic)
-const modeOf = (p) => modes[p.key] ?? (p.hasPipeline ? 'verify' : 0);
+const modes = {};         // per key: a mode id from the project's modes (pipeline) or launcher index (generic)
+// a run that was launched keeps its mode, so Resume continues the same way
+const modeOf = (p) => modes[p.key] ?? (!p.hasPipeline ? 0
+  : p.run && (p.modes || []).some((m) => m.id === p.run.mode) ? p.run.mode
+  : ((p.modes || [])[0] || {}).id);
 const esc = (x) => (x || '').replace(/[&<>]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const byId = (i) => document.getElementById(i);
 // Every repaint assigns innerHTML, which replaces the nodes a selection is
@@ -1490,8 +1548,9 @@ async function copyText(text) {
   } catch { return false; }
 }
 const find = (key) => plans.find((p) => p.key === key);
-const OKRE = /^(VERIFIED|REVIEWED|COMMITTED|FINISHED)/i;
-const BADRE = /^(BLOCKED|FAILED|ENDED)/i;
+// the server sets run.outcome: 'running' | 'needs-you' | 'failed'
+const outOf = (p) => p.run ? p.run.outcome : null;
+const OUT_CLASS = { 'needs-you': 'ok', failed: 'bad', running: 'warn' };
 
 // --- tiny markdown renderer (headings, lists, tables, fences, links, #issues) ---
 function inline(s) {
@@ -1556,17 +1615,14 @@ const starting = (p) => !p.live && p.launch && p.launch.state === 'starting';
 const notStarted = (p) => !p.live && p.launch && p.launch.state === 'failed';
 const dotClass = (p) => p.live ? 'live'
   : starting(p) ? 'warn' : notStarted(p) ? 'bad'
-  : !p.run ? ''
-  : OKRE.test(p.run.status) ? 'ok'
-  : BADRE.test(p.run.status) ? 'bad' : 'warn';
+  : !p.run ? '' : OUT_CLASS[outOf(p)];
 
 const autoChips = (p) => {
   let c = '';
   if (p.live) c += '<span class="chip live">● running</span>';
   else if (starting(p)) c += '<span class="chip warn">⏳ starting…</span>';
   else if (notStarted(p)) c += '<span class="chip bad">⚠ didn’t start</span>';
-  else if (p.run) c += '<span class="chip ' +
-    (OKRE.test(p.run.status) ? 'ok' : BADRE.test(p.run.status) ? 'bad' : 'warn') +
+  else if (p.run) c += '<span class="chip ' + OUT_CLASS[outOf(p)] +
     '">' + esc(p.run.status.split(/[.—]/)[0].slice(0, 42)) + '</span>';
   if (p.validations) c += '<span class="chip ok">validated ×' + p.validations + '</span>';
   if (p.worktree) c += '<span class="chip">worktree</span>';
@@ -1626,12 +1682,11 @@ function renderList() {
   // pinned "running now" strip + header counters — running must be unmissable
   const live = plans.filter((p) => p.live);
   // launched but between sessions: report/run exists, neither done nor failed, no live process
-  const inflight = plans.filter((p) => !p.live && !p.launch &&
-    p.run && !OKRE.test(p.run.status) && !BADRE.test(p.run.status));
-  const ready = plans.filter((p) => !p.live && !p.launch && p.run && OKRE.test(p.run.status));
+  const inflight = plans.filter((p) => !p.live && !p.launch && outOf(p) === 'running');
+  const ready = plans.filter((p) => !p.live && !p.launch && outOf(p) === 'needs-you');
   const launching = plans.filter(starting);
   const failed = plans.filter(notStarted);
-  const bad = plans.filter((p) => !p.live && p.run && BADRE.test(p.run.status));
+  const bad = plans.filter((p) => !p.live && outOf(p) === 'failed');
   setMood({ live: live.length, inflight: inflight.length, bad: bad.length, ready: ready.length });
   const rs = byId('runstrip');
   rs.className = 'runstrip' +
@@ -1651,9 +1706,13 @@ function renderList() {
     inflight.map((p) => '<div class="rp wp" data-go="' + p.key + '"><span class="dot warn"></span><span class="n">' +
       stripName(p) + '</span><button class="mini" data-rep="' + p.key + '">' +
       (p.hasPipeline ? '📋 report' : '📜 log') + '</button></div>').join('');
-  if (ready.length) sh += '<div class="cap okc">✓ AWAITING YOUR REVIEW — ' + ready.length + '</div>' +
+  // the run's own status says what it waits for ("VERIFIED", "PR OPEN — 3 DECISIONS WAITING")
+  if (ready.length) sh += '<div class="cap okc">✓ WAITING ON YOU — ' + ready.length + '</div>' +
     ready.map((p) => '<div class="rp okp" data-go="' + p.key + '"><span class="dot ok"></span><span class="n">' +
-      stripName(p) + '</span><button class="mini" data-rep="' + p.key + '">' +
+      stripName(p) + ' <span class="dim mini">' + esc(p.run.status.slice(0, 60)) + '</span></span>' +
+      (p.run.links || []).map((l) => '<button class="mini" data-url="' + escA(l.url) + '">🔗 ' +
+        esc(l.label) + '</button>').join('') +
+      '<button class="mini" data-rep="' + p.key + '">' +
       (p.hasPipeline ? '📋 report' : '📜 log') + '</button></div>').join('');
   rs.innerHTML = sh;
   rs.querySelectorAll('[data-go]').forEach((el) =>
@@ -1662,6 +1721,8 @@ function renderList() {
     el.addEventListener('click', (e) => { e.stopPropagation(); showLaunchError(find(el.dataset.why)); }));
   rs.querySelectorAll('[data-log]').forEach((el) =>
     el.addEventListener('click', (e) => { e.stopPropagation(); openLog(el.dataset.log, 'log'); }));
+  rs.querySelectorAll('[data-url]').forEach((el) =>
+    el.addEventListener('click', (e) => { e.stopPropagation(); window.open(el.dataset.url, '_blank', 'noopener'); }));
   rs.querySelectorAll('[data-rep]').forEach((el) =>
     el.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1694,8 +1755,7 @@ function renderList() {
       // run counters for the whole project (not just filtered-visible plans)
       const projPlans = plans.filter((p) => p.project === pr);
       const liveN = projPlans.filter((p) => p.live).length;
-      const flightN = projPlans.filter((p) =>
-        !p.live && p.run && !OKRE.test(p.run.status) && !BADRE.test(p.run.status)).length;
+      const flightN = projPlans.filter((p) => !p.live && outOf(p) === 'running').length;
       const runBadges =
         (liveN ? '<span class="chip live">● ' + liveN + ' running</span>' : '') +
         (flightN ? '<span class="chip warn">⏳ ' + flightN + '</span>' : '');
@@ -1771,12 +1831,10 @@ async function renderDetail(loadPlan) {
       <button id="editL" class="primary">⚙ Set up launcher</button></div>\`)
     : '';
   const pipelineModes = p.hasPipeline && !p.archived &&
-    ((!p.run && !p.live) || (p.run && !p.live && BADRE.test(p.run.status))) ? \`
+    ((!p.run && !p.live) || (!p.live && outOf(p) === 'failed')) ? \`
     <div class="modes"><b>Where to stop:</b>
-      <label><input type="radio" name="m" value="verify" \${modeOf(p) === 'verify' ? 'checked' : ''}>
-        stop at verify — I review by hand</label>
-      <label><input type="radio" name="m" value="full" \${modeOf(p) === 'full' ? 'checked' : ''}>
-        full — through local commit</label></div>\` : '';
+      \${(p.modes || []).map((m) => '<label><input type="radio" name="m" value="' + escA(m.id) + '" ' +
+        (modeOf(p) === m.id ? 'checked' : '') + '>' + esc(m.label) + '</label>').join('')}</div>\` : '';
   byId('detail').innerHTML = \`
     <div class="crumb">\${esc(p.client)} / 📁 \${esc(p.project)}</div>
     <h2 class="fname">\${p.file}</h2>
@@ -1821,7 +1879,7 @@ async function renderDetail(loadPlan) {
   };
   const stt = p.live ? 'live'
     : starting(p) ? 'starting'
-    : p.run ? (OKRE.test(p.run.status) ? 'review' : 'stuck')
+    : p.run ? (outOf(p) === 'needs-you' ? 'review' : 'stuck')
     : 'fresh';
   const rep = () => openLog(p.key, 'report');
   const log = () => openLog(p.key, 'log');
@@ -1836,6 +1894,8 @@ async function renderDetail(loadPlan) {
     btn('↩ Unarchive plan', () => post('/api/unarchive', { project: p.project, slug: p.slug }, true));
     btn('🖥 Open in VS Code', vsc, null, moreWrap);
   } else if (p.hasPipeline) {
+    for (const l of (p.run && p.run.links) || [])
+      btn('🔗 ' + l.label, () => window.open(l.url, '_blank', 'noopener'), 'primary');
     if (stt === 'live') {
       btn('📋 Report', rep); btn('📜 Log', log);
     } else if (stt === 'review') {
@@ -2611,7 +2671,7 @@ async function refreshOnce() {
     state = next;
     plans = state.flatMap((proj) => proj.plans.map((p) => ({
       ...p, project: proj.name, client: proj.client,
-      hasPipeline: proj.hasPipeline, launchers: proj.launchers, issuesUrl: proj.issuesUrl,
+      hasPipeline: proj.hasPipeline, modes: proj.modes, launchers: proj.launchers, issuesUrl: proj.issuesUrl,
     })));
     // don't clobber the pane (and steal focus) while the user is typing in it
     const typing = byId('detail').contains(document.activeElement)

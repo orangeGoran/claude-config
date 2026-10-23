@@ -90,7 +90,7 @@ Projects live in `~/.claude/pipeline-projects.json`. Copy [`scripts/pipeline-pro
 
 Two modes, picked automatically per project:
 
-- **Pipeline** — the repo has `.claude/scripts/auto-pipeline.sh`. The dashboard delegates to it and reads back its reports, worktrees and lanes. Nothing to configure.
+- **Pipeline** — the repo has `.claude/scripts/auto-pipeline.sh`. The dashboard delegates to it and reads back its reports, worktrees and lanes. Nothing to configure. The script can declare its own modes; see [Pipeline modes and run reports](#pipeline-modes-and-run-reports).
 - **Generic** — everything else. You define one or more launcher commands; the dashboard runs the chosen one with `bash -lc` **in the repo root itself — no worktree** — captures its output, and tracks it to completion. A second run of the same plan is refused while one is live; two different plans launched at once would edit the same tree. `{plan}`, `{root}` and `{slug}` are substituted. The ⚙ setup dialog pre-fills commands from the repo's own `.claude/skills` and `.claude/scripts`.
 
 > [!WARNING]
@@ -102,6 +102,27 @@ The fix that keeps one source of truth is a wrapper script that reads the repo's
   <source media="(prefers-color-scheme: dark)" srcset="plans-dashboard-launchers-dark.png">
   <img alt="Launcher setup drawer: the project's saved launcher commands, a generic headless-Claude starting point, and the command box where the command is edited before saving" src="plans-dashboard-launchers-light.png">
 </picture>
+
+### Pipeline modes and run reports
+
+By default, a pipeline project gets two "Where to stop" modes: `--stop-at-verify` and `--full`. A script can offer its own modes instead. When `auto-pipeline.sh` has a `--describe)` case, the dashboard runs it once (and again after the script changes) and expects JSON:
+
+```json
+{ "modes": [
+  { "id": "verify", "flag": "--stop-at-verify", "label": "stop at verify — I review by hand" },
+  { "id": "commit", "flag": "--full",           "label": "full — through local commit" },
+  { "id": "pr",     "flag": "--to-pr",          "label": "to PR — draft PR with a decision sheet" } ] }
+```
+
+The dashboard shows one radio button per mode. ▶ Launch runs `auto-pipeline.sh <flag> <plan>.md`. ⟳ Resume runs `--resume <slug> <flag>` in the mode the run was launched with: the report's `- **Mode**: <id>` line preselects that mode.
+
+The report `<plansDir>/auto-runs/<slug>.md` can contain these lines:
+
+| Line | Effect |
+| --- | --- |
+| `## Status: <text>` | Shown as is. |
+| `- **Outcome**: running \| needs-you \| failed` | Puts the run in "in progress", "✓ waiting on you" or the failed state. Update it every time the status changes. Without this line, the dashboard uses the status words: `VERIFIED`, `REVIEWED`, `COMMITTED` and `FINISHED` mean needs-you; `BLOCKED`, `FAILED` and `ENDED` mean failed. |
+| `- **Link**: <label> \| <url>` | One button per line (up to 5) in the "waiting on you" strip and in the plan view, for example `- **Link**: Open PR \| https://github.com/…/pull/42`. |
 
 Generic run state (pid, exit code, log) lives under `~/.claude/pipeline-dashboard/`. Statuses and tags are written to `<plansDir>/plan-meta.json` when the repo already tracks that file, otherwise centrally.
 

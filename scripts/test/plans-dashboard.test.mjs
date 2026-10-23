@@ -254,3 +254,103 @@ test('a pipeline launch shows as starting, then as failed with the launcher outp
   assert.equal(p.launch.state, 'failed');
   assert.match(p.launch.output, /FATAL: pnpm is not runnable/);
 });
+
+// a pipeline repo whose auto-pipeline.sh only records the arguments it was given;
+// `describe` is the JSON its --describe case prints, or null for a script without one
+const pipeRepo = async (name, describe, plans) => {
+  const root = path.join(tmp, name);
+  mkdirSync(path.join(root, '.plans', 'auto-runs'), { recursive: true });
+  mkdirSync(path.join(root, '.claude', 'scripts'), { recursive: true });
+  for (const slug of plans) writeFileSync(path.join(root, '.plans', slug + '.md'), '# Plan: ' + slug + '\n');
+  writeFileSync(path.join(root, '.claude', 'scripts', 'auto-pipeline.sh'),
+    (describe ? `case "$1" in\n  --describe) echo '${JSON.stringify(describe)}'; exit 0 ;;\nesac\n` : '') +
+    'echo "$*" >> "$(dirname "$0")/args.log"\n');
+  const reg = JSON.parse(readFileSync(path.join(home, '.claude', 'pipeline-projects.json'), 'utf8')).projects;
+  assert.equal((await post('/api/registry', { projects: [...reg, { name, root, launchers: [] }] })).ok, true);
+  return root;
+};
+const report = (root, slug, lines) =>
+  writeFileSync(path.join(root, '.plans', 'auto-runs', slug + '.md'), '# Auto-run: ' + slug + '\n\n' + lines.join('\n') + '\n');
+// waits until the script has recorded `n` calls
+const argsLog = async (root, n) => {
+  const f = path.join(root, '.claude', 'scripts', 'args.log');
+  const deadline = Date.now() + 10000;
+  let lines = [];
+  while (Date.now() < deadline) {
+    lines = existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n') : [];
+    if (lines.length >= n) return lines;
+    await sleep(100);
+  }
+  return lines;
+};
+const projState = async (name) => (await state()).find((p) => p.name === name);
+const PR_MODES = { modes: [
+  { id: 'verify', flag: '--stop-at-verify', label: 'stop at verify' },
+  { id: 'commit', flag: '--full', label: 'full' },
+  { id: 'pr', flag: '--to-pr', label: 'to PR — draft PR with a decision sheet' },
+] };
+
+test('a script without --describe gets the two default modes; one with it lists its own', async () => {
+  const plain = await pipeRepo('plain-pipe', null, ['one']);
+  const pr = await pipeRepo('pr-pipe', PR_MODES, ['one']);
+  assert.deepEqual((await projState('plain-pipe')).modes.map((m) => m.id), ['verify', 'commit']);
+  assert.deepEqual((await projState('pr-pipe')).modes.map((m) => m.id), ['verify', 'commit', 'pr']);
+  assert.equal((await projState('pr-pipe')).modes[2].label, 'to PR — draft PR with a decision sheet');
+  assert.ok(!(await projState('pr-pipe')).modes[0].flag, 'flags stay on the server');
+  // --describe was never passed to the script that has no case for it
+  assert.ok(!existsSync(path.join(plain, '.claude', 'scripts', 'args.log')));
+  assert.ok(!existsSync(path.join(pr, '.claude', 'scripts', 'args.log')));
+});
+
+test('launch passes the flag of the picked mode, and the default flags still work', async () => {
+  const pr = path.join(tmp, 'pr-pipe');
+  assert.deepEqual(await post('/api/launch', { project: 'pr-pipe', items: [{ slug: 'one', mode: 'pr' }] }), { ok: true });
+  assert.deepEqual(await argsLog(pr, 1), ['--to-pr one.md']);
+
+  const plain = path.join(tmp, 'plain-pipe');
+  assert.deepEqual(await post('/api/launch', { project: 'plain-pipe', items: [{ slug: 'one', mode: 'commit' }] }), { ok: true });
+  assert.deepEqual(await post('/api/launch', { project: 'plain-pipe', items: [{ slug: 'one', mode: 'pr' }] }), { ok: true });
+  // 'pr' is not a mode of this script: it falls back to the first mode
+  assert.deepEqual((await argsLog(plain, 2)).sort(), ['--full one.md', '--stop-at-verify one.md']);
+});
+
+test('classifies runs by the Outcome line, else by the status words, and reads Mode and Link', async () => {
+  const root = await pipeRepo('outcome-pipe', PR_MODES, ['pr-open', 'pr-verified', 'old-verified', 'old-blocked', 'old-running']);
+  report(root, 'pr-open', ['- **Mode**: pr (to PR)', '## Status: PR OPEN — 3 DECISIONS WAITING', '- **Outcome**: needs-you',
+    '- **Link**: Open PR | https://github.com/acme/api/pull/42', '- **Link**: no url here']);
+  report(root, 'pr-verified', ['- **Mode**: pr (to PR)', '## Status: VERIFIED', '- **Outcome**: running']);
+  report(root, 'old-verified', ['- **Mode**: verify (stop at verify)', '## Status: VERIFIED']);
+  report(root, 'old-blocked', ['## Status: BLOCKED: tests fail']);
+  report(root, 'old-running', ['## Status: IMPLEMENTED']);
+  const runs = Object.fromEntries((await projState('outcome-pipe')).plans.map((p) => [p.slug, p.run]));
+
+  assert.equal(runs['pr-open'].outcome, 'needs-you');
+  assert.equal(runs['pr-open'].status, 'PR OPEN — 3 DECISIONS WAITING');
+  assert.equal(runs['pr-open'].mode, 'pr');
+  assert.deepEqual(runs['pr-open'].links, [{ label: 'Open PR', url: 'https://github.com/acme/api/pull/42' }]);
+  assert.equal(runs['pr-verified'].outcome, 'running', 'VERIFIED is not the end of a pr run');
+  assert.equal(runs['old-verified'].outcome, 'needs-you');
+  assert.equal(runs['old-verified'].mode, 'verify');
+  assert.equal(runs['old-blocked'].outcome, 'failed');
+  assert.equal(runs['old-blocked'].mode, null);
+  assert.deepEqual(runs['old-blocked'].links, []);
+  assert.equal(runs['old-running'].outcome, 'running');
+});
+
+test('resume continues in the mode the run was launched with', async () => {
+  const root = await pipeRepo('resume-pipe', PR_MODES, ['pr-run', 'commit-run', 'no-mode']);
+  report(root, 'pr-run', ['- **Mode**: pr (to PR)', '## Status: BLOCKED: gate failed', '- **Outcome**: failed']);
+  report(root, 'commit-run', ['- **Mode**: commit (full)', '## Status: FAILED: test']);
+  report(root, 'no-mode', ['## Status: BLOCKED: x']);
+
+  await post('/api/resume', { project: 'resume-pipe', slug: 'pr-run' });
+  assert.deepEqual(await argsLog(root, 1), ['--resume pr-run --to-pr']);
+  await post('/api/resume', { project: 'resume-pipe', slug: 'commit-run' });
+  assert.deepEqual((await argsLog(root, 2))[1], '--resume commit-run --full');
+  // a mode the user picked wins over the report
+  await post('/api/resume', { project: 'resume-pipe', slug: 'pr-run', mode: 'verify' });
+  assert.deepEqual((await argsLog(root, 3))[2], '--resume pr-run --stop-at-verify');
+  // no Mode line and no pick: the first mode, as before
+  await post('/api/resume', { project: 'resume-pipe', slug: 'no-mode' });
+  assert.deepEqual((await argsLog(root, 4))[3], '--resume no-mode --stop-at-verify');
+});
