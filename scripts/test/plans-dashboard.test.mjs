@@ -402,3 +402,15 @@ test('the guide suggests --describe for a pipeline script that lacks it', async 
   assert.equal((await check('tip-new')).ok, true);
   assert.equal(await check('bare-repo'), undefined, 'generic projects get no such check');
 });
+
+test('the project default mode comes from --describe and is used when no mode is sent', async () => {
+  const root = await pipeRepo('default-pipe', { ...PR_MODES, default: 'pr' }, ['one']);
+  assert.deepEqual((await projState('default-pipe')).modes.filter((m) => m.default).map((m) => m.id), ['pr']);
+  assert.deepEqual(await post('/api/launch', { project: 'default-pipe', items: [{ slug: 'one' }] }), { ok: true });
+  assert.deepEqual(await argsLog(root, 1), ['--to-pr one.md']);
+  // without "default", the first mode is the default; an unknown default is ignored
+  assert.deepEqual((await projState('pr-pipe')).modes.filter((m) => m.default).map((m) => m.id), ['verify']);
+  await pipeRepo('bad-default-pipe', { ...PR_MODES, default: 'nope' }, ['one']);
+  assert.deepEqual((await projState('bad-default-pipe')).modes.filter((m) => m.default).map((m) => m.id), ['verify']);
+  assert.deepEqual((await projState('plain-pipe')).modes.filter((m) => m.default).map((m) => m.id), ['verify']);
+});

@@ -191,12 +191,13 @@ const resolveProject = (p) => {
   };
 };
 // Pipeline modes. A script that handles `--describe)` prints its own modes as JSON:
-//   { "modes": [ { "id": "verify", "flag": "--stop-at-verify", "label": "..." }, ... ] }
+//   { "default": "pr", "modes": [ { "id": "verify", "flag": "--stop-at-verify", "label": "..." }, ... ] }
 // `id` is what the report's `**Mode**:` line holds, `flag` what launch and resume pass.
+// `default` (optional) is the mode a new plan starts on; without it, the first mode.
 // Without it, the two modes every auto-pipeline.sh has. The script is only run when its
 // text has the case, so a script that would read --describe as a plan file never sees it.
 const DEFAULT_MODES = [
-  { id: 'verify', flag: '--stop-at-verify', label: 'stop at verify — I review by hand' },
+  { id: 'verify', flag: '--stop-at-verify', label: 'stop at verify — I review by hand', default: true },
   { id: 'commit', flag: '--full', label: 'full — through local commit' },
 ];
 const modesCache = {}; // script path -> { key: mtime, modes }
@@ -211,9 +212,12 @@ const pipelineModes = (proj) => {
     if (/^\s*--describe\)/m.test(readFileSync(proj.launcherScript, 'utf8'))) {
       const out = execFileSync('bash', [proj.launcherScript, '--describe'],
         { cwd: proj.root, env: ENV, timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
-      const list = (JSON.parse(out).modes || []).filter((m) => m && safeName(m.id)
+      const spec = JSON.parse(out);
+      const list = (spec.modes || []).filter((m) => m && safeName(m.id)
         && /^--[a-z0-9-]+$/.test(m.flag || '') && typeof m.label === 'string');
-      if (list.length) modes = list.map(({ id, flag, label }) => ({ id, flag, label: label.slice(0, 80) }));
+      const def = list.some((m) => m.id === spec.default) ? spec.default : list[0]?.id;
+      if (list.length) modes = list.map(({ id, flag, label }) =>
+        ({ id, flag, label: label.slice(0, 80), ...(id === def ? { default: true } : {}) }));
     }
   } catch (e) { console.log(`--describe failed for ${proj.name}: ${e.message || e}`); }
   modesCache[proj.launcherScript] = { key, modes };
@@ -446,7 +450,7 @@ const fullState = async () => {
     out.push({
       name: proj.name, client: proj.client, root: proj.root, plansDir: proj.plansDir,
       hasPipeline: proj.hasPipeline, hasLanes: proj.hasLanes,
-      modes: pipelineModes(proj).map(({ id, label }) => ({ id, label })),
+      modes: pipelineModes(proj).map(({ flag, ...m }) => m),
       launchers: proj.launchers, issuesUrl: proj.issuesUrl,
       setupLevel: projectHealth(proj.root, entry).level,
       plans: await listPlans(proj),
@@ -546,10 +550,10 @@ const runLauncher = (proj, args, slugs) => {
   });
   child.unref();
 };
-// an unknown mode id falls back to the script's first mode
+// an unknown or missing mode id falls back to the project's default mode
 const modeFlag = (proj, id) => {
   const modes = pipelineModes(proj);
-  return (modes.find((m) => m.id === id) || modes[0]).flag;
+  return (modes.find((m) => m.id === id) || modes.find((m) => m.default) || modes[0]).flag;
 };
 const launchPipeline = (proj, items) => {
   const groups = {}; // flag -> slugs
@@ -1542,10 +1546,25 @@ const saveCollapsed = () => {
 };
 let showDone = false;
 const modes = {};         // per key: a mode id from the project's modes (pipeline) or launcher index (generic)
-// a run that was launched keeps its mode, so Resume continues the same way
-const modeOf = (p) => modes[p.key] ?? (!p.hasPipeline ? 0
-  : p.run && (p.modes || []).some((m) => m.id === p.run.mode) ? p.run.mode
-  : ((p.modes || [])[0] || {}).id);
+// per project: the last mode picked in this browser, so a new plan starts on it
+let lastModes = {};
+try { lastModes = JSON.parse(localStorage.getItem('dash-modes') || '{}'); } catch {}
+const pickMode = (p, v) => {
+  modes[p.key] = v;
+  lastModes[p.project] = v;
+  try { localStorage.setItem('dash-modes', JSON.stringify(lastModes)); } catch {}
+};
+// a run that was launched keeps its mode, so Resume continues the same way; otherwise
+// the last pick for the project, then the project's default (--describe), then the first
+const modeOf = (p) => {
+  if (modes[p.key] != null) return modes[p.key];
+  const last = lastModes[p.project];
+  if (!p.hasPipeline) return last != null && +last < (p.launchers || []).length ? last : 0;
+  const ms = p.modes || [];
+  const known = (id) => ms.some((m) => m.id === id);
+  return p.run && known(p.run.mode) ? p.run.mode : known(last) ? last
+    : (ms.find((m) => m.default) || ms[0] || {}).id;
+};
 const esc = (x) => (x || '').replace(/[&<>]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const byId = (i) => document.getElementById(i);
 // Every repaint assigns innerHTML, which replaces the nodes a selection is
@@ -1898,7 +1917,7 @@ async function renderDetail(loadPlan) {
   byId('detail').querySelectorAll('[data-del]').forEach((el) =>
     el.addEventListener('click', () => saveMetaFor(p, p.status, p.tags.filter((t) => t !== el.dataset.del))));
   byId('detail').querySelectorAll('input[name=m]').forEach((el) =>
-    el.addEventListener('change', () => { modes[p.key] = el.value; renderBar(); renderList(); }));
+    el.addEventListener('change', () => { pickMode(p, el.value); renderBar(); renderList(); }));
   const editL = byId('editL');
   if (editL) editL.addEventListener('click', () => openLauncherSetup(p.project));
   // state-aware actions: primary buttons only; the rest behind "⋯ more"

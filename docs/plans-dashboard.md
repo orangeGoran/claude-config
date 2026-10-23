@@ -108,13 +108,16 @@ The fix that keeps one source of truth is a wrapper script that reads the repo's
 By default, a pipeline project gets two "Where to stop" modes: `--stop-at-verify` and `--full`. A script can offer its own modes instead. When `auto-pipeline.sh` has a `--describe)` case, the dashboard runs it once (and again after the script changes) and expects JSON:
 
 ```json
-{ "modes": [
+{ "default": "verify",
+  "modes": [
   { "id": "verify", "flag": "--stop-at-verify", "label": "stop at verify — I review by hand" },
   { "id": "commit", "flag": "--full",           "label": "full — through local commit" },
   { "id": "pr",     "flag": "--to-pr",          "label": "to PR — draft PR with a decision sheet" } ] }
 ```
 
 The dashboard shows one radio button per mode. ▶ Launch runs `auto-pipeline.sh <flag> <plan>.md`. ⟳ Resume runs `--resume <slug> <flag>` in the mode the run was launched with: the report's `- **Mode**: <id>` line preselects that mode.
+
+`default` is optional and names the mode a new plan starts on; without it, the first mode. The dashboard also remembers the last mode you picked for each project, in this browser, and that pick wins over the default.
 
 The report `<plansDir>/auto-runs/<slug>.md` can contain these lines:
 
