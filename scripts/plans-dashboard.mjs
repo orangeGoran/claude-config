@@ -265,22 +265,29 @@ const outcomeOf = (status) =>
   /^(VERIFIED|REVIEWED|COMMITTED|FINISHED)/i.test(status) ? 'needs-you'
   : /^(BLOCKED|FAILED|ENDED)/i.test(status) ? 'failed' : 'running';
 
+// The run-report lines both flavors read: `## Status:`, `- **Outcome**:`, `- **Mode**:`
+// and `- **Link**: <label> | <url>` (one button each in the strip and the plan view).
+// Missing lines come back as null / [].
+const parseReport = (content) => {
+  const outcome = ((content.match(/^- \*\*Outcome\*\*:\s*(\S+)/m) || [])[1] || '').toLowerCase();
+  return {
+    status: ((content.match(/^## Status:\s*(.+)$/m) || [])[1] || '').trim() || null,
+    outcome: OUTCOMES.includes(outcome) ? outcome : null,
+    mode: (content.match(/^- \*\*Mode\*\*:\s*([\w-]+)/m) || [])[1] || null,
+    links: [...content.matchAll(/^- \*\*Link\*\*:\s*(.+?)\s*\|\s*(https?:\/\/\S+)\s*$/gm)]
+      .map((m) => ({ label: m[1].slice(0, 40), url: m[2] })).slice(0, 5),
+  };
+};
+
 // pipeline flavor: report lives in <plansDir>/auto-runs/<slug>.md
 const pipelineRunInfo = (proj, slug) => {
   const report = path.join(proj.autoRunsDir, slug + '.md');
   if (!existsSync(report)) return null;
   const content = readFileSync(report, 'utf8');
-  const status = ((content.match(/^## Status:\s*(.+)$/m) || [])[1] || 'unknown').trim();
-  const outcome = ((content.match(/^- \*\*Outcome\*\*:\s*(\S+)/m) || [])[1] || '').toLowerCase();
+  const r = parseReport(content);
+  const status = r.status || 'unknown';
   const timeline = [...content.matchAll(/^- (20\d\d[^\n]+)$/gm)].map((m) => m[1]);
-  return {
-    status, lastEvent: timeline.at(-1) || '',
-    outcome: OUTCOMES.includes(outcome) ? outcome : outcomeOf(status),
-    mode: (content.match(/^- \*\*Mode\*\*:\s*([\w-]+)/m) || [])[1] || null,
-    // `- **Link**: <label> | <url>` — one button each in the strip and the plan view
-    links: [...content.matchAll(/^- \*\*Link\*\*:\s*(.+?)\s*\|\s*(https?:\/\/\S+)\s*$/gm)]
-      .map((m) => ({ label: m[1].slice(0, 40), url: m[2] })).slice(0, 5),
-  };
+  return { ...r, status, lastEvent: timeline.at(-1) || '', outcome: r.outcome || outcomeOf(status) };
 };
 const pipelineLive = (slug) =>
   new Promise((resolve) => {
@@ -299,6 +306,9 @@ const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch { r
 // it restarts on every edit of this file — so the file is the durable source of truth,
 // and it is also immune to the pid having been recycled by an unrelated process.
 const runExitFile = (proj, slug) => path.join(proj.stateDir, slug + '.exit');
+// A launcher may write the same report lines as a pipeline run to $PLAN_REPORT
+// (see launchGeneric). Without them, the exit code decides, as it always has.
+const runReportFile = (proj, slug) => path.join(proj.stateDir, slug + '.report.md');
 const readExit = (proj, slug) => {
   try {
     const f = runExitFile(proj, slug);
@@ -320,8 +330,14 @@ const genericRunInfo = (proj, slug) => {
   else if (code === 0) status = 'FINISHED — review the result';
   else if (code != null) status = 'FAILED: exit ' + code;
   else status = 'ENDED — process is gone and recorded no exit code';
+  let rep = { links: [] };
+  try { rep = parseReport(readFileSync(runReportFile(proj, slug), 'utf8')); } catch {}
+  // a report's needs-you or failed wins once the process is gone; its "running" does
+  // not, or a launcher that dies mid-run would stay in progress for ever
+  const told = !live && (rep.outcome === 'needs-you' || rep.outcome === 'failed');
   return {
-    run: { status, outcome: outcomeOf(status),
+    run: { status: told && rep.status || status, outcome: told ? rep.outcome : outcomeOf(status),
+      links: rep.links,
       lastEvent: (finishedAt ? 'finished ' + finishedAt : 'started ' + r.startedAt) || '' },
     live,
   };
@@ -562,10 +578,12 @@ const launchGeneric = (proj, slug, launcherIdx) => {
   mkdirSync(proj.stateDir, { recursive: true });
   const exitFile = runExitFile(proj, slug);
   try { unlinkSync(exitFile); } catch {}   // a stale code would read as "already finished"
+  const reportFile = runReportFile(proj, slug);
+  try { unlinkSync(reportFile); } catch {} // and a stale report as the last run's outcome
   // an EXIT trap (not a trailing line) so the code is recorded even when the launcher
   // calls exit itself; the path travels via the environment to dodge shell quoting
   const script = `trap 'printf %s $? > "$DASH_EXIT_FILE"' EXIT\n` + cmd + '\n';
-  const env = { ...ENV, DASH_EXIT_FILE: exitFile };
+  const env = { ...ENV, DASH_EXIT_FILE: exitFile, PLAN_REPORT: reportFile };
   const fd = openSync(path.join(proj.logsDir, slug + '.log'), 'a');
   const argv = process.platform === 'darwin'
     ? ['caffeinate', ['-i', 'bash', '-lc', script]]   // keep the mac awake overnight
@@ -596,6 +614,7 @@ const clearGenericRun = (proj, slug) => {
   saveRuns(proj, runs);
   try { unlinkSync(path.join(proj.logsDir, slug + '.log')); } catch {}
   try { unlinkSync(runExitFile(proj, slug)); } catch {}
+  try { unlinkSync(runReportFile(proj, slug)); } catch {}
   return { ok: true, output: 'Run record and log cleared.' };
 };
 
@@ -744,6 +763,17 @@ const projectHealth = (root, entry) => {
   if (hasPipeline) {
     checks.push({ id: 'launch', label: 'A way to launch plans', required: true, ok: true,
       detail: 'auto-pipeline.sh — pipeline mode, nothing to configure' });
+    let describes = false;
+    try { describes = /^\s*--describe\)/m.test(readFileSync(path.join(root, '.claude/scripts/auto-pipeline.sh'), 'utf8')); } catch {}
+    checks.push({ id: 'modes', label: 'Modes and run state for the dashboard', required: false, ok: describes,
+      detail: describes ? 'auto-pipeline.sh --describe lists its modes'
+        : 'the dashboard offers only stop-at-verify and full',
+      why: 'With --describe the script lists its own launch modes; with Outcome and Link lines in its ' +
+        'report, the dashboard knows when a run waits for you and shows its links.',
+      fixPrompt: 'Read ' + tilde(docs) + ' (section "Pipeline modes and run reports"). Then change ' +
+        '.claude/scripts/auto-pipeline.sh: add a --describe case that prints the modes this script really ' +
+        'supports as that JSON, and make each run report keep its "- **Outcome**:" line correct whenever ' +
+        'no session runs, plus a "- **Link**:" line for each URL a reviewer needs. Do not commit.' });
   } else {
     // an unregistered repo with the wrapper is ready: adding it saves WRAPPER_LAUNCHER
     checks.push({ id: 'launch', label: 'A way to launch plans', required: true,
@@ -1117,14 +1147,15 @@ const PAGE = /* html */ `<!doctype html>
 <title>Plans</title>
 <link rel="icon" id="favicon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Ctext%20x%3D%2232%22%20y%3D%2246%22%20font-size%3D%2256%22%20text-anchor%3D%22middle%22%3E%F0%9F%98%B4%3C%2Ftext%3E%3C%2Fsvg%3E">
 <style>
-  :root { --bg:#101218; --panel:#151823; --card:#1b1f2c; --line:#2b3040; --fg:#e7eaf1;
-          --dim:#98a1b4; --ok:#4ade80; --run:#60a5fa; --warn:#fbbf24; --bad:#f87171;
-          --accent:#8b5cf6; --link:#7cb0ff; --input:#0e1016; --hover:#1c2130; --sel:#242b49;
-          --btn:#242a3a; --dot:#39415a; --codebg:#0d0f14; --codechip:#262c3d; --thbg:#20263a;
-          --logfg:#c8d0e0; --stfg:#c4b5fd; }
+  /* dark = Nord (nordtheme.com); --bg, --input, --codebg, --dim are in-between shades Nord lacks */
+  :root { --bg:#292e39; --panel:#2e3440; --card:#3b4252; --line:#434c5e; --fg:#eceff4;
+          --dim:#a5afc0; --ok:#a3be8c; --run:#81a1c1; --warn:#ebcb8b; --bad:#bf616a;
+          --accent:#88c0d0; --accentfg:#2e3440; --link:#88c0d0; --input:#272c36; --hover:#3b4252; --sel:#434c5e;
+          --btn:#3b4252; --dot:#4c566a; --codebg:#272c36; --codechip:#3b4252; --thbg:#3b4252;
+          --logfg:#d8dee9; --stfg:#88c0d0; }
   :root[data-theme="light"] { --bg:#f4f5f8; --panel:#ffffff; --card:#ffffff; --line:#d9dde6;
           --fg:#1d2433; --dim:#5f6b81; --ok:#15803d; --run:#2563eb; --warn:#b45309; --bad:#dc2626;
-          --accent:#7c3aed; --link:#1d4ed8; --input:#f0f2f7; --hover:#eef1f7; --sel:#e3e7f5;
+          --accent:#7c3aed; --accentfg:#fff; --link:#1d4ed8; --input:#f0f2f7; --hover:#eef1f7; --sel:#e3e7f5;
           --btn:#eef0f6; --dot:#c3c9d8; --codebg:#f6f7fa; --codechip:#e8eaf2; --thbg:#eaedf5;
           --logfg:#333c50; --stfg:#6d28d9; }
   /* --fs scales text and reading widths up on wide screens, where fixed px text gets tiny */
@@ -1143,7 +1174,7 @@ const PAGE = /* html */ `<!doctype html>
   .filters { padding:10px 12px 6px; display:flex; gap:8px; }
   .filters.sub { padding:0 12px 10px; border-bottom:1px solid var(--line); align-items:center; }
   .filters button { font-size:calc(12px * var(--fs)); }
-  .tgl.on { border-color:var(--accent); color:var(--stfg); background:rgba(139,92,246,.14); }
+  .tgl.on { border-color:var(--accent); color:var(--stfg); background:color-mix(in srgb, var(--accent) 14%, transparent); }
   .filters input, .filters select { background:var(--input); color:var(--fg); border:1px solid var(--line);
           border-radius:8px; padding:6px 10px; font-size:calc(13px * var(--fs)); }
   .filters input { flex:1; min-width:0; }
@@ -1180,28 +1211,31 @@ const PAGE = /* html */ `<!doctype html>
   .dot { width:9px; height:9px; border-radius:50%; background:var(--dot); flex-shrink:0; margin-top:5px; }
   @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.3 } }
   .dot.live { background:var(--run); box-shadow:0 0 7px var(--run); animation:pulse 1.5s ease-in-out infinite; }
-  .item.live { border-left:3px solid var(--run); background:rgba(96,165,250,.08); }
+  .item.live { border-left:3px solid var(--run); background:color-mix(in srgb, var(--run) 8%, transparent); }
   .item.bad { border-left:3px solid var(--bad); }
-  .item.ok { border-left:3px solid var(--ok); background:rgba(74,222,128,.06); }
+  .item.ok { border-left:3px solid var(--ok); background:color-mix(in srgb, var(--ok) 6%, transparent); }
   .runstrip { padding:8px 12px 10px; border-bottom:2px solid var(--line); display:none; }
   .runstrip.on { display:block; }
   .runstrip .cap { font-size:calc(10px * var(--fs)); letter-spacing:.12em; color:var(--run); font-weight:700; margin-bottom:4px; }
-  .runstrip .rp { display:flex; align-items:center; gap:9px; padding:7px 10px; border:1px solid var(--run);
-                  border-radius:9px; margin:4px 0; cursor:pointer; background:rgba(96,165,250,.12); }
-  .runstrip .rp:hover { background:rgba(96,165,250,.22); }
-  .runstrip .rp .n { font:600 calc(12px * var(--fs))/1.4 ui-monospace,monospace; word-break:break-all; flex:1; }
+  .runstrip .rp { display:flex; flex-wrap:wrap; align-items:center; gap:9px; padding:7px 10px; border:1px solid var(--run);
+                  border-radius:9px; margin:4px 0; cursor:pointer; background:color-mix(in srgb, var(--run) 12%, transparent); }
+  .runstrip .rp:hover { background:color-mix(in srgb, var(--run) 22%, transparent); }
+  .runstrip .rp .n { font:600 calc(12px * var(--fs))/1.4 ui-monospace,monospace; word-break:break-all; flex:1 1 170px; min-width:0; }
+  .runstrip .rp .n .rst { display:block; font:400 calc(11px * var(--fs))/1.4 system-ui,sans-serif; color:var(--dim);
+    word-break:normal; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .runstrip .rp .n .pfx { color:var(--dim); font-weight:400; }
   .runstrip .rp .mini { padding:3px 9px; font-size:calc(11px * var(--fs)); flex-shrink:0; }
+  .runstrip .rp .acts { display:flex; gap:6px; margin-left:auto; }
   .runstrip .cap.okc { color:var(--ok); margin-top:8px; }
-  .runstrip .rp.okp { border-color:var(--ok); background:rgba(74,222,128,.10); }
-  .runstrip .rp.okp:hover { background:rgba(74,222,128,.20); }
+  .runstrip .rp.okp { border-color:var(--ok); background:color-mix(in srgb, var(--ok) 10%, transparent); }
+  .runstrip .rp.okp:hover { background:color-mix(in srgb, var(--ok) 20%, transparent); }
   .runstrip .cap.wc { color:var(--warn); margin-top:8px; }
-  .runstrip .rp.wp { border-color:var(--warn); background:rgba(251,191,36,.10); }
-  .runstrip .rp.wp:hover { background:rgba(251,191,36,.18); }
+  .runstrip .rp.wp { border-color:var(--warn); background:color-mix(in srgb, var(--warn) 10%, transparent); }
+  .runstrip .rp.wp:hover { background:color-mix(in srgb, var(--warn) 18%, transparent); }
   .runstrip .cap.bc { color:var(--bad); margin-top:8px; }
   .runstrip .cap:first-child { margin-top:0; }
-  .runstrip .rp.bp { border-color:var(--bad); background:rgba(248,113,113,.10); }
-  .runstrip .rp.bp:hover { background:rgba(248,113,113,.18); }
+  .runstrip .rp.bp { border-color:var(--bad); background:color-mix(in srgb, var(--bad) 10%, transparent); }
+  .runstrip .rp.bp:hover { background:color-mix(in srgb, var(--bad) 18%, transparent); }
   .hdok { font-size:calc(12px * var(--fs)); color:var(--ok); border:1px solid var(--ok); border-radius:99px;
           padding:2px 11px; font-weight:600; }
   .hdrun { font-size:calc(12px * var(--fs)); color:var(--run); border:1px solid var(--run); border-radius:99px;
@@ -1226,7 +1260,7 @@ const PAGE = /* html */ `<!doctype html>
   button { background:var(--btn); color:var(--fg); border:1px solid var(--line); border-radius:8px;
            padding:7px 13px; cursor:pointer; font-size:calc(13px * var(--fs)); }
   button:hover { border-color:var(--accent); }
-  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:var(--accentfg); font-weight:600; }
   button.danger:hover { border-color:var(--bad); color:var(--bad); }
   .planview { margin-top:18px; border-top:1px solid var(--line); padding-top:14px; }
   .mdc { max-width:calc(820px * var(--fs)); }
@@ -1289,7 +1323,7 @@ const PAGE = /* html */ `<!doctype html>
   .pcard-foot { padding:8px 14px 12px; font-size:calc(11px * var(--fs)); color:var(--dim); }
   .rmbtn { margin-left:auto; background:none; border:none; color:var(--dim); font-size:calc(12px * var(--fs));
              cursor:pointer; padding:4px 10px; border-radius:7px; }
-  .rmbtn:hover { color:var(--bad); background:rgba(248,113,113,.12); }
+  .rmbtn:hover { color:var(--bad); background:color-mix(in srgb, var(--bad) 12%, transparent); }
   .setupbar { display:flex; gap:10px; align-items:center; margin-top:16px; padding-top:14px;
              border-top:1px solid var(--line); }
   input, select, textarea, button { transition:border-color .15s, background .15s, color .15s; }
@@ -1709,11 +1743,11 @@ function renderList() {
   // the run's own status says what it waits for ("VERIFIED", "PR OPEN — 3 DECISIONS WAITING")
   if (ready.length) sh += '<div class="cap okc">✓ WAITING ON YOU — ' + ready.length + '</div>' +
     ready.map((p) => '<div class="rp okp" data-go="' + p.key + '"><span class="dot ok"></span><span class="n">' +
-      stripName(p) + ' <span class="dim mini">' + esc(p.run.status.slice(0, 60)) + '</span></span>' +
-      (p.run.links || []).map((l) => '<button class="mini" data-url="' + escA(l.url) + '">🔗 ' +
+      stripName(p) + '<span class="rst" title="' + escA(p.run.status) + '">' + esc(p.run.status) + '</span></span>' +
+      '<span class="acts">' + (p.run.links || []).map((l) => '<button class="mini" data-url="' + escA(l.url) + '">🔗 ' +
         esc(l.label) + '</button>').join('') +
       '<button class="mini" data-rep="' + p.key + '">' +
-      (p.hasPipeline ? '📋 report' : '📜 log') + '</button></div>').join('');
+      (p.hasPipeline ? '📋 report' : '📜 log') + '</button></span></div>').join('');
   rs.innerHTML = sh;
   rs.querySelectorAll('[data-go]').forEach((el) =>
     el.addEventListener('click', () => { selected = el.dataset.go; renderList(); renderDetail(true); }));
@@ -1888,14 +1922,14 @@ async function renderDetail(loadPlan) {
   const launchNow = () => post('/api/launch-generic',
     { project: p.project, slug: p.slug, launcher: +modeOf(p) }, true);
   if (notStarted(p)) btn('⚠ Why it didn’t start', () => showLaunchError(p), 'danger');
+  for (const l of (p.run && p.run.links) || [])
+    btn('🔗 ' + l.label, () => window.open(l.url, '_blank', 'noopener'), 'primary');
   if (stt === 'starting') {
     btn('⏳ Starting… setting up the worktree', () => {}).disabled = true;
   } else if (p.archived) {
     btn('↩ Unarchive plan', () => post('/api/unarchive', { project: p.project, slug: p.slug }, true));
     btn('🖥 Open in VS Code', vsc, null, moreWrap);
   } else if (p.hasPipeline) {
-    for (const l of (p.run && p.run.links) || [])
-      btn('🔗 ' + l.label, () => window.open(l.url, '_blank', 'noopener'), 'primary');
     if (stt === 'live') {
       btn('📋 Report', rep); btn('📜 Log', log);
     } else if (stt === 'review') {

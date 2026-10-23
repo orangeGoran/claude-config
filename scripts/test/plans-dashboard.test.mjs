@@ -124,6 +124,35 @@ test('records a generic run exit code, and keeps it after a restart', async () =
   assert.equal(after.live, false);
 });
 
+test('a launcher can report its own status, outcome and links via $PLAN_REPORT', async () => {
+  const run = async (cmd) => {
+    assert.deepEqual(await post('/api/launchers', { project: 'demo', launchers: [{ label: 'reports', cmd }] }), { ok: true });
+    assert.deepEqual(await post('/api/launch-generic', { project: 'demo', slug: 'demo-plan', launcher: 0 }), { ok: true });
+    const deadline = Date.now() + 20000;
+    let p;
+    do { await sleep(200); p = await onlyPlan(); } while (Date.now() < deadline && (!p.run || p.live));
+    return p.run;
+  };
+  const pr = await run(`printf '## Status: PR OPEN — 2 DECISIONS WAITING\\n- **Outcome**: needs-you\\n` +
+    `- **Link**: Open PR | https://github.com/acme/api/pull/7\\n' > "$PLAN_REPORT"`);
+  assert.equal(pr.status, 'PR OPEN — 2 DECISIONS WAITING');
+  assert.equal(pr.outcome, 'needs-you');
+  assert.deepEqual(pr.links, [{ label: 'Open PR', url: 'https://github.com/acme/api/pull/7' }]);
+
+  // a run that dies after writing "running" is judged by its exit code; a new run
+  // also starts without the last run's report
+  const died = await run(`echo '- **Outcome**: running' > "$PLAN_REPORT"; exit 4`);
+  assert.equal(died.status, 'FAILED: exit 4');
+  assert.equal(died.outcome, 'failed');
+  assert.deepEqual(died.links, []);
+
+  // no report at all: as before
+  const plain = await run('true');
+  assert.equal(plain.status, 'FINISHED — review the result');
+  assert.equal(plain.outcome, 'needs-you');
+  assert.equal((await post('/api/clear-run', { project: 'demo', slug: 'demo-plan' })).ok, true);
+});
+
 test("counts only the plan's own sessions, not every session in the repo", async () => {
   // claude writes transcripts to one dir per working directory, shared by every plan
   // in a generic project — the plan's own captured log is what tells them apart
@@ -353,4 +382,23 @@ test('resume continues in the mode the run was launched with', async () => {
   // no Mode line and no pick: the first mode, as before
   await post('/api/resume', { project: 'resume-pipe', slug: 'no-mode' });
   assert.deepEqual((await argsLog(root, 4))[3], '--resume no-mode --stop-at-verify');
+});
+
+test('the guide suggests --describe for a pipeline script that lacks it', async () => {
+  const check = async (name) => {
+    const scan = await (await get('/api/scan?dir=' + encodeURIComponent(tmp))).json();
+    return (scan.candidates.find((c) => c.name === name) || { checks: [] }).checks.find((c) => c.id === 'modes');
+  };
+  for (const [name, script] of [['tip-old', 'echo hi\n'], ['tip-new', 'case "$1" in\n  --describe) echo {} ;;\nesac\n']]) {
+    mkdirSync(path.join(tmp, name, '.git'), { recursive: true });
+    mkdirSync(path.join(tmp, name, '.plans'), { recursive: true });
+    mkdirSync(path.join(tmp, name, '.claude', 'scripts'), { recursive: true });
+    writeFileSync(path.join(tmp, name, '.claude', 'scripts', 'auto-pipeline.sh'), script);
+  }
+  const old = await check('tip-old');
+  assert.equal(old.ok, false);
+  assert.equal(old.required, false, 'a tip, not a blocker');
+  assert.match(old.fixPrompt, /--describe/);
+  assert.equal((await check('tip-new')).ok, true);
+  assert.equal(await check('bare-repo'), undefined, 'generic projects get no such check');
 });

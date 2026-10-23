@@ -21,6 +21,13 @@
 # while one is live, but nothing stops two different plans running at once — in
 # one tree they would edit each other's work. Launch one at a time, or add
 # worktree handling here.
+#
+# Optional: the dashboard passes $PLAN_REPORT, a file this run (or the skill it
+# runs) may write status, outcome and link lines to, for example
+#   echo "- **Outcome**: needs-you" >> "$PLAN_REPORT"
+#   echo "- **Link**: Open PR | $url" >> "$PLAN_REPORT"
+# Without it, the exit code decides. Format: docs/plans-dashboard.md,
+# "Pipeline modes and run reports".
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
