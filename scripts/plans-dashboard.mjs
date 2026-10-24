@@ -293,9 +293,34 @@ const pipelineRunInfo = (proj, slug) => {
   const timeline = [...content.matchAll(/^- (20\d\d[^\n]+)$/gm)].map((m) => m[1]);
   return { ...r, status, lastEvent: timeline.at(-1) || '', outcome: r.outcome || outcomeOf(status) };
 };
-const pipelineLive = (slug) =>
+// An interactive claude chat (VS Code, terminal) can continue a run inside the
+// worktree after the headless pipeline exits. pgrep does not see that chat, so the
+// card showed the report's frozen status. A chat counts as live when a claude
+// process has the worktree as its cwd and its transcript changed in the last
+// CHAT_ACTIVE_MS. The time check skips a chat that is open but idle.
+const CHAT_ACTIVE_MS = 10 * 60 * 1000;
+let claudeCwds = { at: 0, set: new Set() };
+const claudeProcessCwds = () => {
+  if (Date.now() - claudeCwds.at < 4000) return claudeCwds.set;
+  let out = '';
+  try { out = execFileSync('lsof', ['-a', '-c', 'claude', '-d', 'cwd', '-Fn'], { encoding: 'utf8' }); }
+  catch (e) { out = e.stdout || ''; } // lsof exits 1 when it cannot read one process
+  const set = new Set(out.split('\n').filter((l) => l.startsWith('n')).map((l) => l.slice(1)));
+  claudeCwds = { at: Date.now(), set };
+  return set;
+};
+const chatActiveIn = (wtPath) => {
+  if (!claudeProcessCwds().has(wtPath)) return false;
+  const dir = transcriptDirFor(wtPath);
+  try {
+    return readdirSync(dir).some((f) => f.endsWith('.jsonl')
+      && Date.now() - statSync(path.join(dir, f)).mtimeMs < CHAT_ACTIVE_MS);
+  } catch { return false; }
+};
+const pipelineLive = (proj, slug) =>
   new Promise((resolve) => {
-    execFile('pgrep', ['-f', `skill-auto-pipeline ${slug}.md`], (err) => resolve(!err));
+    execFile('pgrep', ['-f', `skill-auto-pipeline ${slug}.md`], (err) =>
+      resolve(!err || chatActiveIn(path.join(proj.worktrees, slug))));
   });
 
 // generic flavor: runs tracked by this dashboard in <stateDir>/runs.json
@@ -398,7 +423,7 @@ const listPlans = async (proj) => {
       let run, live, wtPath, transcriptDir, sessionFilter;
       if (proj.hasPipeline) {
         run = pipelineRunInfo(proj, slug);
-        live = await pipelineLive(slug);
+        live = await pipelineLive(proj, slug);
         wtPath = path.join(proj.worktrees, slug);
         transcriptDir = transcriptDirFor(wtPath);
       } else {
@@ -931,7 +956,7 @@ const openInVsCode = (proj, slug) => {
   return target;
 };
 const archivePlan = async (proj, slug) => {
-  const live = proj.hasPipeline ? await pipelineLive(slug) : genericRunInfo(proj, slug).live;
+  const live = proj.hasPipeline ? await pipelineLive(proj, slug) : genericRunInfo(proj, slug).live;
   if (live) return { ok: false, output: 'A session for this plan is still running.' };
   if (proj.hasPipeline && existsSync(path.join(proj.worktrees, slug)))
     return { ok: false, output: 'Worktree still exists — run Clean up first, then archive.' };
@@ -2383,7 +2408,7 @@ STATUSES.forEach((s) => {
 // with nothing to do on it.
 const ONB_STEPS = ['How it works', 'Pick a project'];
 let onbStep = 0, onbData = null, onbScan = null, onbScanDir = '', onbScanErr = '', onbCopies = [];
-let demoScene = 0;
+let demoScene = 0, onbPaintedStep = -1;
 const onbOpenCards = new Set();   // project roots whose row is expanded
 const CHECK_SVG = '<svg viewBox="0 0 16 16"><path d="M3 8.5l3.2 3.2L13 4.5" fill="none" stroke="currentColor" ' +
   'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -2396,7 +2421,7 @@ function renderEmptyDetail() {
   byId('detail').querySelectorAll('[data-guide]').forEach((el) => el.addEventListener('click', () => openGuide(0)));
 }
 function openGuide(step) {
-  onbStep = step || 0;
+  onbStep = step || 0; onbPaintedStep = -1;
   demoScene = 0;
   byId('onb').classList.add('open');
   renderGuide();
@@ -2407,8 +2432,11 @@ function closeGuide() {
   try { sessionStorage.setItem('dash-guide-closed', '1'); } catch {}
   refresh();
 }
-async function loadGuide(rescan) {
+// quiet: a background re-check — repaint only when a check changed, and never while
+// the user is typing in one of the guide's inputs
+async function loadGuide(rescan, quiet) {
   const scanUrl = '/api/scan' + (onbScanDir ? '?dir=' + encodeURIComponent(onbScanDir) : '');
+  const before = JSON.stringify([onbData, onbScan, onbScanErr]);
   try {
     const [o, sc] = await Promise.all([
       fetch('/api/onboarding').then((r) => r.json()),
@@ -2417,20 +2445,33 @@ async function loadGuide(rescan) {
     onbData = o;
     if (sc && sc.error) onbScanErr = sc.error;
     else if (sc) { onbScan = sc; onbScanErr = ''; }
-  } catch (e) { onbScanErr = 'Could not reach the server: ' + e; }
-  if (byId('onb').classList.contains('open')) renderGuide();
+  } catch (e) { if (!quiet) onbScanErr = 'Could not reach the server: ' + e; }
+  if (!byId('onb').classList.contains('open')) return;
+  if (quiet && (before === JSON.stringify([onbData, onbScan, onbScanErr])
+    || byId('onbbody').contains(document.activeElement) && document.activeElement.tagName === 'INPUT')) return;
+  renderGuide();
 }
+// A fix made in another window (a pasted prompt, an edited settings.json) has to show
+// up here without a click on "Check again".
+let guideBusy = false;
+async function recheckGuide() {
+  if (guideBusy || onbStep !== 1 || document.hidden || !byId('onb').classList.contains('open')) return;
+  guideBusy = true;
+  try { await loadGuide(true, true); } finally { guideBusy = false; }
+}
+setInterval(recheckGuide, 5000);
+addEventListener('focus', recheckGuide);
 // every copyable string goes through an index, so no text has to survive an attribute
 const cp = (t) => { onbCopies.push(t); return onbCopies.length - 1; };
 const cmdRow = (t) => '<div class="cmdrow"><code>' + esc(t) + '</code><button class="sm" data-cp="' + cp(t) + '">Copy</button></div>';
-function checkHtml(c, projName) {
+function checkHtml(c, projName, root) {
   let h = '<div class="ck">' + mark(c) + '<div class="bd"><span class="lb">' + esc(c.label) + '</span>' +
     (c.required ? '' : '<span class="opt-tag">optional</span>') +
     (c.detail ? '<span class="dt">' + esc(c.detail) + '</span>' : '');
   if (!c.ok) {
     h += '<div class="why">' + esc(c.why || '') + '</div><div class="fix">';
     if (c.fixCmd) h += cmdRow(c.fixCmd);
-    if (c.fixPrompt) h += '<details class="pr"><summary>Prompt for Claude Code, run in this repo ' +
+    if (c.fixPrompt) h += '<details class="pr" data-pk="' + escA((root || '') + '|' + c.label) + '"><summary>Prompt for Claude Code, run in this repo ' +
       '<button class="sm" data-cp="' + cp(c.fixPrompt) + '">Copy prompt</button></summary>' +
       '<div class="promptbox">' + esc(c.fixPrompt) + '</div></details>';
     if (c.action === 'launchers' && projName)
@@ -2455,7 +2496,7 @@ function projRow(p, registered) {
       : '<button class="sm ' + (p.level === 'red' ? '' : 'primary') + '" data-add="' + escA(p.root) + '">Add</button>') +
     '<span class="dim" style="width:12px">' + (open ? '−' : '+') + '</span></div>';
   if (!open) return h + '</div>';
-  h += '<div class="prow-body">' + p.checks.map((c) => checkHtml(c, registered ? p.name : null)).join('');
+  h += '<div class="prow-body">' + p.checks.map((c) => checkHtml(c, registered ? p.name : null, p.root)).join('');
   h += '<div class="prow-actions">';
   if (!registered)
     h += '<input data-nm="' + escA(p.root) + '" value="' + escA(p.name) + '" aria-label="project name" title="project name">' +
@@ -2542,7 +2583,19 @@ function renderGuide() {
     nextOff = !regd.length;
     next = 'Show me around';
   }
-  byId('onbbody').innerHTML = h;
+  // a repaint must not close an open prompt, drop a typed name or jump the scroll
+  const B0 = byId('onbbody'), top = onbStep === onbPaintedStep ? B0.scrollTop : 0;
+  const openPk = new Set([...B0.querySelectorAll('details[open][data-pk]')].map((x) => x.dataset.pk));
+  const typed = ['data-nm', 'data-cl'].flatMap((a) =>
+    [...B0.querySelectorAll('[' + a + ']')].map((x) => [a, x.getAttribute(a), x.value]));
+  B0.innerHTML = h;
+  B0.querySelectorAll('details[data-pk]').forEach((x) => { if (openPk.has(x.dataset.pk)) x.open = true; });
+  typed.forEach(([a, k, v]) => {
+    const x = [...B0.querySelectorAll('[' + a + ']')].find((i) => i.getAttribute(a) === k);
+    if (x) x.value = v;
+  });
+  B0.scrollTop = top;
+  onbPaintedStep = onbStep;
   byId('onbback').style.visibility = onbStep ? '' : 'hidden';
   byId('onbnext').textContent = next;
   byId('onbnext').disabled = nextOff;
