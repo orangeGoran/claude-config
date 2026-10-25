@@ -1200,11 +1200,9 @@ const PAGE = /* html */ `<!doctype html>
   .wrap { flex:1; display:flex; min-height:0; }
   aside { width:calc(400px * var(--fs)); border-right:1px solid var(--line); background:var(--panel);
           flex-shrink:0; display:flex; flex-direction:column; }
-  .filters { padding:10px 12px 6px; display:flex; gap:8px; }
-  .filters.sub { padding:0 12px 10px; border-bottom:1px solid var(--line); align-items:center; }
+  .filters { padding:10px 12px; display:flex; gap:8px; align-items:center; border-bottom:1px solid var(--line); }
   .filters button { font-size:calc(12px * var(--fs)); }
-  .tgl.on { border-color:var(--accent); color:var(--stfg); background:color-mix(in srgb, var(--accent) 14%, transparent); }
-  .filters input, .filters select { background:var(--input); color:var(--fg); border:1px solid var(--line);
+  .filters input { background:var(--input); color:var(--fg); border:1px solid var(--line);
           border-radius:8px; padding:6px 10px; font-size:calc(13px * var(--fs)); }
   .filters input { flex:1; min-width:0; }
   .filters button { padding:5px 9px; flex-shrink:0; }
@@ -1228,6 +1226,7 @@ const PAGE = /* html */ `<!doctype html>
   .item input { transform:scale(1.15); flex-shrink:0; margin-top:3px; }
   .item .t { flex:1; min-width:0; }
   .item .name { font:600 calc(12px * var(--fs))/1.4 ui-monospace,monospace; word-break:break-all; }
+  .item.arch .name { color:var(--dim); }
   .chiprow { display:flex; gap:4px; flex-wrap:wrap; margin-top:5px; align-items:center; }
   .chip { font-size:calc(10px * var(--fs)); padding:1px 7px; border-radius:99px; border:1px solid var(--line);
           color:var(--dim); white-space:nowrap; }
@@ -1503,13 +1502,7 @@ const PAGE = /* html */ `<!doctype html>
 <div class="wrap">
   <aside>
     <div class="filters">
-      <input id="q" placeholder="search name / tag / project…">
-      <select id="statusFilter"><option value="">all statuses</option></select>
-    </div>
-    <div class="filters sub">
-      <button id="showDoneBtn" class="tgl"
-              title="show or hide plans that were archived to the done folder">📦 Show archived</button>
-      <span style="flex:1"></span>
+      <input id="q" placeholder="search plans, archived too…">
       <button id="collapseAll" title="collapse or expand all project sections">Collapse all</button>
     </div>
     <div class="runstrip" id="runstrip"></div>
@@ -1569,7 +1562,6 @@ catch { collapsedProjects = new Set(); }
 const saveCollapsed = () => {
   try { localStorage.setItem('dash-collapsed', JSON.stringify([...collapsedProjects])); } catch {}
 };
-let showDone = false;
 const modes = {};         // per key: a mode id from the project's modes (pipeline) or launcher index (generic)
 // per project: the last mode picked in this browser, so a new plan starts on it
 let lastModes = {};
@@ -1708,23 +1700,27 @@ const autoChips = (p) => {
   return c;
 };
 
+const matchesQ = (p, q) => p.file.toLowerCase().includes(q) || p.title.toLowerCase().includes(q)
+  || p.project.toLowerCase().includes(q) || p.client.toLowerCase().includes(q)
+  || p.tags.some((t) => t.toLowerCase().includes(q));
 function visiblePlans() {
   const q = byId('q').value.toLowerCase();
-  const st = byId('statusFilter').value;
-  return plans.filter((p) =>
-    (!q || p.file.toLowerCase().includes(q) || p.title.toLowerCase().includes(q)
-      || p.project.toLowerCase().includes(q) || p.client.toLowerCase().includes(q)
-      || p.tags.some((t) => t.toLowerCase().includes(q)))
-    && (!st || p.status === st)
-    && (!p.archived || showDone || selected === p.key));
+  return plans.filter((p) => !p.archived && (!q || matchesQ(p, q)));
+}
+// Archived plans stay out of the list until a search asks for them — nobody browses
+// hundreds of finished plans, they look one up. An open one stays listed.
+function archivedMatches() {
+  const q = byId('q').value.toLowerCase();
+  return plans.filter((p) => p.archived && (q ? matchesQ(p, q) : selected === p.key))
+    .sort((a, b) => b.slug.localeCompare(a.slug));   // slugs start with their date: newest first
 }
 let lastItemClick = {};
-const itemHtml = (p) => \`
-    <div class="item \${selected === p.key ? 'sel' : ''} \${dotClass(p)}" data-key="\${p.key}">
+const itemHtml = (p, withProject) => \`
+    <div class="item \${selected === p.key ? 'sel' : ''} \${p.archived ? 'arch' : ''} \${dotClass(p)}" data-key="\${p.key}">
       <input type="checkbox" data-check="\${p.key}" \${picked.has(p.key) ? 'checked' : ''}
              \${p.live || starting(p) || p.worktree || p.archived ? 'disabled' : ''}>
       <div class="t">
-        <div class="name">\${p.file}</div>
+        <div class="name">\${withProject ? '[' + esc(p.project) + '] ' : ''}\${p.file}</div>
         <div class="chiprow">
           \${p.status ? '<span class="chip st">' + esc(p.status) + '</span>' : ''}
           \${p.tags.map((t) => '<span class="chip">' + esc(t) + '</span>').join('')}
@@ -1817,7 +1813,8 @@ function renderList() {
   const vis = visiblePlans();
   // Unfiltered, every registered project shows — an empty one included, so a project
   // added a moment ago doesn't look like it failed to register.
-  const filtering = byId('q').value || byId('statusFilter').value;
+  const filtering = byId('q').value;
+  const arch = archivedMatches();
   const shownProjs = state.filter((s) => !filtering || vis.some((p) => p.project === s.name));
   const clients = [...new Set(shownProjs.map((s) => s.client))];
   byId('side').innerHTML = !state.length
@@ -1844,11 +1841,12 @@ function renderList() {
         (sp.setupLevel === 'red' ? '<span class="chip bad x" data-guide="' + escA(sp.root) +
           '" title="something required is missing — open the guide">needs setup</span>' : '') +
         '<span class="cnt">' + items.length + ' plan' + (items.length === 1 ? '' : 's') +
-        '</span></div>' + (closed ? '' : items.length ? items.map(itemHtml).join('')
+        '</span></div>' + (closed ? '' : items.length ? items.map((p) => itemHtml(p)).join('')
           : '<div class="emptyproj">' + (projPlans.length ? 'All plans are archived.'
             : 'No plans yet — add a <code>.md</code> file to <code>' + esc(sp.plansDir) + '</code>.') + '</div>');
     }).join('');
-  }).join('');
+  }).join('') + (arch.length ? '<div class="ghead">📦 Archived' + (filtering ? ' — ' + arch.length + ' match' +
+    (arch.length === 1 ? '' : 'es') : '') + '</div>' + arch.map((p) => itemHtml(p, true)).join('') : '');
   byId('side').querySelectorAll('[data-guide]').forEach((el) =>
     el.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1861,9 +1859,6 @@ function renderList() {
   byId('collapseAll').textContent =
     allProjNames.length && allProjNames.every((n) => collapsedProjects.has(n))
       ? 'Expand all' : 'Collapse all';
-  const archCount = plans.filter((p) => p.archived).length;
-  byId('showDoneBtn').textContent =
-    (showDone ? '📦 Hide archived' : '📦 Show archived') + (archCount ? ' (' + archCount + ')' : '');
   byId('side').querySelectorAll('.phead[data-toggle]').forEach((el) =>
     el.addEventListener('click', () => {
       const pr = el.dataset.toggle;
@@ -2388,20 +2383,11 @@ document.addEventListener('keydown', (e) => {
   if (drawerBack) drawerBack(); else closeLog();
 });
 byId('q').addEventListener('input', renderList);
-byId('statusFilter').addEventListener('change', renderList);
-byId('showDoneBtn').addEventListener('click', () => {
-  showDone = !showDone;
-  byId('showDoneBtn').classList.toggle('on', showDone);
-  renderList();
-});
 byId('collapseAll').addEventListener('click', () => {
   const names = [...new Set(plans.map((p) => p.project))];
   if (names.every((n) => collapsedProjects.has(n))) collapsedProjects.clear();
   else names.forEach((n) => collapsedProjects.add(n));
   saveCollapsed(); renderList();
-});
-STATUSES.forEach((s) => {
-  const o = document.createElement('option'); o.textContent = s; byId('statusFilter').appendChild(o);
 });
 // --- setup guide: what it does (demo) → pick a project; then a tour of the real screen ---
 // Machine checks stay out of sight unless one fails: a list of green ticks is a screen
