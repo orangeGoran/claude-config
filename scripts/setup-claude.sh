@@ -12,6 +12,8 @@
 #                      session transcripts instead of deleting them after 30 days
 #   attribution        set commit and pr to "", so Claude Code adds no co-author line
 #                      to commits and no footer to PR descriptions
+#   idleCompaction     set it to false, so Claude Code does not compact a long conversation
+#                      while the session is idle
 #
 # A real file or folder already at a target is moved aside to <target>.bak-<timestamp>.
 # settings.json is merged, never replaced. Safe to re-run.
@@ -22,7 +24,7 @@ YES=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -y|--yes) YES=1; shift ;;
-    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -93,6 +95,20 @@ if ask "Turn off the Claude co-author line in commits and the footer in PR descr
   set_setting attribution '{"commit":"","pr":""}'
 else
   echo "skipped"
+fi
+
+step "No idle compaction"
+if ask "Turn off idle compaction (compacting a long conversation while the session is idle)?"; then
+  set_setting idleCompaction false
+else
+  echo "skipped"
+fi
+
+step "$CLAUDE/settings.json"
+if [ -f "$CLAUDE/settings.json" ]; then
+  cat "$CLAUDE/settings.json"
+else
+  echo "not created (every settings step was skipped)"
 fi
 
 printf '\nDone. Restart Claude Code to pick up the changes.\n'
