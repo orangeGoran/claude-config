@@ -37,4 +37,17 @@ Use **Conventional Commits**:
 
 ## Output
 
-Reply with just the commit message in a single fenced code block, ready to copy. If the changes are genuinely unrelated bundles, you may offer 2–3 alternative messages (one per bundle), each in its own fenced block, with a one-line label above each.
+Reply with two fenced code blocks, ready to copy, and nothing else:
+
+1. A `git add` command that stages exactly the files the message covers (modified, deleted and untracked), one file per line:
+
+   ```
+   git add -- \
+     path/to/first-file \
+     path/to/second-file
+   ```
+
+   When the message covers only part of the pending changes, list only that part and add one line above the block naming what is left out. When some files are already staged that the message does not cover, also add `git restore --staged -- <file>` lines for them.
+2. The commit message.
+
+If the changes are genuinely unrelated bundles, you may offer 2–3 alternatives (one per bundle), each a `git add` block plus a message block, with a one-line label above each.

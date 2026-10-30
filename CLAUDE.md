@@ -17,7 +17,7 @@ These rules apply in every repository unless the project's own CLAUDE.md says ot
 
 ## Git
 
-- **Never run `git add`, `git commit`, `git stash`, or `git reset`** unless explicitly asked in the current message. Default deliverable is a copy-paste-ready Conventional Commits message.
+- **Never run `git add`, `git commit`, `git stash`, or `git reset`** unless explicitly asked in the current message. Default deliverable is a copy-paste-ready `git add` command for exactly the files the message covers, followed by a copy-paste-ready Conventional Commits message.
 - No AI attribution in commit messages or PR bodies (no "Generated with Claude Code", no Co-Authored-By lines).
 
 ## Code
