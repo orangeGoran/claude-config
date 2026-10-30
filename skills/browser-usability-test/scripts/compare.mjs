@@ -1,8 +1,11 @@
 // Before/after review of the fixed findings as ONE self-contained HTML file
 // (screenshots embedded as base64), easy to send to someone else.
+// With "mode": "findings" it is the test-run page instead: the findings with their
+// "before" shots only, nothing fixed yet.
 // Usage: node scripts/compare.mjs <items.json> [--out=<file.html>]
-// items.json (written by Claude after the fixes):
+// items.json (written by Claude after the test run, or after the fixes):
 //   {
+//     "mode": "findings",                                    // optional, test run without fixes
 //     "route": "/cases", "account": "Ana (Member, Acme)",
 //     "title": "Filters on /cases fit a phone",              // optional, plain-words headline
 //     "summary": "…",                                        // TLDR: does it work now, what is still open
@@ -17,6 +20,7 @@
 //                 "beforeText": "API total 12", "afterText": "API total 3",                     // optional, non-visual proof
 //                 "review": true }],                         // optional, adds "Is this fix good?" to this finding
 //     "reviewEachFix": true,                                 // optional, "Is this fix good?" on every finding
+//     "works": ["Saving a valid provider shows it in the list", "…"],  // optional, "What works"
 //     "notTested": ["Safari", "…"],                          // optional
 //     "questions": [{ "question": "Is the wrapped filter bar OK on a phone?",   // optional; the reader answers
 //                     "finding": "1",                         // shown inside that finding; without it, at the end
@@ -26,7 +30,10 @@
 //                     "other": true }],                       // optional free-text "Other" option
 //     "copyBlocks": [{ "title": "Missing from backend", "lead": "…", "text": "…" }]           // optional, with a Copy button
 //   }
+// In findings mode: "result" is not used, "before" is the version tested, "fix" is the
+// proposed fix, and "reviewEachFix" asks "Should I apply this fix?" on every finding.
 // Output: ~/.claude/browser-usability-test/projects/<project>/reports/<date>-<route>-before-after.html
+//         (…-findings.html in findings mode)
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, join } from "node:path";
 import { BEFORE_AFTER_FILE, PROJECT } from "./lib.mjs";
@@ -38,6 +45,7 @@ const arg = (k) =>
   process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3);
 const spec = JSON.parse(readFileSync(input, "utf8"));
 const items = spec.items ?? [];
+const FINDINGS = spec.mode === "findings";
 
 // Shot records from this account's folder plus any extra account folders.
 const shots = {};
@@ -93,6 +101,10 @@ function pair(item, shot) {
   const { name, caption } = typeof shot === "string" ? { name: shot } : shot;
   const rec = shots[name] ?? {};
   if (!rec.before) warnings.push(`#${item.id}: no "before" shot named ${name}`);
+  if (FINDINGS)
+    return `<div class="gallery">
+${figure("before", rec.before?.file, caption ?? name, `#${item.id} as found`, rec.before)}
+</div>`;
   if (!rec.after)
     warnings.push(`#${item.id}: no "after" shot named ${name} (rerun with QA_PHASE=after)`);
   const diff = rec.before && rec.after ? stateDiff(rec.before, rec.after) : [];
@@ -115,15 +127,15 @@ const resultTag = (item) => {
 };
 
 const overview = `<section aria-labelledby="overview">
-<span class="eyebrow">Result</span>
-<h2 id="overview">What was fixed</h2>
+<span class="eyebrow">${FINDINGS ? "Findings" : "Result"}</span>
+<h2 id="overview">${FINDINGS ? "What was found" : "What was fixed"}</h2>
 <div class="table-wrap"><table class="diff">
-<thead><tr><th>#</th><th>Problem</th><th class="wide">Fix</th><th class="wide">Severity</th><th>Result</th></tr></thead>
+<thead><tr><th>#</th><th>Problem</th><th class="wide">${FINDINGS ? "Proposed fix" : "Fix"}</th>${FINDINGS ? "<th>Severity</th>" : `<th class="wide">Severity</th><th>Result</th>`}</tr></thead>
 <tbody>
 ${items
   .map(
     (i) =>
-      `<tr><td><a href="#f${esc(i.id)}">#${esc(i.id)}</a></td><td>${esc(i.problem)}</td><td class="wide">${esc(i.fix ?? "—")}</td><td class="wide">${esc(i.severity ?? "—")}</td><td>${resultTag(i)}</td></tr>`,
+      `<tr><td><a href="#f${esc(i.id)}">#${esc(i.id)}</a></td><td>${esc(i.problem)}</td><td class="wide">${esc(i.fix ?? "—")}</td>${FINDINGS ? `<td>${esc(i.severity ?? "—")}</td>` : `<td class="wide">${esc(i.severity ?? "—")}</td><td>${resultTag(i)}</td>`}</tr>`,
   )
   .join("\n")}
 </tbody>
@@ -137,10 +149,16 @@ const LETTERS = "ABCDEFGHIJ";
 const jsString = (v) => JSON.stringify(v).replace(/</g, "\\u003c");
 // Questions sit next to what they ask about: one with `finding` goes inside that
 // finding's section, the rest at the end. Numbered in page order (findings first).
-const REVIEW = {
-  question: "Is this fix good?",
-  options: [{ label: "Yes, it is good" }, { label: "No, it needs changes" }],
-};
+const REVIEW = FINDINGS
+  ? {
+      question: "Should I apply this fix?",
+      options: [{ label: "Yes, apply it" }, { label: "No, leave it as it is" }],
+      other: true,
+    }
+  : {
+      question: "Is this fix good?",
+      options: [{ label: "Yes, it is good" }, { label: "No, it needs changes" }],
+    };
 const asked = spec.questions ?? [];
 const sameId = (a, b) => a != null && String(a) === String(b);
 const forFinding = (item) => [
@@ -177,7 +195,7 @@ ${type === "text" ? "" : `<input type="text" class="qnote" placeholder="Comment 
 const findings = items.map((item) => {
   const text =
     item.beforeText || item.afterText
-      ? `<div class="gallery">${textFigure("before", item.beforeText)}${textFigure("after", item.afterText)}</div>`
+      ? `<div class="gallery">${textFigure("before", item.beforeText)}${FINDINGS ? "" : textFigure("after", item.afterText)}</div>`
       : "";
   const refs = (item.references ?? []).length
     ? `<div class="gallery">${item.references
@@ -185,9 +203,9 @@ const findings = items.map((item) => {
         .join("\n")}</div>`
     : "";
   return `<section id="f${esc(item.id)}" aria-labelledby="h${esc(item.id)}">
-<span class="eyebrow">#${esc(item.id)}${item.severity ? ` · ${esc(item.severity)}` : ""} · ${result(item)[0]}</span>
+<span class="eyebrow">#${esc(item.id)}${item.severity ? ` · ${esc(item.severity)}` : ""}${FINDINGS ? "" : ` · ${result(item)[0]}`}</span>
 <h2 id="h${esc(item.id)}">${esc(item.problem)}</h2>
-${item.fix ? `<p class="lead"><strong>Fix:</strong> ${esc(item.fix)}${item.cause ? ` <code>${esc(item.cause)}</code>` : ""}</p>` : ""}
+${item.fix ? `<p class="lead"><strong>${FINDINGS ? "Proposed fix" : "Fix"}:</strong> ${esc(item.fix)}${item.cause ? ` <code>${esc(item.cause)}</code>` : ""}</p>` : ""}
 ${item.note ? `<p class="note">${esc(item.note)}</p>` : ""}
 ${(item.shots ?? []).map((n) => pair(item, n)).join("\n")}
 ${text}
@@ -195,6 +213,14 @@ ${refs}
 ${forFinding(item).map(question).join("\n")}
 </section>`;
 });
+
+const works = (spec.works ?? []).length
+  ? `<section aria-labelledby="works">
+<span class="eyebrow">Checked</span>
+<h2 id="works">What works</h2>
+<ul class="list">${spec.works.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
+</section>`
+  : "";
 
 const notTested = (spec.notTested ?? []).length
   ? `<section aria-labelledby="not-tested">
@@ -230,8 +256,8 @@ ${b.lead ? `<p class="lead">${esc(b.lead)}</p>` : ""}
 const date = new Date().toISOString().slice(0, 10);
 const route = spec.route ?? PROJECT.name;
 const count = (k) => items.filter((i) => i.result === k).length;
-const title = spec.title ?? `Before and after: ${route}`;
-const eyebrow = [PROJECT.name, route, "before / after"]
+const title = spec.title ?? `${FINDINGS ? "Usability test" : "Before and after"}: ${route}`;
+const eyebrow = [PROJECT.name, route, FINDINGS ? "findings" : "before / after"]
   .filter(Boolean)
   .join(" · ");
 // Screens and themes actually used, from the shot records of this report.
@@ -242,20 +268,28 @@ const used = items
   .filter(Boolean);
 const uniq = (xs) => [...new Set(xs.filter(Boolean))].join(", ");
 const meta = [
-  spec.before && `Before: ${spec.before}`,
+  spec.before && `${FINDINGS ? "Tested" : "Before"}: ${spec.before}`,
   spec.after && `After: ${spec.after}`,
   spec.account,
   uniq(used.map((r) => r.viewport && `${r.viewport.width} × ${r.viewport.height}`)),
   uniq(used.map((r) => r.theme)),
   date,
 ].filter(Boolean);
-const totals = [
-  `${count("fixed")} of ${items.length} fixed`,
-  count("partly") && `${count("partly")} partly`,
-  count("not-fixed") && `${count("not-fixed")} not fixed`,
-]
-  .filter(Boolean)
-  .join(" · ");
+const severities = uniq(
+  ["High", "Medium", "Low"].map((s) => {
+    const n = items.filter((i) => i.severity === s).length;
+    return n && `${n} ${s.toLowerCase()}`;
+  }),
+);
+const totals = FINDINGS
+  ? `${items.length} finding${items.length === 1 ? "" : "s"}${severities ? ` (${severities})` : ""}`
+  : [
+      `${count("fixed")} of ${items.length} fixed`,
+      count("partly") && `${count("partly")} partly`,
+      count("not-fixed") && `${count("not-fixed")} not fixed`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
 
 const html = `<!doctype html>
 <html lang="en">
@@ -356,10 +390,11 @@ const html = `<!doctype html>
 <h1>${esc(title)}</h1>
 ${spec.summary ? `<div class="tldr"><strong>TLDR.</strong> ${esc(spec.summary)}</div>` : ""}
 <p class="meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</p>
-<p class="note">${esc(totals)}. Each finding shows the same view before and after the fix, taken at the same width, theme and account. Click a picture to enlarge it.${askedCount ? ` This page has ${askedCount} question${askedCount === 1 ? "" : "s"} for you; answer them in place and <a href="#questions">copy all answers at the end</a>.` : ""}</p>
+<p class="note">${esc(totals)}. ${FINDINGS ? "Nothing is fixed yet. Each finding shows the screen as it was found, with the width, theme and account it was taken at." : "Each finding shows the same view before and after the fix, taken at the same width, theme and account."} Click a picture to enlarge it.${askedCount ? ` This page has ${askedCount} question${askedCount === 1 ? "" : "s"} for you; answer them in place and <a href="#questions">copy all answers at the end</a>.` : ""}</p>
 </header>
 ${overview}
 ${findings.join("\n")}
+${works}
 ${notTested}
 ${questions}
 ${copyBlocks.join("\n")}
@@ -451,7 +486,7 @@ ${copyBlocks.join("\n")}
 
 const slug = route.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "root";
 const out =
-  arg("out") ?? join(STORE, PROJECT.name, "reports", `${date}-${slug}-before-after.html`);
+  arg("out") ?? join(STORE, PROJECT.name, "reports", `${date}-${slug}-${FINDINGS ? "findings" : "before-after"}.html`);
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(out, html);
 

@@ -110,7 +110,14 @@ Before writing anything about authorization, read the guard/middleware code that
 
 ## 7. Report
 
-Use `references/report.md` exactly. When running as a subagent, return the report as text (the harness may refuse report files); evidence files are fine. Every finding needs a concrete example and evidence; for frontend causes, give `file:line` you actually read. Put backend gaps in one fenced, copy-paste block written for the backend team. Close by asking before fixing anything, and say which fixes are small and safe. Don't fix code during the test run — the user decides what to change.
+Use `references/report.md` exactly. When running as a subagent, return the report as text (the harness may refuse report files); evidence files are fine. Start the Evidence line with a clickable `file://` link to the evidence folder (absolute path, trailing `/`), so one click opens it. Every finding needs a concrete example and evidence; for frontend causes, give `file:line` you actually read. Put backend gaps in one fenced, copy-paste block written for the backend team. Close by asking before fixing anything, and say which fixes are small and safe. Don't fix code during the test run — the user decides what to change.
+
+Every test run also ends with one HTML page of the findings, so the user can send them to someone before anything is fixed:
+
+1. Write `items.json` in the scratchpad with `"mode": "findings"` (format at the top of `scripts/compare.mjs`). Use the same plain words and real values as in the report: `title`, `summary` (the TLDR), `before` (the version tested, for example "HEAD 55da5d9 + working tree"), `works`, `notTested`, `copyBlocks` (the backend block), and one item per finding, including consistency findings (`C1`, …). Each item has the problem, severity, proposed `fix`, `cause` file:line, its `beforeAfterShot` names with a short `caption`, and `beforeText` for non-visual proof (API value, SQL count).
+2. Set `reviewEachFix: true`, so the reader answers "Should I apply this fix?" for every finding. Add `questions` for each open design decision, the same as in section 8.
+3. Run `node $SKILL_DIR/scripts/compare.mjs <items.json>` with the same account and `QA_DIR` as the test. It writes `<date>-<route>-findings.html` to the project's reports folder. Fix every warning it prints and run it again.
+4. Put the page in the report as a clickable `file://` link (see `references/report.md`). If the script can't run, for example because the harness refuses files, say that in the report.
 
 ## 8. After fixes: before/after comparison
 

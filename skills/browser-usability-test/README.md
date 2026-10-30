@@ -35,7 +35,7 @@ Optional env: `QA_PHASE` (`after` when retaking finding shots after a fix), `QA_
 | `scripts/profile.mjs` | Finds the project for the current repo; `init`, `add-repo`, `add-account`. Checks `project.json` and `accounts.json` against `references/*.schema.json` on every read and write |
 | `scripts/smoke.mjs <path>` | Opens a page signed in; prints headings, buttons, axe violations, console/network problems, light/dark screenshots, sideways-scroll check at 390/1100/1440/2555 px |
 | `scripts/api.mjs <METHOD> <path> [body]` | Calls the API as the test account and prints the response; `SQL "<select>"` runs a read-only query |
-| `scripts/compare.mjs <items.json>` | After fixes: one self-contained before/after HTML file (screenshots embedded) in `~/.claude/browser-usability-test/projects/<project>/reports/` |
+| `scripts/compare.mjs <items.json>` | One self-contained HTML file (screenshots embedded) in `~/.claude/browser-usability-test/projects/<project>/reports/`: the findings after a test run (`"mode": "findings"`), or before/after pairs after fixes |
 | `scripts/lib.mjs` | Helpers below — import it from your own run scripts |
 
 ## `lib.mjs` helpers
