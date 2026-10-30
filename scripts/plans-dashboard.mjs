@@ -415,6 +415,7 @@ const sessionsIn = (dir, only) => {
 const listPlans = async (proj) => {
   const summaries = loadSummaries(proj);
   const meta = loadMeta(proj);
+  const prs = prsFor(proj);
   const active = await Promise.all(
     planFiles(proj).map(async (f) => {
       const slug = f.replace(/\.md$/, '');
@@ -445,6 +446,7 @@ const listPlans = async (proj) => {
         tags: meta[slug]?.tags || [],
         wtPath, transcriptDir,
         sessions: sessionsIn(transcriptDir, sessionFilter),
+        pr: prs['auto/' + slug] || null,
       };
     }),
   );
@@ -463,6 +465,7 @@ const listPlans = async (proj) => {
         run: null, live: false, worktree: false, archived: true,
         status: meta[slug]?.status || null, tags: meta[slug]?.tags || [],
         wtPath: proj.root, transcriptDir: transcriptDirFor(proj.root), sessions: [],
+        pr: prs['auto/' + slug] || null,
       };
     });
   return [...active, ...archived];
@@ -477,6 +480,8 @@ const fullState = async () => {
       hasPipeline: proj.hasPipeline, hasLanes: proj.hasLanes,
       modes: pipelineModes(proj).map(({ flag, ...m }) => m),
       launchers: proj.launchers, issuesUrl: proj.issuesUrl,
+      // only a repo on GitHub can have PRs, so only there is a gh failure worth saying
+      prError: proj.issuesUrl ? (prLists[proj.root] || {}).error || '' : '',
       setupLevel: projectHealth(proj.root, entry).level,
       plans: await listPlans(proj),
     });
@@ -723,9 +728,12 @@ const toolVersion = (cmd, args) =>
       resolve(err ? null : String(out).trim().split('\n')[0]));
   });
 const systemCheck = async () => {
-  const [claude, git, jq] = await Promise.all([
+  const [claude, git, jq, gh] = await Promise.all([
     toolVersion('claude', ['--version']), toolVersion('git', ['--version']), toolVersion('jq', ['--version']),
+    toolVersion('gh', ['--version']),
   ]);
+  const ghAuth = gh && await new Promise((resolve) =>
+    execFile('gh', ['auth', 'status'], { env: ENV, timeout: 8000 }, (err) => resolve(!err)));
   const nodeMajor = +process.versions.node.split('.')[0];
   return [
     { id: 'node', label: 'Node.js 18 or newer', ok: nodeMajor >= 18, required: true,
@@ -737,6 +745,10 @@ const systemCheck = async () => {
     { id: 'git', label: 'git', ok: !!git, required: true, detail: git || 'not found on PATH',
       why: 'Runs are reviewed as diffs, and parallel runs each get their own git worktree.',
       fixCmd: 'xcode-select --install' },
+    { id: 'gh', label: 'GitHub CLI', ok: !!ghAuth, required: false,
+      detail: !gh ? 'not found on PATH' : ghAuth ? gh : 'not logged in',
+      why: 'Shows each plan\u2019s pull request, its files and the Merge button. The pipeline also opens PRs with it.',
+      fixCmd: gh ? 'gh auth login' : 'brew install gh && gh auth login' },
     { id: 'jq', label: 'jq', ok: !!jq, required: false, detail: jq || 'not found on PATH',
       why: 'The launcher template uses it to copy a repo’s permission allowlist into headless runs.',
       fixCmd: 'brew install jq' },
@@ -975,6 +987,142 @@ const unarchivePlan = (proj, slug) => {
   return { ok: true, output: 'Moved back to active plans.' };
 };
 
+// ---------- pull requests (gh CLI) ----------
+
+// A plan's PR is the newest one on its pipeline branch, auto/<slug>. One `gh pr list`
+// per project, at most once a minute and never on the 5s poll's critical path:
+// /api/state serves what is cached and the refresh lands on a later tick.
+const PR_TTL = 60000;
+const prLists = {}; // root -> { at, byBranch, loading }
+const gh = (proj, args, input) =>
+  new Promise((resolve) => {
+    const child = execFile('gh', args, { cwd: proj.root, env: ENV, timeout: 30000, maxBuffer: 32 * 1024 * 1024 },
+      (err, stdout, stderr) => resolve(err
+        ? { ok: false, output: String(stderr || err.message).trim() || 'gh failed' }
+        : { ok: true, out: stdout }));
+    if (input != null) child.stdin.end(input);
+  });
+const ghProblem = (out) => /ENOENT/.test(out) ? 'gh is not installed'
+  : /auth login|not logged/i.test(out) ? 'gh is not logged in' : out.split('\n')[0].slice(0, 160);
+const refreshPrList = (proj) => {
+  const c = prLists[proj.root] = prLists[proj.root] || { at: 0, byBranch: {} };
+  if (c.loading) return;
+  c.loading = true;
+  gh(proj, ['pr', 'list', '--state', 'all', '--limit', '200',
+    '--json', 'number,headRefName,headRefOid,isDraft,state,title,url']).then((r) => {
+    const byBranch = {};
+    if (r.ok) try {
+      for (const p of JSON.parse(r.out))   // newest first: keep the first PR per branch
+        if (p.headRefName.startsWith('auto/') && !byBranch[p.headRefName])
+          byBranch[p.headRefName] = { number: p.number, state: p.state, isDraft: p.isDraft, title: p.title,
+            url: p.url, head: p.headRefOid };
+    } catch {}
+    Object.assign(c, { at: Date.now(), byBranch: r.ok ? byBranch : c.byBranch, loading: false,
+      error: r.ok ? '' : ghProblem(r.output) });
+  });
+};
+const prsFor = (proj) => {
+  const c = prLists[proj.root];
+  if (!c || Date.now() - c.at > PR_TTL) refreshPrList(proj);
+  return (c && c.byBranch) || {};
+};
+// the merge methods a repo allows and the viewer's default, read once per server run
+const repoMerge = {};
+const mergeSettings = async (proj) => {
+  if (!repoMerge[proj.root]) {
+    const r = await gh(proj, ['repo', 'view', '--json',
+      'mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,viewerDefaultMergeMethod']);
+    if (!r.ok) return { methods: ['merge'], default: 'merge' };
+    const m = JSON.parse(r.out);
+    repoMerge[proj.root] = {
+      methods: [m.mergeCommitAllowed && 'merge', m.squashMergeAllowed && 'squash', m.rebaseMergeAllowed && 'rebase'].filter(Boolean),
+      default: String(m.viewerDefaultMergeMethod || 'MERGE').toLowerCase(),
+    };
+  }
+  return repoMerge[proj.root];
+};
+// After a merge, bring the main checkout (never a worktree) up to date, so the merged plan
+// shows in done/ and the local code matches. Fast-forward only, and only on the base branch.
+const gitIn = (root, args) =>
+  new Promise((resolve) => execFile('git', ['-C', root, ...args],
+    { env: { ...ENV, GIT_TERMINAL_PROMPT: '0' }, timeout: 120000 }, (err, stdout, stderr) =>
+      resolve({ ok: !err, out: String(stdout || '').trim(), err: String(stderr || (err && err.message) || '').trim() })));
+const pullRoot = async (proj, base) => {
+  const where = tilde(proj.root);
+  const br = await gitIn(proj.root, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  if (!br.ok) return 'Not pulled: ' + where + ' is not a git repository.';
+  if (!base || br.out !== base)
+    return 'Not pulled: ' + where + ' is on ' + br.out + ', not ' + (base || 'the base branch') + '.';
+  const r = await gitIn(proj.root, ['pull', '--ff-only']);
+  if (!r.ok) return 'Not pulled: git pull --ff-only failed in ' + where + ': ' + r.err.split('\n').slice(-2).join(' ');
+  return 'Pulled ' + base + ' in ' + where + (/Already up to date/i.test(r.out) ? ' (it was already up to date).' : '.');
+};
+const prDetail = async (proj, number) => {
+  const r = await gh(proj, ['pr', 'view', String(number), '--json',
+    'number,title,body,state,isDraft,url,baseRefName,headRefName,headRefOid,mergeable,additions,deletions,changedFiles,commits,reviewDecision,statusCheckRollup']);
+  if (!r.ok) return r;
+  const pr = JSON.parse(r.out);
+  const checks = { passed: 0, failed: [], running: 0 };
+  for (const c of pr.statusCheckRollup || []) {
+    const st = c.__typename === 'StatusContext'
+      ? (c.state === 'SUCCESS' ? 'passed' : /PENDING|EXPECTED/.test(c.state) ? 'running' : 'failed')
+      : (c.status !== 'COMPLETED' ? 'running' : /SUCCESS|NEUTRAL|SKIPPED/.test(c.conclusion) ? 'passed' : 'failed');
+    if (st === 'failed') checks.failed.push(c.name || c.context);
+    else checks[st]++;
+  }
+  const { statusCheckRollup, commits, ...rest } = pr;
+  return { ok: true, pr: { ...rest, commits: (commits || []).length, checks, merge: await mergeSettings(proj) } };
+};
+// task-list boxes ("- [ ] …") in order, skipping fenced code — the same ones the page draws
+const taskLines = (body) => {
+  const out = []; let fence = false;
+  body.split('\n').forEach((line, i) => {
+    if (/^\s*```/.test(line)) fence = !fence;
+    else if (!fence && /^\s*(?:[-*]|\d+[.)])\s+\[[ xX]\]/.test(line)) out.push(i);
+  });
+  return out;
+};
+const prAction = async (proj, b) => {
+  const n = String(b.number);
+  if (!/^\d{1,7}$/.test(n)) return { ok: false, output: 'Bad PR number.' };
+  delete prLists[proj.root];   // the list chip should change on the next poll, not in a minute
+  if (b.action === 'ready') return gh(proj, ['pr', 'ready', n]);
+  if (b.action === 'draft') return gh(proj, ['pr', 'ready', n, '--undo']);
+  if (b.action === 'close')
+    return gh(proj, ['pr', 'close', n, ...(b.deleteBranch ? ['--delete-branch'] : [])]);
+  if (b.action === 'merge') {
+    if (!['merge', 'squash', 'rebase'].includes(b.method)) return { ok: false, output: 'Unknown merge method.' };
+    if (!/^[0-9a-f]{40}$/.test(String(b.head))) return { ok: false, output: 'Bad head commit.' };
+    // GitHub refuses when someone pushed after the page loaded, so what you reviewed is what merges
+    const m = await gh(proj, ['pr', 'merge', n, '--' + b.method, '--match-head-commit', b.head]);
+    if (!m.ok) return m;
+    const v = await gh(proj, ['pr', 'view', n, '--json', 'baseRefName,headRefName']);
+    const { baseRefName: base, headRefName: head } = v.ok ? JSON.parse(v.out) : {};
+    const notes = [];
+    // not `gh pr merge --delete-branch`: it also deletes the local branch, which the run's worktree has checked out
+    if (b.deleteBranch && head) {
+      const d = await gh(proj, ['api', '-X', 'DELETE',
+        'repos/{owner}/{repo}/git/refs/heads/' + head.split('/').map(encodeURIComponent).join('/')]);
+      notes.push(d.ok ? 'Deleted the branch on GitHub.' : 'Could not delete the branch on GitHub: ' + d.output);
+    }
+    notes.push(await pullRoot(proj, base));
+    return { ok: true, notes };
+  }
+  if (b.action === 'task') {
+    // read the body fresh, so a tick never overwrites an edit made on GitHub since the page loaded
+    const r = await gh(proj, ['pr', 'view', n, '--json', 'body']);
+    if (!r.ok) return r;
+    const lines = JSON.parse(r.out).body.split('\n');
+    const tasks = taskLines(lines.join('\n'));
+    const i = tasks[+b.index];
+    if (tasks.length !== +b.count || i == null || /\[[xX]\]/.test(lines[i]) !== !!b.was)
+      return { ok: false, output: 'The PR description changed on GitHub since this page loaded it. It is reloaded now — tick the box again.' };
+    lines[i] = lines[i].replace(/\[[ xX]\]/, b.was ? '[ ]' : '[x]');
+    return gh(proj, ['pr', 'edit', n, '--body-file', '-'], lines.join('\n'));
+  }
+  return { ok: false, output: 'Unknown action.' };
+};
+
 // ---------- http ----------
 
 // render stream-json session output as a human-readable activity feed
@@ -1106,6 +1254,24 @@ const server = http.createServer(async (req, res) => {
       const f = path.join(proj.autoRunsDir, slug + '.md');
       return text(res, existsSync(f) ? readFileSync(f, 'utf8') : '(no report yet)');
     }
+    if (url.pathname === '/api/pr' || url.pathname === '/api/pr-diff') {
+      const proj = getProj();
+      const n = url.searchParams.get('number') || '';
+      if (!proj || !/^\d{1,7}$/.test(n)) return json(res, 400, { error: 'bad request' });
+      if (url.pathname === '/api/pr') return json(res, 200, await prDetail(proj, n));
+      const r = await gh(proj, ['pr', 'diff', n]);
+      return json(res, 200, r.ok ? { ok: true, diff: r.out } : r);
+    }
+    if (url.pathname === '/api/pr-file') {
+      // one file at the PR's head commit: the whole-file view fills the lines between hunks from it
+      const proj = getProj();
+      const sha = url.searchParams.get('sha') || '', file = url.searchParams.get('path') || '';
+      if (!proj || !/^[0-9a-f]{40}$/.test(sha) || !file || file.split('/').some((s) => !s || s === '..' || s === '.'))
+        return json(res, 400, { error: 'bad request' });
+      const r = await gh(proj, ['api', '-H', 'Accept: application/vnd.github.raw',
+        'repos/{owner}/{repo}/contents/' + file.split('/').map(encodeURIComponent).join('/') + '?ref=' + sha]);
+      return json(res, 200, r.ok ? { ok: true, text: r.out } : r);
+    }
     if (req.method === 'POST') {
       const b = await body(req);
       const proj = safeName(b.project) ? projByName(b.project) : null;
@@ -1162,6 +1328,10 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === '/api/archive') return json(res, 200, await archivePlan(proj, b.slug));
       if (url.pathname === '/api/unarchive') return json(res, 200, unarchivePlan(proj, b.slug));
       if (url.pathname === '/api/vscode') return json(res, 200, { ok: true, target: openInVsCode(proj, b.slug) });
+      if (url.pathname === '/api/pr-action') {
+        const r = await prAction(proj, b);
+        return json(res, 200, r.ok ? { ok: true, notes: r.notes } : r);
+      }
     }
     json(res, 404, { error: 'not found' });
   } catch (e) {
@@ -1172,6 +1342,7 @@ const server = http.createServer(async (req, res) => {
 // ---------- page ----------
 
 const PAGE = /* html */ `<!doctype html>
+<html lang="en">
 <meta charset="utf-8">
 <title>Plans</title>
 <link rel="icon" id="favicon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Ctext%20x%3D%2232%22%20y%3D%2246%22%20font-size%3D%2256%22%20text-anchor%3D%22middle%22%3E%F0%9F%98%B4%3C%2Ftext%3E%3C%2Fsvg%3E">
@@ -1181,12 +1352,14 @@ const PAGE = /* html */ `<!doctype html>
           --dim:#a5afc0; --ok:#a3be8c; --run:#81a1c1; --warn:#ebcb8b; --bad:#bf616a;
           --accent:#88c0d0; --accentfg:#2e3440; --link:#88c0d0; --input:#272c36; --hover:#3b4252; --sel:#434c5e;
           --btn:#3b4252; --dot:#4c566a; --codebg:#272c36; --codechip:#3b4252; --thbg:#3b4252;
-          --logfg:#d8dee9; --stfg:#88c0d0; }
+          --logfg:#d8dee9; --stfg:#88c0d0; --addbg:#36453c; --delbg:#4a363c;
+          --gitM:#8ec8ff; --gitA:#84d6a0; --gitD:#ffa69c; --merge:#c9a6c2; --mergefg:#1b1e25; }
   :root[data-theme="light"] { --bg:#f4f5f8; --panel:#ffffff; --card:#ffffff; --line:#d9dde6;
           --fg:#1d2433; --dim:#5f6b81; --ok:#15803d; --run:#2563eb; --warn:#b45309; --bad:#dc2626;
           --accent:#7c3aed; --accentfg:#fff; --link:#1d4ed8; --input:#f0f2f7; --hover:#eef1f7; --sel:#e3e7f5;
           --btn:#eef0f6; --dot:#c3c9d8; --codebg:#f6f7fa; --codechip:#e8eaf2; --thbg:#eaedf5;
-          --logfg:#333c50; --stfg:#6d28d9; }
+          --logfg:#333c50; --stfg:#6d28d9; --addbg:#e3f5e8; --delbg:#fde6e8;
+          --gitM:#0969da; --gitA:#1a7f37; --gitD:#cf222e; --merge:#8250df; --mergefg:#fff; }
   /* --fs scales text and reading widths up on wide screens, where fixed px text gets tiny */
   :root { --fs:1; }
   @media (min-width:1800px) { :root { --fs:1.08; } }
@@ -1475,6 +1648,87 @@ const PAGE = /* html */ `<!doctype html>
   .scanrow { display:flex; gap:8px; margin:14px 0 0; }
   .scanrow input { flex:1; background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:8px;
                    padding:7px 10px; font:calc(12px * var(--fs)) ui-monospace,monospace; }
+  /* pull request tabs */
+  .prtabs { display:flex; gap:2px; border-bottom:1px solid var(--line); margin:12px 0; }
+  .prtabs button { background:none; border:0; border-bottom:2px solid transparent; border-radius:0;
+                   padding:7px 13px; color:var(--dim); }
+  .prtabs button.on { color:var(--fg); border-bottom-color:var(--accent); }
+  .prtabs .n { font:calc(11px * var(--fs)) ui-monospace,monospace; background:var(--btn); border-radius:10px;
+               padding:1px 6px; margin-left:4px; }
+  .prhead { display:grid; gap:8px; padding:12px 14px; border:1px solid var(--line); border-radius:10px;
+            background:var(--card); margin-bottom:14px; }
+  .prhead .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .prhead .btns { margin:0; }
+  .prtitle { font-size:calc(15px * var(--fs)); }
+  .add, .del { font:600 calc(12px * var(--fs)) ui-monospace,monospace; }
+  .add { color:var(--ok); } .del { color:var(--gitD); }
+  .prbody li.task { list-style:none; margin-left:-20px; }
+  .prbody li.task input { margin-right:6px; accent-color:var(--accent); }
+  .prfiles { display:flex; border:1px solid var(--line); border-radius:10px; overflow:hidden;
+             height:calc(100vh - 230px); min-height:360px; }
+  .ptree { width:360px; min-width:200px; max-width:60%; resize:horizontal; flex-shrink:0; overflow:auto; border-right:1px solid var(--line); background:var(--bg);
+           padding:4px 0; font-size:calc(12.5px * var(--fs)); }
+  .pf { display:flex; align-items:center; gap:6px; padding:2px 10px 2px calc(10px + var(--d) * 14px);
+        cursor:pointer; white-space:nowrap; }
+  .pf:hover { background:var(--hover); } .pf.on { background:var(--sel); }
+  .pf .chev { width:10px; color:var(--dim); flex-shrink:0; }
+  .pf .nm { flex:1; overflow:hidden; text-overflow:ellipsis; }
+  .pf input { margin:0; accent-color:var(--accent); }
+  /* git colors, as VS Code paints changed files: name and letter alike */
+  .pf.M .nm, .fst.M { color:var(--gitM); }
+  .pf.A .nm, .fst.A, .pf.R .nm, .fst.R { color:var(--gitA); }
+  .pf.D .nm, .fst.D { color:var(--gitD); }
+  .fst { font:600 calc(11px * var(--fs)) ui-monospace,monospace; }
+  .pdiff { flex:1; min-width:0; display:flex; flex-direction:column; }
+  .pdhead { display:flex; align-items:center; gap:8px; padding:7px 12px; border-bottom:1px solid var(--line);
+            font:calc(12px * var(--fs)) ui-monospace,monospace; }
+  .pdpath { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pdhead label { white-space:nowrap; }
+  .pdhead button { white-space:nowrap; padding:3px 9px; font-size:calc(12px * var(--fs)); }
+  .pdhead button.on { border-color:var(--accent); color:var(--accent); }
+  .pdbody { flex:1; overflow:auto; }
+  .pdbody .dim { padding:14px; }
+  .dtab { width:100%; border-collapse:collapse; table-layout:fixed; font:calc(12px * var(--fs))/1.5 ui-monospace,monospace; }
+  .dtab td { padding:0 8px; white-space:pre-wrap; word-break:break-all; vertical-align:top; }
+  .dtab col.lnc { width:calc(46px * var(--fs)); }
+  .dtab td.ln { text-align:right; color:var(--dim); user-select:none; padding:0 6px; }
+  .dtab.split td:nth-child(3) { border-left:1px solid var(--line); }
+  .dtab tr.hk td { background:var(--thbg); color:var(--dim); padding:3px 8px; }
+  .dtab td.a { background:var(--addbg); } .dtab td.d { background:var(--delbg); } .dtab td.e { background:var(--codebg); }
+  /* review mode: the PR tabs take the whole window; one thin bar holds the plan name, tabs and next step */
+  body.review > header, body.review aside { display:none; }
+  body.review #detail { padding:0; display:flex; flex-direction:column; }
+  .rbar { position:sticky; top:0; z-index:3; display:flex; align-items:center; gap:12px; padding:7px 16px;
+          background:var(--panel); border-bottom:1px solid var(--line); flex-shrink:0; }
+  .rbar .rname { font:600 calc(13px * var(--fs)) ui-monospace,monospace; min-width:0; overflow:hidden;
+                 text-overflow:ellipsis; white-space:nowrap; }
+  .rbar .prtabs { margin:0; border:0; flex-shrink:0; }
+  .rbar .prtabs button { padding:5px 11px; border-radius:7px; border-bottom:0; }
+  .rbar .prtabs button.on { background:var(--sel); }
+  .rbar .seen { font:calc(12px * var(--fs)) ui-monospace,monospace; color:var(--dim); white-space:nowrap; }
+  .rbar .btns { margin:0; flex-wrap:nowrap; }
+  #prview.pvpr { max-width:calc(1000px * var(--fs)); }
+  .prtabsrow { display:flex; align-items:center; gap:12px; border-bottom:1px solid var(--line); margin:12px 0 16px; }
+  .prtabsrow .prtabs { flex:1; margin:0; border:0; }
+  .prtabsrow .btns { margin:0; }
+  #prview.pvfiles { flex:1; min-height:0; display:flex; }
+  #prview.pvfiles .prfiles { flex:1; height:auto; border:0; border-radius:0; }
+  button.merge { background:var(--merge); border-color:var(--merge); color:var(--mergefg); font-weight:600; }
+  .mbox { border:1px solid var(--line); border-radius:10px; overflow:hidden; margin-bottom:16px; }
+  .mline { display:flex; gap:10px; align-items:center; padding:8px 14px; border-bottom:1px solid var(--line); }
+  .mline .ic { width:16px; text-align:center; font-weight:700; }
+  .mline.ok .ic { color:var(--ok); } .mline.bad .ic { color:var(--bad); } .mline.warn .ic { color:var(--warn); }
+  .mline.dim .ic { color:var(--dim); }
+  .mfoot { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:10px 14px; background:var(--card); }
+  .mfoot select { background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:7px; padding:4px 8px; }
+  .mfoot label { display:flex; gap:6px; align-items:center; }
+  .mbox.flash { outline:2px solid var(--merge); }
+  .mergednote { border:1px solid var(--merge); border-radius:10px; padding:10px 14px; margin-bottom:16px; }
+  .mergednote b { color:var(--merge); }
+  .mergednote div { color:var(--dim); font-size:calc(12.5px * var(--fs)); }
+  .ghhint { color:var(--dim); font-size:calc(12.5px * var(--fs)); border-top:1px dashed var(--line); padding-top:10px; margin-top:6px; }
+  details.planfold > summary { cursor:pointer; color:var(--dim); margin-top:14px; }
+  .pf:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
   /* tour: a transparent blocker, a spotlight hole, and a card beside it */
   #tour { display:none; }
   #tour.open { display:block; }
@@ -1635,7 +1889,8 @@ function inline(s) {
     '$1<a href="' + CUR_ISSUES + '$2" target="_blank">#$2</a>');
   return s.replace(/\\u0000(\\d+)\\u0000/g, (m, i) => parts[+i]);
 }
-function md(src) {
+// breaks: a single newline is a line break, as GitHub shows PR and issue text
+function md(src, breaks) {
   const fences = [];
   const fenceRe = new RegExp(BT + BT + BT + '[^\\n]*\\n([\\s\\S]*?)' + BT + BT + BT, 'g');
   src = src.replace(fenceRe, (m, code) => {
@@ -1643,7 +1898,10 @@ function md(src) {
     return '\\u0001' + (fences.length - 1) + '\\u0001';
   });
   const out = []; let list = null, para = [], tbl = null;
-  const flushPara = () => { if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); para = []; } };
+  const flushPara = () => {
+    if (para.length) out.push('<p>' + (breaks ? para.map(inline).join('<br>') : inline(para.join(' '))) + '</p>');
+    para = [];
+  };
   const flushList = () => { if (list) { out.push('</' + list + '>'); list = null; } };
   const flushTbl = () => {
     if (!tbl) return;
@@ -1697,6 +1955,7 @@ const autoChips = (p) => {
   if (p.validations) c += '<span class="chip ok">validated ×' + p.validations + '</span>';
   if (p.worktree) c += '<span class="chip">worktree</span>';
   if (p.archived) c += '<span class="chip">📦 archived</span>';
+  if (p.pr) c += prChip(p.pr);
   return c;
 };
 
@@ -1717,7 +1976,7 @@ function archivedMatches() {
 let lastItemClick = {};
 const itemHtml = (p, withProject) => \`
     <div class="item \${selected === p.key ? 'sel' : ''} \${p.archived ? 'arch' : ''} \${dotClass(p)}" data-key="\${p.key}">
-      <input type="checkbox" data-check="\${p.key}" \${picked.has(p.key) ? 'checked' : ''}
+      <input type="checkbox" aria-label="queue this plan" data-check="\${p.key}" \${picked.has(p.key) ? 'checked' : ''}
              \${p.live || starting(p) || p.worktree || p.archived ? 'disabled' : ''}>
       <div class="t">
         <div class="name">\${withProject ? '[' + esc(p.project) + '] ' : ''}\${p.file}</div>
@@ -1796,7 +2055,9 @@ function renderList() {
   rs.querySelectorAll('[data-log]').forEach((el) =>
     el.addEventListener('click', (e) => { e.stopPropagation(); openLog(el.dataset.log, 'log'); }));
   rs.querySelectorAll('[data-url]').forEach((el) =>
-    el.addEventListener('click', (e) => { e.stopPropagation(); window.open(el.dataset.url, '_blank', 'noopener'); }));
+    el.addEventListener('click', (e) => {
+      e.stopPropagation(); openRunLink(find(el.closest('[data-go]').dataset.go), el.dataset.url);
+    }));
   rs.querySelectorAll('[data-rep]').forEach((el) =>
     el.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1889,10 +2150,37 @@ function renderList() {
     }));
 }
 
+// The address bar follows the open plan, tab and file, so a reload reopens them and Back
+// goes to the previous plan or tab. A new plan or tab is a history entry; a file is not.
+function syncUrl() {
+  const q = new URLSearchParams(location.search);
+  const want = { sel: selected, tab: selected && prTab[selected] !== 'plan' ? prTab[selected] : null,
+    file: selected && prTab[selected] === 'files' ? prFile[selected] : null };
+  const same = (k) => (q.get(k) || null) === (want[k] || null);
+  if (same('sel') && same('tab') && same('file')) return;
+  const push = !same('sel') || !same('tab');
+  for (const [k, v] of Object.entries(want)) v ? q.set(k, v) : q.delete(k);
+  const url = location.pathname + (q.toString() ? '?' + q : '');
+  push ? history.pushState(null, '', url) : history.replaceState(null, '', url);
+}
+function readUrl() {
+  const q = new URLSearchParams(location.search);
+  selected = q.get('sel') || null;
+  if (selected) {
+    prTab[selected] = q.get('tab') || 'plan';
+    if (q.get('file')) prFile[selected] = q.get('file');
+  }
+  lastPrDraw = null;
+}
+window.addEventListener('popstate', () => { readUrl(); renderList(); renderDetail(true); });
 async function renderDetail(loadPlan) {
+  syncUrl();
   const p = find(selected);
   if (!p) return renderEmptyDetail();
   CUR_ISSUES = p.issuesUrl || '';
+  const tab = p.pr ? prTab[p.key] || 'plan' : 'plan';
+  if (tab !== 'plan') return renderPrTab(p, tab, loadPlan);
+  lastPrDraw = null;
   const launcherModes = !p.hasPipeline && !p.archived
     ? ((p.launchers || []).length ? \`
     <div class="modes"><b>Launcher:</b>
@@ -1912,10 +2200,16 @@ async function renderDetail(loadPlan) {
     <div class="crumb">\${esc(p.client)} / 📁 \${esc(p.project)}</div>
     <h2 class="fname">\${p.file}</h2>
     <div class="subtitle">\${inline(p.title)}</div>
+    \${prTabs(p, 'plan')}
     <div class="badges">\${autoChips(p)}</div>
     \${p.summary ? '<div class="summary">💡 ' + esc(p.summary) + '</div>'
       : p.summarizing ? '<div class="summary dim">💭 plain-language summary is being generated…</div>' : ''}
     \${p.run && p.run.lastEvent ? '<div class="laststep">last: ' + esc(p.run.lastEvent.slice(0, 200)) + '</div>' : ''}
+    \${p.live ? '' : launcherModes}\${pipelineModes}
+    <div class="btns" id="actions"></div>
+    \${!p.pr && p.prError ? '<div class="ghhint">PRs are not shown: ' + esc(p.prError) + '. Run <code>' +
+      (/not installed/.test(p.prError) ? 'brew install gh &amp;&amp; gh auth login' : 'gh auth login') + '</code> in a terminal.</div>' : ''}
+    <div id="morebox" \${moreOpen.has(p.key) ? '' : 'hidden'}>
     <div class="metabox"><b>Status:</b>
       <select id="stSel"><option value="">—</option>
         \${STATUSES.map((s) => '<option ' + (p.status === s ? 'selected' : '') + '>' + s + '</option>').join('')}
@@ -1925,10 +2219,14 @@ async function renderDetail(loadPlan) {
       <input id="tagIn" list="tagOpts" placeholder="+ add tag ⏎" size="12">
       <datalist id="tagOpts">\${TAG_SUGGESTIONS.map((t) => '<option>' + t + '</option>').join('')}</datalist>
     </div>
-    \${p.live ? '' : launcherModes}\${pipelineModes}
-    <div class="btns" id="actions"></div>
     <div id="sessbox"></div>
-    <div class="planview"><div class="mdc" id="planmd">loading plan…</div></div>\`;
+    </div>
+    <details class="planfold" id="planfold" \${planOpen.has(p.key) ? 'open' : ''}><summary>Show the full plan</summary>
+      <div class="planview"><div class="mdc" id="planmd">loading plan…</div></div></details>\`;
+  document.body.classList.remove('review');
+  bindPrTabs(p);
+  byId('planfold').addEventListener('toggle', () =>
+    byId('planfold').open ? planOpen.add(p.key) : planOpen.delete(p.key));
   byId('stSel').addEventListener('change', () => saveMetaFor(p, byId('stSel').value || null, p.tags));
   byId('tagIn').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.value.trim())
@@ -1962,7 +2260,7 @@ async function renderDetail(loadPlan) {
     { project: p.project, slug: p.slug, launcher: +modeOf(p) }, true);
   if (notStarted(p)) btn('⚠ Why it didn’t start', () => showLaunchError(p), 'danger');
   for (const l of (p.run && p.run.links) || [])
-    btn('🔗 ' + l.label, () => window.open(l.url, '_blank', 'noopener'), 'primary');
+    btn('🔗 ' + l.label, () => openRunLink(p, l.url), 'primary');
   if (stt === 'starting') {
     btn('⏳ Starting… setting up the worktree', () => {}).disabled = true;
   } else if (p.archived) {
@@ -2008,14 +2306,18 @@ async function renderDetail(loadPlan) {
       btn('📦 Archive plan → done/', () => archive(p), 'danger', moreWrap);
     }
   }
-  if (moreWrap.childElementCount) {
-    const mb = btn('⋯ more', () => {
-      const shown = moreWrap.style.display !== 'none';
-      moreWrap.style.display = shown ? 'none' : 'inline-flex';
-      mb.textContent = shown ? '⋯ more' : '⋯ less';
-    });
-    A.appendChild(moreWrap);
-  }
+  // "⋯ more" also unfolds status, tags and session history: the plan tab opens on the summary
+  const showMore = (on) => {
+    moreWrap.style.display = on ? 'inline-flex' : 'none';
+    byId('morebox').hidden = !on;
+    mb.textContent = on ? '⋯ less' : '⋯ more';
+  };
+  const mb = btn('⋯ more', () => {
+    moreOpen.has(p.key) ? moreOpen.delete(p.key) : moreOpen.add(p.key);
+    showMore(moreOpen.has(p.key));
+  });
+  A.appendChild(moreWrap);
+  showMore(moreOpen.has(p.key));
   // AI session history: reopen-the-chat + independent-evaluation commands
   if (p.sessions && p.sessions.length) {
     const box = document.createElement('div');
@@ -2057,10 +2359,443 @@ async function renderDetail(loadPlan) {
     det.appendChild(box);
     byId('sessbox').appendChild(det);
   }
-  // full plan, always visible, rendered as markdown
+  // full plan, folded under "Show the full plan", rendered as markdown
   if (loadPlan || !planCache[p.key])
     planCache[p.key] = await (await fetch('/api/plan?project=' + p.project + '&slug=' + p.slug)).text();
-  byId('planmd').innerHTML = md(planCache[p.key]);
+  const pm = byId('planmd');   // gone when another plan or tab opened while the text loaded
+  if (pm && selected === p.key) pm.innerHTML = md(planCache[p.key]);
+}
+
+// --- pull request tabs: the PR on the plan's branch (auto/<slug>), its text and its diff ---
+const prTab = {}, prData = {}, prDiff = {}, prFile = {}, prClosedDirs = {}, prNotes = {};
+const moreOpen = new Set(), planOpen = new Set();   // plan tab: what the user unfolded, kept across repaints
+// a run report's link to its own PR opens the PR tab here; any other link opens on the web
+function openRunLink(p, url) {
+  const same = (a, b) => String(a).replace(/\\/+$/, '') === String(b).replace(/\\/+$/, '');
+  if (p && p.pr && same(p.pr.url, url)) {
+    selected = p.key; prTab[p.key] = 'pr'; lastPrDraw = null;
+    renderList(); renderDetail(true);
+  } else window.open(url, '_blank', 'noopener');
+}
+let mergeMethod = null;
+try { mergeMethod = localStorage.getItem('dash-merge-method'); } catch {}
+// what the PR tab was last drawn from: a 5s poll with nothing new for it must not
+// throw away the open file and the scroll position
+let lastPrDraw = null;
+const PR_CHIP = { OPEN: 'ok', MERGED: 'st', CLOSED: 'bad' };
+const prChip = (pr) => {
+  const draft = pr.isDraft && pr.state === 'OPEN';
+  return '<span class="chip ' + (draft ? '' : PR_CHIP[pr.state] || '') + '">PR #' + pr.number + ' · ' +
+    (draft ? 'draft' : String(pr.state).toLowerCase()) + '</span>';
+};
+let prViewed = {};   // PR url -> { path: hash of its diff } — a file changed since is unviewed again
+try { prViewed = JSON.parse(localStorage.getItem('dash-pr-viewed') || '{}'); } catch {}
+const saveViewed = () => { try { localStorage.setItem('dash-pr-viewed', JSON.stringify(prViewed)); } catch {} };
+const isViewed = (p, f) => (prViewed[p.pr.url] || {})[f.path] === f.hash;
+let diffSplit = true, diffFull = true;
+try { diffSplit = localStorage.getItem('dash-diff-split') !== '0'; } catch {}
+try { diffFull = localStorage.getItem('dash-diff-full') !== '0'; } catch {}
+
+const prTabs = (p, tab) => !p.pr ? '' : '<div class="prtabs">' + [
+  ['plan', 'Plan'],
+  ['pr', 'Pull request <span class="n">#' + p.pr.number + '</span>'],
+  ['files', 'Files changed' + (prData[p.key] && prData[p.key].changedFiles != null
+    ? ' <span class="n">' + prData[p.key].changedFiles + '</span>' : '')],
+].map(([id, label]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '">' + label + '</button>').join('') +
+  '</div>';
+function bindPrTabs(p) {
+  byId('detail').querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => {
+    prTab[p.key] = el.dataset.tab; lastPrDraw = null; renderDetail(false);
+  }));
+}
+async function loadPr(p) {
+  const r = await (await fetch('/api/pr?project=' + p.project + '&number=' + p.pr.number)).json();
+  prData[p.key] = r.ok ? { ...r.pr, from: JSON.stringify(p.pr) } : { error: r.output || r.error, from: JSON.stringify(p.pr) };
+}
+async function renderPrTab(p, tab, force) {
+  const sig = p.key + tab + JSON.stringify(p.pr);
+  if (!force && lastPrDraw === sig && byId('prview')) return;
+  lastPrDraw = sig;
+  // only Files changed needs the whole window; the Pull request tab keeps the normal layout
+  const review = tab === 'files';
+  document.body.classList.toggle('review', review);
+  byId('detail').innerHTML = (review ? \`
+    <div class="rbar"><button id="rback" title="back to the plan and the plan list">‹ Plans</button>
+      <span class="rname" title="\${escA(p.client + ' / ' + p.project + ' / ' + p.file)}">\${esc(p.slug)}</span>
+      \${prTabs(p, tab)}<span class="seen" id="rseen"></span><span style="flex:1"></span>
+      <span class="btns" id="ract"></span></div>\` : \`
+    <div class="crumb">\${esc(p.client)} / 📁 \${esc(p.project)}</div>
+    <h2 class="fname">\${p.file}</h2>
+    <div class="subtitle">\${inline(p.title)}</div>
+    <div class="prtabsrow">\${prTabs(p, tab)}<span class="btns" id="ract"></span></div>\`) + \`
+    <div id="prview" class="dim" style="padding:16px 24px">loading PR #\${p.pr.number}…</div>\`;
+  if (review) byId('rback').addEventListener('click', () => { prTab[p.key] = 'plan'; renderDetail(false); });
+  bindPrTabs(p);
+  const d = prData[p.key];
+  if (force || !d || d.from !== JSON.stringify(p.pr)) await loadPr(p);
+  if (lastPrDraw !== sig) return;   // another plan or tab was opened meanwhile
+  drawBarAction(p, tab);
+  if (tab === 'pr') drawPr(p);
+  else await drawFiles(p, force);
+}
+// the one next step, always on the right of the bar: Ready for review, then Merge
+function drawBarAction(p, tab) {
+  const d = prData[p.key], R = byId('ract');
+  if (!R || !d || d.error) return;
+  R.innerHTML = prChip(d);
+  if (d.state !== 'OPEN') return;
+  const b = document.createElement('button');
+  if (d.isDraft) {
+    b.textContent = 'Ready for review'; b.className = 'primary';
+    b.addEventListener('click', () => { b.disabled = true; prAct(p, { action: 'ready' }); });
+  } else {
+    b.textContent = 'Merge…'; b.className = 'merge';
+    b.addEventListener('click', () => {
+      const go = () => { const m = byId('mbox'); if (m) { m.scrollIntoView({ block: 'center' }); m.classList.add('flash'); byId('mmethod')?.focus(); } };
+      if (tab === 'pr') return go();
+      prTab[p.key] = 'pr'; lastPrDraw = null;
+      renderDetail(false).then(go);
+    });
+  }
+  R.appendChild(b);
+}
+async function prAct(p, data) {
+  const r = await post('/api/pr-action', { project: p.project, slug: p.slug, number: p.pr.number, ...data });
+  if (r.notes) prNotes[p.key] = r.notes;
+  await loadPr(p);
+  drawBarAction(p, prTab[p.key]);
+  if (byId('prbody')) drawPr(p);
+  refresh();
+}
+async function closePr(p) {
+  const d = prData[p.key];
+  if (!confirm('Close PR #' + d.number + ' without merging?\\n\\n' + d.title)) return;
+  const deleteBranch = p.worktree
+    ? (alert('The branch ' + d.headRefName + ' stays: the run\\u2019s worktree still uses it. Clean up run removes both.'), false)
+    : confirm('Also delete the branch ' + d.headRefName + ' on GitHub and on this Mac?\\n\\nOK = delete · Cancel = keep the branch');
+  await prAct(p, { action: 'close', deleteBranch });
+}
+function drawPr(p) {
+  const d = prData[p.key], v = byId('prview');
+  if (!v) return;
+  if (d.error) { v.innerHTML = '<div class="metabox">⚠️ ' + esc(d.error) + '</div>'; return; }
+  const open = d.state === 'OPEN', c = d.checks;
+  v.className = 'pvpr';
+  v.style.padding = '';
+  // what GitHub checks before a merge, one plain line each; only draft and conflicts block here
+  const lines = [], warns = [];
+  const line = (cls, ic, html, warn) => { lines.push('<div class="mline ' + cls + '"><span class="ic">' + ic + '</span><span>' + html + '</span></div>'); if (warn) warns.push(warn); };
+  if (open) {
+    if (d.isDraft) line('warn', '!', '<b>Draft</b> · mark it ready for review first');
+    if (c.failed.length) line('bad', '✕', '<b>' + c.failed.length + ' check' + (c.failed.length > 1 ? 's' : '') + ' failed:</b> ' +
+      esc(c.failed.join(', ')) + (c.passed ? ' <span class="dim">· ' + c.passed + ' passed</span>' : ''), c.failed.join(', ') + ' failed');
+    else if (c.running) line('warn', '●', '<b>' + c.running + ' check' + (c.running > 1 ? 's' : '') + ' still running</b>' +
+      (c.passed ? ' <span class="dim">· ' + c.passed + ' passed</span>' : ''), c.running + ' checks still running');
+    else if (c.passed) line('ok', '✓', 'All ' + c.passed + ' checks passed');
+    if (d.reviewDecision === 'APPROVED') line('ok', '✓', 'Approved');
+    else if (d.reviewDecision === 'CHANGES_REQUESTED') line('bad', '✕', '<b>Changes requested</b>', 'changes were requested');
+    else if (d.reviewDecision === 'REVIEW_REQUIRED') line('warn', '!', '<b>Review required</b> <span class="dim">· nobody has approved yet</span>', 'nobody has approved');
+    if (d.mergeable === 'CONFLICTING') line('bad', '✕', '<b>Conflicts with ' + esc(d.baseRefName) + '</b> · resolve them in the worktree, then push');
+    else if (d.mergeable === 'MERGEABLE') line('ok', '✓', 'No conflicts with <code>' + esc(d.baseRefName) + '</code>');
+    else line('dim', '…', 'GitHub is still checking for conflicts');
+  }
+  const blocked = d.isDraft || d.mergeable === 'CONFLICTING';
+  const methods = (d.merge && d.merge.methods.length) ? d.merge.methods : ['merge'];
+  const pick = methods.includes(mergeMethod) ? mergeMethod : methods.includes(d.merge && d.merge.default) ? d.merge.default : methods[0];
+  const LABEL = { merge: 'Merge commit', squash: 'Squash and merge', rebase: 'Rebase and merge' };
+  const notes = prNotes[p.key];
+  v.innerHTML =
+    (d.state === 'MERGED' && notes ? '<div class="mergednote"><b>Merged into ' + esc(d.baseRefName) + '.</b>' +
+      notes.map((n) => '<div>' + esc(n) + '</div>').join('') + '</div>' : '') +
+    '<div class="prhead">' +
+    '<div class="row">' + prChip(d) + '<b class="prtitle">' + esc(d.title) + '</b><span class="dim">#' + d.number + '</span></div>' +
+    '<div class="row dim"><span><code>' + esc(d.baseRefName) + '</code> ← <code>' + esc(d.headRefName) + '</code></span>' +
+      '<span class="add">+' + d.additions + '</span><span class="del">−' + d.deletions + '</span>' +
+      '<span>' + d.changedFiles + ' files · ' + d.commits + ' commits</span>' +
+      '<span style="flex:1"></span><span class="btns" id="practs"></span></div></div>' +
+    (open ? '<div class="mbox" id="mbox">' + lines.join('') + '<div class="mfoot">' + (blocked
+      ? '<span class="dim">' + (d.isDraft ? 'A draft cannot be merged. Use Ready for review in the bar above.' : 'Fix the conflicts first.') + '</span>'
+      : '<select id="mmethod" aria-label="merge method">' + methods.map((m) => '<option value="' + m + '"' + (m === pick ? ' selected' : '') + '>' + LABEL[m] + '</option>').join('') + '</select>' +
+        '<label><input type="checkbox" id="mdel" checked> Delete the branch on GitHub</label><span style="flex:1"></span>' +
+        '<button class="merge" id="mgo">Merge into ' + esc(d.baseRefName) + '</button>') + '</div></div>' : '') +
+    '<div class="mdc prbody" id="prbody"></div>';
+  const A = byId('practs');
+  const btn = (label, fn, cls, parent) => {
+    const b = document.createElement('button');
+    b.textContent = label; if (cls) b.className = cls;
+    b.addEventListener('click', () => { A.querySelectorAll('button').forEach((x) => (x.disabled = true)); fn(); });
+    (parent || A).appendChild(b);
+    return b;
+  };
+  btn('↗ Open on GitHub', () => { window.open(d.url, '_blank', 'noopener'); drawPr(p); }, 'linkbtn');
+  if (open) {
+    // rarely needed: behind "⋯"
+    const more = document.createElement('span');
+    more.style.cssText = 'display:none;gap:8px';
+    const mb = btn('⋯', () => { more.style.display = 'inline-flex'; mb.remove(); A.querySelectorAll('button').forEach((x) => (x.disabled = false)); });
+    mb.title = 'Close PR, back to draft';
+    if (!d.isDraft) btn('Back to draft', () => prAct(p, { action: 'draft' }), null, more);
+    btn('Close PR', () => closePr(p).then(() => drawPr(p)), 'danger', more);
+    A.appendChild(more);
+  }
+  const go = byId('mgo');
+  if (go) go.addEventListener('click', async () => {
+    const method = byId('mmethod').value, del = byId('mdel').checked;
+    if (!confirm('Merge PR #' + d.number + ' into ' + d.baseRefName + ' (' + LABEL[method].toLowerCase() + ')?' +
+      (warns.length ? '\\n\\nWarnings: ' + warns.join('; ') + '.' : '') +
+      '\\n\\nAfter the merge, ' + d.baseRefName + ' is pulled in ' + p.project + ' (fast-forward only, not in the worktree).')) return;
+    mergeMethod = method;
+    try { localStorage.setItem('dash-merge-method', method); } catch {}
+    go.disabled = true; go.textContent = 'Merging…';
+    await prAct(p, { action: 'merge', method, deleteBranch: del, head: d.headRefOid });
+  });
+  // GitHub task lists: each box writes the description back, like ticking it on github.com
+  let n = 0;
+  // drop HTML comments, e.g. the decision-sheet markers
+  const src = (d.body || '').replace(/<!-{2}[\\s\\S]*?-{2}>/g, '');
+  byId('prbody').innerHTML = src.trim()
+    ? md(src, true).replace(/<li>\\[([ xX])\\] /g, (m, x) => '<li class="task"><input type="checkbox" aria-label="I agree" data-task="' + (n++) + '"' +
+        (x === ' ' ? '' : ' checked') + (open ? '' : ' disabled') + '>')
+    : '<p class="dim">No description.</p>';
+  byId('prbody').querySelectorAll('[data-task]').forEach((el) => el.addEventListener('change', () => {
+    byId('prbody').querySelectorAll('[data-task]').forEach((x) => (x.disabled = true));
+    prAct(p, { action: 'task', index: +el.dataset.task, count: n, was: !el.checked });
+  }));
+}
+// unified diff (gh pr diff) -> [{ path, st: M|A|D|R, hunks: [{ head, lines: [[kind, old, new, text]] }] }]
+function parseDiff(txt) {
+  const files = []; let f = null, h = null, o = 0, nn = 0, body = [];
+  const done = () => { if (f) { f.hash = hashStr(body.join('\\n')); body = []; } };
+  for (const line of txt.split('\\n')) {
+    if (line.startsWith('diff --git ')) {
+      done();
+      f = { path: line.slice(line.lastIndexOf(' b/') + 3), st: 'M', hunks: [], add: 0, del: 0, n: 0 };
+      files.push(f); h = null; continue;
+    }
+    if (!f) continue;
+    if (!h) {
+      if (line.startsWith('new file mode')) f.st = 'A';
+      else if (line.startsWith('deleted file mode')) f.st = 'D';
+      else if (line.startsWith('rename to ')) { f.st = 'R'; f.path = line.slice(10); }
+      else if (line.startsWith('Binary files')) f.binary = true;
+    }
+    const m = line.match(/^@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@/);
+    if (m) { h = { head: line, lines: [], o: +m[1], n: +m[2] }; f.hunks.push(h); o = +m[1]; nn = +m[2]; body.push(line); continue; }
+    if (!h) continue;
+    const k = line[0];
+    if (k === '+') { h.lines.push(['+', null, nn++, line.slice(1)]); f.add++; }
+    else if (k === '-') { h.lines.push(['-', o++, null, line.slice(1)]); f.del++; }
+    else if (k === ' ') h.lines.push([' ', o++, nn++, line.slice(1)]);
+    else continue;   // "\\ No newline at end of file"
+    f.n++; body.push(line);
+  }
+  done();
+  return files;
+}
+function hashStr(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+const KIND = { '+': 'a', '-': 'd', ' ': '' };
+// the whole file: the head version's unchanged lines around the hunks, as one hunk with no header
+function fullHunks(f, text) {
+  const lines = text.split('\\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  const out = [];
+  let nn = 1, delta = 0;   // delta = old line number minus new, for unchanged lines
+  const same = (upTo) => { for (; nn < upTo; nn++) out.push([' ', nn + delta, nn, lines[nn - 1]]); };
+  for (const hk of f.hunks) {
+    // a side with 0 lines ("-10,0" or "+12,0") names the line before the change, not the first one
+    const oldN = hk.lines.filter((l) => l[1] != null).length, newN = hk.lines.filter((l) => l[2] != null).length;
+    same(newN ? hk.n : hk.n + 1);
+    out.push(...hk.lines);
+    nn = newN ? hk.n + newN : hk.n + 1;
+    delta = (oldN ? hk.o + oldN : hk.o + 1) - nn;
+  }
+  same(lines.length + 1);
+  return [{ head: null, lines: out }];
+}
+function diffHtml(f) {
+  const cell = (cls, num, t) => '<td class="ln ' + cls + '">' + (num == null ? '' : num) + '</td><td class="' + cls + '">' +
+    esc(t == null ? '' : t) + '</td>';
+  // fixed layout takes its widths from the first row, a colspan hunk header — so set them here
+  let h = '<table class="dtab' + (diffSplit ? ' split' : '') + '"><colgroup>' +
+    (diffSplit ? '<col class="lnc"><col><col class="lnc"><col>' : '<col class="lnc"><col class="lnc"><col>') + '</colgroup>';
+  for (const hk of f.hunks) {
+    if (hk.head) h += '<tr class="hk"><td colspan="' + (diffSplit ? 4 : 3) + '">' + esc(hk.head) + '</td></tr>';
+    if (!diffSplit) {
+      for (const [k, o, nw, t] of hk.lines)
+        h += '<tr><td class="ln ' + KIND[k] + '">' + (o == null ? '' : o) + '</td>' + cell(KIND[k], nw, t) + '</tr>';
+      continue;
+    }
+    // side by side: a run of removed lines sits next to the run of added lines after it
+    let dels = [], adds = [];
+    const flush = () => {
+      for (let j = 0; j < Math.max(dels.length, adds.length); j++) {
+        const a = dels[j], b = adds[j];
+        h += '<tr>' + (a ? cell('d', a[1], a[3]) : cell('e')) + (b ? cell('a', b[2], b[3]) : cell('e')) + '</tr>';
+      }
+      dels = []; adds = [];
+    };
+    for (const l of hk.lines) {
+      if (l[0] === '-') { if (adds.length) flush(); dels.push(l); }
+      else if (l[0] === '+') adds.push(l);
+      else { flush(); h += '<tr>' + cell('', l[1], l[3]) + cell('', l[2], l[3]) + '</tr>'; }
+    }
+    flush();
+  }
+  return h + '</table>';
+}
+async function drawFiles(p, force) {
+  const sig = lastPrDraw;
+  let df = prDiff[p.key];
+  if (force || !df || df.from !== JSON.stringify(p.pr)) {
+    const r = await (await fetch('/api/pr-diff?project=' + p.project + '&number=' + p.pr.number)).json();
+    df = prDiff[p.key] = r.ok ? { files: parseDiff(r.diff), from: JSON.stringify(p.pr) }
+      : { error: r.output || r.error, from: JSON.stringify(p.pr) };
+  }
+  if (lastPrDraw !== sig) return;
+  drawFilesView(p);
+}
+function drawFilesView(p) {
+  const v = byId('prview'), df = prDiff[p.key];
+  if (!v || !df) return;
+  v.className = 'pvfiles';
+  v.style.padding = '';
+  if (df.error) {
+    v.innerHTML = '<div class="metabox">⚠️ ' + esc(df.error) + '</div>';
+    return;
+  }
+  const files = df.files;
+  const cur = files.find((f) => f.path === prFile[p.key]) || files[0];
+  if (!cur) { v.innerHTML = '<span class="dim">No changed files.</span>'; return; }
+  prFile[p.key] = cur.path;
+  syncUrl();
+  const treeTop = byId('ptree') ? byId('ptree').scrollTop : 0;
+  const treeW = byId('ptree') ? byId('ptree').style.width : '';   // a width dragged by hand
+  // folder tree like VS Code's: folders first, a folder with one subfolder and no files
+  // shares its row ("domains/ai"), and a folder's box ticks every file under it
+  const closed = prClosedDirs[p.key] = prClosedDirs[p.key] || new Set();
+  const root = { dirs: {}, files: [] };
+  for (const f of files) {
+    const parts = f.path.split('/');
+    let node = root;
+    for (const d of parts.slice(0, -1)) node = node.dirs[d] = node.dirs[d] || { dirs: {}, files: [] };
+    node.files.push(f);
+  }
+  const under = (node) => [...node.files, ...Object.values(node.dirs).flatMap(under)];
+  let tree = '';
+  const walk = (node, prefix, depth) => {
+    for (let name of Object.keys(node.dirs).sort()) {
+      let d = node.dirs[name];
+      while (!d.files.length && Object.keys(d.dirs).length === 1) {
+        const only = Object.keys(d.dirs)[0];
+        name += '/' + only; d = d.dirs[only];
+      }
+      const full = prefix + name, all = under(d), nSeen = all.filter((f) => isViewed(p, f)).length;
+      tree += '<div class="pf" tabindex="0" style="--d:' + depth + '" data-dir="' + escA(full) + '">' +
+        '<span class="chev">' + (closed.has(full) ? '▸' : '▾') + '</span>' +
+        '<input type="checkbox" tabindex="-1" aria-label="mark the folder as viewed" data-seendir="' + escA(full) + '"' + (nSeen === all.length ? ' checked' : '') +
+        (nSeen && nSeen < all.length ? ' data-some="1"' : '') + ' title="mark everything in this folder as viewed">' +
+        '<span class="nm">' + esc(name) + '</span></div>';
+      if (!closed.has(full)) walk(d, full + '/', depth + 1);
+    }
+    for (const f of node.files.slice().sort((a, b) => a.path.localeCompare(b.path))) {
+      const seen = isViewed(p, f);
+      tree += '<div class="pf ' + f.st + (f === cur ? ' on' : '') + '" tabindex="0" style="--d:' + depth + '" data-file="' +
+        escA(f.path) + '" title="' + escA(f.path) + '"><span class="chev"></span>' +
+        '<input type="checkbox" tabindex="-1" aria-label="viewed" data-seen="' + escA(f.path) + '"' + (seen ? ' checked' : '') + ' title="viewed">' +
+        '<span class="nm">' + esc(f.path.slice(f.path.lastIndexOf('/') + 1)) + '</span>' +
+        '<span class="fst ' + f.st + '">' + f.st + '</span></div>';
+    }
+  };
+  walk(root, '', 0);
+  const nSeen = files.filter((f) => isViewed(p, f)).length;
+  const big = cur.n > 3000 && !cur.show;
+  // whole file: added and deleted files are whole in the diff already; others need the head version
+  const wantFull = diffFull && cur.hunks.length && !big && (cur.st === 'M' || cur.st === 'R');
+  if (wantFull && cur.full === undefined && !cur.loading) {
+    cur.loading = true;
+    fetch('/api/pr-file?project=' + p.project + '&sha=' + p.pr.head + '&path=' + encodeURIComponent(cur.path))
+      .then((r) => r.json()).catch((e) => ({ output: String(e) })).then((r) => {
+        cur.loading = false;
+        cur.full = r.ok ? fullHunks(cur, r.text) : null;
+        cur.fullErr = r.ok ? '' : r.output || r.error;
+        if (prFile[p.key] === cur.path && byId('ptree')) drawFilesView(p);
+      });
+  }
+  if (byId('rseen')) byId('rseen').textContent = nSeen + ' / ' + files.length + ' viewed';
+  const focusKey = document.activeElement && document.activeElement.closest && document.activeElement.closest('.pf')
+    ? document.activeElement.closest('.pf').dataset.file || document.activeElement.closest('.pf').dataset.dir : null;
+  v.innerHTML = '<div class="prfiles"><div class="ptree" id="ptree">' + tree + '</div>' +
+    '<div class="pdiff"><div class="pdhead"><span class="pdpath" title="' + escA(cur.path) + '">' + esc(cur.path) + '</span>' +
+      '<span class="add">+' + cur.add + '</span><span class="del">−' + cur.del + '</span>' +
+      '<button data-full="1" class="' + (diffFull ? 'on' : '') + '">Whole file</button>' +
+      '<button data-full="0" class="' + (diffFull ? '' : 'on') + '">Changes only</button>' +
+      '<button data-split="1" class="' + (diffSplit ? 'on' : '') + '">Side by side</button>' +
+      '<button data-split="0" class="' + (diffSplit ? '' : 'on') + '">One column</button>' +
+      '<label><input type="checkbox" data-seen="' + escA(cur.path) + '"' + (isViewed(p, cur) ? ' checked' : '') + '> Viewed</label></div>' +
+    '<div class="pdbody" tabindex="0" aria-label="diff">' + (cur.binary ? '<div class="dim">Binary file — no diff to show.</div>'
+      : !cur.hunks.length ? '<div class="dim">' + (cur.st === 'R' ? 'Renamed, no content changes.' : 'No content changes.') + '</div>'
+      : big ? '<div class="dim">Large diff (' + cur.n + ' lines). <button id="showbig">Show it</button></div>'
+      : wantFull && cur.full === undefined ? '<div class="dim">Loading the whole file…</div>'
+      : (wantFull && cur.fullErr ? '<div class="dim">⚠️ Could not load the whole file (' + esc(cur.fullErr) +
+          '). Showing the changes only.</div>' : '') +
+        diffHtml(wantFull && cur.full ? { hunks: cur.full } : cur)) + '</div></div></div>';
+  byId('ptree').style.width = treeW;
+  byId('ptree').scrollTop = treeTop;
+  // keyboard: ↑/↓ move, Enter opens a file or folds a folder, Space marks it viewed
+  const rows = [...v.querySelectorAll('.pf')];
+  const back = focusKey && rows.find((r) => (r.dataset.file || r.dataset.dir) === focusKey);
+  if (back) back.focus({ preventScroll: true });
+  byId('ptree').addEventListener('keydown', (e) => {
+    const i = rows.indexOf(document.activeElement);
+    if (i < 0) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const r = rows[i + (e.key === 'ArrowDown' ? 1 : -1)];
+      if (r) r.focus();
+    } else if (e.key === 'Enter') { e.preventDefault(); rows[i].click(); }
+    else if (e.key === ' ') {
+      e.preventDefault();
+      const cb = rows[i].querySelector('input');
+      cb.checked = !cb.checked; cb.dispatchEvent(new Event('change'));
+    }
+  });
+  v.querySelectorAll('[data-file]').forEach((el) => el.addEventListener('click', (e) => {
+    if (e.target.matches('input')) return;
+    prFile[p.key] = el.dataset.file; drawFilesView(p);
+  }));
+  const markSeen = (list, on) => {
+    const m = prViewed[p.pr.url] = prViewed[p.pr.url] || {};
+    for (const f of list) { if (on) m[f.path] = f.hash; else delete m[f.path]; }
+    saveViewed(); drawFilesView(p);
+  };
+  v.querySelectorAll('[data-seen]').forEach((el) => el.addEventListener('change', () =>
+    markSeen(files.filter((x) => x.path === el.dataset.seen), el.checked)));
+  v.querySelectorAll('[data-seendir]').forEach((el) => {
+    el.indeterminate = !!el.dataset.some;
+    el.addEventListener('change', () =>
+      markSeen(files.filter((x) => x.path.startsWith(el.dataset.seendir + '/')), el.checked));
+  });
+  v.querySelectorAll('[data-dir]').forEach((el) => el.addEventListener('click', (e) => {
+    if (e.target.matches('input')) return;
+    const d = el.dataset.dir;
+    closed.has(d) ? closed.delete(d) : closed.add(d);
+    drawFilesView(p);
+  }));
+  v.querySelectorAll('[data-split]').forEach((el) => el.addEventListener('click', () => {
+    diffSplit = el.dataset.split === '1';
+    try { localStorage.setItem('dash-diff-split', diffSplit ? '1' : '0'); } catch {}
+    drawFilesView(p);
+  }));
+  v.querySelectorAll('[data-full]').forEach((el) => el.addEventListener('click', () => {
+    diffFull = el.dataset.full === '1';
+    try { localStorage.setItem('dash-diff-full', diffFull ? '1' : '0'); } catch {}
+    drawFilesView(p);
+  }));
+  if (byId('showbig')) byId('showbig').addEventListener('click', () => { cur.show = true; drawFilesView(p); });
 }
 
 async function saveMetaFor(p, status, tags) {
@@ -2400,6 +3135,8 @@ const CHECK_SVG = '<svg viewBox="0 0 16 16"><path d="M3 8.5l3.2 3.2L13 4.5" fill
   'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const mark = (c) => '<span class="mk ' + (c.ok ? 'ok' : c.required ? 'bad' : 'warn') + '">' + (c.ok ? CHECK_SVG : '') + '</span>';
 function renderEmptyDetail() {
+  syncUrl();
+  document.body.classList.remove('review');
   byId('detail').innerHTML = state.length ? '<span class="dim">Select a plan on the left.</span>'
     : '<div class="welcome"><h2>Hand off the work. Review the result.</h2><p>Describe a change in a plan ' +
       'file. Claude Code implements and tests it in the background. You come back to a diff.</p>' +
@@ -2764,6 +3501,7 @@ async function refreshOnce() {
     plans = state.flatMap((proj) => proj.plans.map((p) => ({
       ...p, project: proj.name, client: proj.client,
       hasPipeline: proj.hasPipeline, modes: proj.modes, launchers: proj.launchers, issuesUrl: proj.issuesUrl,
+      prError: proj.prError,
     })));
     // don't clobber the pane (and steal focus) while the user is typing in it
     const typing = byId('detail').contains(document.activeElement)
@@ -2783,7 +3521,7 @@ async function refreshOnce() {
   connMsg('');
   if (logKey) loadLog();
 }
-selected = new URLSearchParams(location.search).get('sel') || null;
+readUrl();
 byId('side').innerHTML = '<div class="dim" style="padding:14px">loading plans…</div>';
 refresh();
 let lastTick = Date.now();

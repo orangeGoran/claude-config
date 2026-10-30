@@ -4,7 +4,7 @@
 //   node --test 'scripts/test/*.test.mjs'
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import http from 'node:http';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import net from 'node:net';
@@ -21,11 +21,26 @@ const freePort = () => new Promise((resolve, reject) => {
   s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
 });
 
-let tmp, home, repo, plansDir, port, server;
+let tmp, home, repo, plansDir, port, server, ghDir;
+
+// a stand-in for the gh CLI: answers from files in ghDir and logs every call, so no
+// test ever talks to GitHub
+const FAKE_GH = `#!/usr/bin/env node
+const fs = require('fs'), path = require('path');
+const dir = process.env.FAKE_GH_DIR, a = process.argv.slice(2);
+fs.appendFileSync(path.join(dir, 'calls.log'), a.join(' ') + '\\n');
+const body = path.join(dir, 'body.md');
+if (a[1] === 'list') process.stdout.write(fs.existsSync(path.join(dir, 'list.json')) ? fs.readFileSync(path.join(dir, 'list.json')) : '[]');
+else if (a[1] === 'view') process.stdout.write(JSON.stringify({ body: fs.existsSync(body) ? fs.readFileSync(body, 'utf8') : '',
+  baseRefName: 'main', headRefName: 'auto/demo-plan' }));
+else if (a[1] === 'edit') fs.writeFileSync(body, fs.readFileSync(0));
+else if (a[0] === 'api') process.stdout.write('whole file\\n');
+`;
 
 const start = async () => {
   const child = spawn(process.execPath, [SCRIPT], {
-    env: { ...process.env, HOME: home, DASH_PORT: String(port), DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1' },
+    env: { ...process.env, HOME: home, DASH_PORT: String(port), DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1',
+           PATH: path.join(ghDir, 'bin') + ':' + process.env.PATH, FAKE_GH_DIR: ghDir },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let err = '';
@@ -57,7 +72,15 @@ before(async () => {
   home = path.join(tmp, 'home');
   repo = path.join(tmp, 'repo');
   plansDir = path.join(repo, '.plans');
-  mkdirSync(path.join(home, '.claude'), { recursive: true });
+  ghDir = path.join(tmp, 'gh');
+  mkdirSync(path.join(ghDir, 'bin'), { recursive: true });
+  writeFileSync(path.join(ghDir, 'bin', 'gh'), FAKE_GH, { mode: 0o755 });
+  // written before the server starts: it caches the PR list for a minute
+  writeFileSync(path.join(ghDir, 'list.json'), JSON.stringify([
+    { number: 7, headRefName: 'auto/demo-plan', headRefOid: 'abc', isDraft: true, state: 'OPEN', title: 'Demo', url: 'https://github.com/o/r/pull/7' },
+    { number: 3, headRefName: 'auto/demo-plan', headRefOid: 'old', isDraft: false, state: 'CLOSED', title: 'Older', url: 'https://github.com/o/r/pull/3' },
+    { number: 9, headRefName: 'feature/x', headRefOid: 'x', isDraft: false, state: 'OPEN', title: 'By hand', url: 'https://github.com/o/r/pull/9' },
+  ]));  mkdirSync(path.join(home, '.claude'), { recursive: true });
   mkdirSync(plansDir, { recursive: true });
   writeFileSync(path.join(plansDir, 'demo-plan.md'), '# Plan: Demo the dashboard\n\nDo the thing.\n');
   writeFileSync(path.join(home, '.claude', 'pipeline-projects.json'), JSON.stringify({
@@ -413,4 +436,74 @@ test('the project default mode comes from --describe and is used when no mode is
   await pipeRepo('bad-default-pipe', { ...PR_MODES, default: 'nope' }, ['one']);
   assert.deepEqual((await projState('bad-default-pipe')).modes.filter((m) => m.default).map((m) => m.id), ['verify']);
   assert.deepEqual((await projState('plain-pipe')).modes.filter((m) => m.default).map((m) => m.id), ['verify']);
+});
+
+test("shows the PR on the plan's auto/<slug> branch and acts on it through gh", async () => {
+
+  // the list loads in the background on the first /api/state, so it may take a tick
+  const deadline = Date.now() + 10000;
+  let p;
+  while (!(p = await onlyPlan()).pr && Date.now() < deadline) await sleep(200);
+  assert.deepEqual(p.pr, { number: 7, state: 'OPEN', isDraft: true, title: 'Demo', url: 'https://github.com/o/r/pull/7', head: 'abc' });
+
+  const act = (b) => post('/api/pr-action', { project: 'demo', slug: 'demo-plan', number: 7, ...b });
+  const calls = () => readFileSync(path.join(ghDir, 'calls.log'), 'utf8');
+  assert.deepEqual(await act({ action: 'ready' }), { ok: true });
+  assert.deepEqual(await act({ action: 'close', deleteBranch: true }), { ok: true });
+  assert.match(calls(), /^pr ready 7$/m);
+  assert.match(calls(), /^pr close 7 --delete-branch$/m);
+  assert.equal((await act({ action: 'ready', number: '7 --admin' })).ok, false);
+
+  // the whole-file view reads one file at the head commit; odd paths and commits are refused
+  const sha = 'a'.repeat(40);
+  const file = await (await get('/api/pr-file?project=demo&sha=' + sha + '&path=src/a%20b.ts')).json();
+  assert.deepEqual(file, { ok: true, text: 'whole file\n' });
+  assert.match(calls(), new RegExp('^api -H Accept: application/vnd.github.raw repos/\\{owner\\}/\\{repo\\}/contents/src/a%20b.ts\\?ref=' + sha + '$', 'm'));
+  assert.equal((await get('/api/pr-file?project=demo&sha=' + sha + '&path=src/../../x')).status, 400);
+  assert.equal((await get('/api/pr-file?project=demo&sha=HEAD&path=src/a.ts')).status, 400);
+
+  // task boxes: counted outside code fences, written back one at a time
+  const body = path.join(ghDir, 'body.md');
+  writeFileSync(body, '## Decide\n- [ ] one\n```\n- [ ] not a box\n```\n1. [x] two\n');
+  assert.deepEqual(await act({ action: 'task', index: 1, count: 2, was: true }), { ok: true });
+  assert.deepEqual(await act({ action: 'task', index: 0, count: 2, was: false }), { ok: true });
+  assert.equal(readFileSync(body, 'utf8'), '## Decide\n- [x] one\n```\n- [ ] not a box\n```\n1. [ ] two\n');
+  // a page that shows an older body is refused, and nothing is written
+  const stale = await act({ action: 'task', index: 0, count: 2, was: false });
+  assert.equal(stale.ok, false);
+  assert.match(stale.output, /changed on GitHub/);
+  assert.equal(readFileSync(body, 'utf8'), '## Decide\n- [x] one\n```\n- [ ] not a box\n```\n1. [ ] two\n');
+});
+
+test('merge runs gh pr merge on the reviewed commit, deletes the remote branch, then pulls the main checkout', async () => {
+  const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', env: { ...process.env,
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+  const act = (b) => post('/api/pr-action', { project: 'demo', slug: 'demo-plan', number: 7, ...b });
+  const calls = () => readFileSync(path.join(ghDir, 'calls.log'), 'utf8');
+  // the repo's main checkout, and the merge landing on origin
+  const origin = path.join(tmp, 'origin.git'), other = path.join(tmp, 'other');
+  git(tmp, 'init', '-q', '--bare', '-b', 'main', origin);
+  git(repo, 'init', '-q', '-b', 'main');
+  git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'base');
+  git(repo, 'remote', 'add', 'origin', origin); git(repo, 'push', '-q', '-u', 'origin', 'main');
+  git(tmp, 'clone', '-q', origin, other);
+  writeFileSync(path.join(other, 'merged.txt'), 'x');
+  git(other, 'add', '-A'); git(other, 'commit', '-qm', 'merged'); git(other, 'push', '-q');
+
+  const head = 'b'.repeat(40);
+  const r = await act({ action: 'merge', method: 'squash', deleteBranch: true, head });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.match(calls(), new RegExp('^pr merge 7 --squash --match-head-commit ' + head + '$', 'm'));
+  assert.match(calls(), /^api -X DELETE repos\/\{owner\}\/\{repo\}\/git\/refs\/heads\/auto\/demo-plan$/m);
+  assert.ok(existsSync(path.join(repo, 'merged.txt')), 'the main checkout was pulled');
+  assert.match(r.notes.join(' '), /Pulled main/);
+
+  // a checkout on another branch is left alone, and says why
+  git(repo, 'checkout', '-q', '-b', 'side');
+  const r2 = await act({ action: 'merge', method: 'merge', head });
+  assert.match(r2.notes.join(' '), /is on side, not main/);
+  assert.doesNotMatch(calls().split('\n').filter((l) => l.startsWith('api -X DELETE')).join('\n'), /\n/, 'no branch delete when not asked');
+
+  assert.equal((await act({ action: 'merge', method: 'octopus', head })).ok, false);
+  assert.equal((await act({ action: 'merge', method: 'merge', head: 'HEAD' })).ok, false);
 });
