@@ -13,6 +13,7 @@ import {
   captureRequest,
   axeScan,
   screenshot,
+  beforeAfterShot,
   measure,
   setTheme,
   tabSequence,

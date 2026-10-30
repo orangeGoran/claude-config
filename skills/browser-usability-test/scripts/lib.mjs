@@ -413,6 +413,42 @@ export function saveJson(name, data) {
   return file;
 }
 
+/** Where beforeAfterShot records each shot and how it was taken; compare.mjs reads it. */
+export const BEFORE_AFTER_FILE = join(OUT_DIR, "before-after.json");
+
+/**
+ * Screenshot of a finding that can be retaken after the fix. QA_PHASE=after
+ * (default "before") picks the side; the same script run again after the fix
+ * fills the other side. Records route, viewport, theme and account, so
+ * compare.mjs can flag an "after" taken in a different state.
+ *   await beforeAfterShot(page, 'filterbar-390', { locator: page.getByRole('toolbar') });
+ */
+export async function beforeAfterShot(page, name, opts = {}) {
+  const phase = process.env.QA_PHASE ?? "before";
+  if (!["before", "after"].includes(phase))
+    throw new Error(`QA_PHASE must be "before" or "after", got "${phase}".`);
+  const file = await screenshot(page, `${name}.${phase}`, opts);
+  const url = new URL(page.url());
+  const records = existsSync(BEFORE_AFTER_FILE)
+    ? JSON.parse(readFileSync(BEFORE_AFTER_FILE, "utf8"))
+    : {};
+  records[name] = {
+    ...records[name],
+    [phase]: {
+      file,
+      path: url.pathname + url.search,
+      viewport: page.viewportSize(),
+      theme: await currentTheme(page),
+      account: ACCOUNT?.label ?? null,
+      fullPage: Boolean(opts.fullPage),
+      element: Boolean(opts.locator),
+      at: new Date().toISOString(),
+    },
+  };
+  writeFileSync(BEFORE_AFTER_FILE, JSON.stringify(records, null, 2));
+  return file;
+}
+
 /**
  * Layout facts for one element: box, scroll vs client size (overflow), and the
  * computed styles you name. Use this instead of guessing from a screenshot.

@@ -26,7 +26,7 @@ node $S/api.mjs SQL "select count(*) from users"
 
 The first script logs in through the UI and saves the session to `$TMPDIR/browser-qa/<project>/<account>/session-state.json` (or `$QA_DIR`); later scripts reuse it. Delete that file to force a new login. `api.mjs` reuses the token from the last browser run, so it costs no auth call.
 
-Optional env: `QA_PROJECT` (skip repo matching), `QA_HOME` (profile store), `QA_APP_URL` / `QA_API_URL` (override the profile, still local only), `QA_DIR` (evidence folder), `QA_TOKEN` (skip login in `api.mjs`).
+Optional env: `QA_PHASE` (`after` when retaking finding shots after a fix), `QA_PROJECT` (skip repo matching), `QA_HOME` (profile store), `QA_APP_URL` / `QA_API_URL` (override the profile, still local only), `QA_DIR` (evidence folder), `QA_TOKEN` (skip login in `api.mjs`).
 
 ## Scripts
 
@@ -35,6 +35,7 @@ Optional env: `QA_PROJECT` (skip repo matching), `QA_HOME` (profile store), `QA_
 | `scripts/profile.mjs` | Finds the project for the current repo; `init`, `add-repo`, `add-account`. Checks `project.json` and `accounts.json` against `references/*.schema.json` on every read and write |
 | `scripts/smoke.mjs <path>` | Opens a page signed in; prints headings, buttons, axe violations, console/network problems, light/dark screenshots, sideways-scroll check at 390/1100/1440/2555 px |
 | `scripts/api.mjs <METHOD> <path> [body]` | Calls the API as the test account and prints the response; `SQL "<select>"` runs a read-only query |
+| `scripts/compare.mjs <items.json>` | After fixes: one self-contained before/after HTML file (screenshots embedded) in `~/.claude/browser-usability-test/projects/<project>/reports/` |
 | `scripts/lib.mjs` | Helpers below — import it from your own run scripts |
 
 ## `lib.mjs` helpers
@@ -46,6 +47,7 @@ Optional env: `QA_PROJECT` (skip repo matching), `QA_HOME` (profile store), `QA_
 | `forceLocale(context, 'en')` | Show the UI in a language without saving it to the user (profile `ui.localeRewrite`) |
 | `collectLog` / `summarizeLog(log)` | Console errors/warnings, page errors, failed requests, HTTP ≥ 400, duplicate API calls; known noise counted separately |
 | `screenshot(page, name, { fullPage, locator })` | PNG into `OUT_DIR` |
+| `beforeAfterShot(page, name, { fullPage, locator })` | Finding screenshot that can be retaken: side from `QA_PHASE` (`before` / `after`), route, width, theme and account recorded in `OUT_DIR/before-after.json` for `compare.mjs` |
 | `saveJson(name, data)` | JSON evidence into `OUT_DIR` |
 | `measure(page, selector, styles)` | Box, overflow and computed styles of one element |
 | `horizontalOverflow(page)` / `checkResponsive(page, name, widths)` | Sideways scroll check, with offending elements |

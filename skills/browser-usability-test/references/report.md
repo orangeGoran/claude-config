@@ -48,5 +48,5 @@ Compared with: <sibling 1 (file:line)>, <sibling 2 (file:line)> — or "not test
 1. <fix> — <small & safe | needs design decision | backend>
 2. ...
 
-Want me to apply the small, safe ones (#…)?
+Want me to apply the small, safe ones (#…)? After the fixes I'll retake the finding screenshots and give you one before/after HTML file to share.
 ````

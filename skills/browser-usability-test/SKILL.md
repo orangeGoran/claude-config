@@ -79,6 +79,7 @@ General rules (projects add their own in `notes.md`):
 - **Don't wait for `networkidle`** in apps with SSE, websockets or polling. Wait for concrete UI (text, role, URL) or a short fixed wait.
 - **Selectors:** prefer `getByRole` / `getByText`. Never pick controls by index when the layout has similar controls elsewhere (headers, toolbars).
 - **Re-query after list changes.** After expand/collapse or filtering, query again (`.first()`, `.nth(i)`) instead of reusing an old `.all()` array.
+- **Finding screenshots:** take the evidence for a visible problem with `beforeAfterShot(page, '<short-name>', { locator })`, not `screenshot()`. It saves the shot as "before" and records route, width, theme and account, so after a fix the same script retakes it as "after" (section 8). Prefer an element shot (`locator`) over a full page: the comparison file stays small.
 - **Layout bugs:** measure (`measure()`, `horizontalOverflow()`) instead of judging from pixels alone. Use `fullPage` screenshots only when needed.
 - **Dark/light:** `setTheme(page, mode)` uses the profile's theme toggle or emulates `prefers-color-scheme`. For contrast questions compare computed colors in both themes, not just axe output (`axeScan(page, { save })`).
 - **Unhappy states via mocking only.** Reach empty / error / slow / API-down states with `mock()` (this browser only). Never delete or edit real data to get there. Mock the endpoint the page actually calls (check with `captureRequest` or the log).
@@ -110,3 +111,22 @@ Before writing anything about authorization, read the guard/middleware code that
 ## 7. Report
 
 Use `references/report.md` exactly. When running as a subagent, return the report as text (the harness may refuse report files); evidence files are fine. Every finding needs a concrete example and evidence; for frontend causes, give `file:line` you actually read. Put backend gaps in one fenced, copy-paste block written for the backend team. Close by asking before fixing anything, and say which fixes are small and safe. Don't fix code during the test run — the user decides what to change.
+
+## 8. After fixes: before/after comparison
+
+When the user lets you apply fixes, prove each one and give them one HTML file they can send to someone else.
+
+1. Apply the fixes. Wait until the dev server has reloaded.
+2. Run the scripts that took the finding shots again, with the same account and `QA_DIR`, and with `QA_PHASE=after`. Run only the steps for the fixed findings. Do not log in again when the saved session still works. Open every "after" shot with the Read tool and decide per finding: `fixed`, `partly` or `not-fixed`. For a non-visual finding (API value, SQL count), run the check again and note both values.
+3. Write `items.json` in the scratchpad (format at the top of `scripts/compare.mjs`). It is a page for someone who did not see the test: plain words, real values. Fill in:
+   - `title`: a plain-words headline ("Filters on /cases fit a phone").
+   - `summary`: the TLDR, saying what works now and what is still open.
+   - `before` / `after`: the version each side was taken from (commit and version, "working tree").
+   - One item per applied fix: the finding text, fix and `cause` file:line from the report, the result, the `beforeAfterShot` names with a short `caption` each, and `beforeText` / `afterText` for non-visual proof. Add `references` with sibling screenshots when the fix was about consistency.
+   - `notTested`: from the report.
+   - `copyBlocks`: the backend block from the report, if there is one.
+   - `questions`: what the reader must decide. Add one for each open design decision (siblings disagree), each `partly` result that needs a choice, and each fix that needs a sign-off. A question with `finding` appears inside that finding, under its pictures; put a question there whenever it is about one finding, and keep only general questions without `finding` (they go at the end). Any type works anywhere: `radio` for one choice, `checkbox` for "all that apply", `text` for free answers, `other: true` when the options may not cover it. Every choice question gets a free comment field. Write each question in plain words, give the facts in `why`, and mark one option `recommended`. Never ask what the code or a spec already decides. Set `reviewEachFix: true` when the reader should sign off every fix ("Is this fix good?" yes/no + comment on each finding), or `review: true` on single items. The page has a **Copy answers** button: the reader sends back a text that starts with `Short: 1A, 2A+C, …`, numbered in page order, with `[#finding]` on each answer.
+   - `dirs`: when the shots come from more than one account.
+4. Run `node $SKILL_DIR/scripts/compare.mjs <items.json>`. It writes one self-contained HTML file (screenshots embedded) to `~/.claude/browser-usability-test/projects/<project>/reports/<date>-<route>-before-after.html`, outside every repo. Fix every warning it prints (a missing shot, an "after" taken at another width, theme, route or account) and run it again.
+5. Give the user the full path of the file and one line per finding with its result. Do not publish it or send it anywhere. The user shares it.
+6. When the user pastes answers back (`Answers to "…"` with a `Short:` line), act on them. Apply the chosen options, save design standards in `notes.md`, and say which answers need more work.
