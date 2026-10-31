@@ -1843,6 +1843,12 @@ const PAGE = /* html */ `<!doctype html>
   .pf .chev { width:10px; color:var(--dim); flex-shrink:0; }
   .pf .nm { flex:1; overflow:hidden; text-overflow:ellipsis; }
   .pf input { margin:0; accent-color:var(--accent); }
+  .pf .flag { background:none; border:0; padding:0 2px; color:var(--dim); font-size:calc(12px * var(--fs)); line-height:1;
+              cursor:pointer; opacity:0; }
+  .pf:hover .flag, .pf:focus .flag, .pf .flag:focus-visible { opacity:.6; }
+  .pf .flag[aria-pressed="true"] { opacity:1; color:var(--warn); }
+  .pf.rk .nm { text-decoration:underline wavy var(--warn); text-underline-offset:3px; }
+  .flagbtn[aria-pressed="true"] { border-color:var(--warn); color:var(--warn); }
   /* git colors, as VS Code paints changed files: name and letter alike */
   .pf.M .nm, .fst.M { color:var(--gitM); }
   .pf.A .nm, .fst.A, .pf.R .nm, .fst.R { color:var(--gitA); }
@@ -2617,6 +2623,16 @@ let prViewed = {};   // PR url -> { path: hash of its diff } — a file changed 
 try { prViewed = JSON.parse(localStorage.getItem('dash-pr-viewed') || '{}'); } catch {}
 const saveViewed = () => { try { localStorage.setItem('dash-pr-viewed', JSON.stringify(prViewed)); } catch {} };
 const isViewed = (p, f) => (prViewed[p.pr.url] || {})[f.path] === f.hash;
+// a third mark next to viewed: "recheck" (⚑), a file to come back to. One file is unmarked,
+// viewed or to recheck: flagging takes the viewed tick off, ticking viewed takes the flag off.
+let prRecheck = {};   // PR url -> { path: true }
+try { prRecheck = JSON.parse(localStorage.getItem('dash-pr-recheck') || '{}'); } catch {}
+const saveRecheck = () => { try { localStorage.setItem('dash-pr-recheck', JSON.stringify(prRecheck)); } catch {} };
+const isRecheck = (p, f) => !!(prRecheck[p.pr.url] || {})[f.path];
+const marksText = (p, files) => {
+  const k = files.filter((x) => isRecheck(p, x)).length;
+  return files.filter((x) => isViewed(p, x)).length + ' / ' + files.length + ' viewed' + (k ? ' · ⚑ ' + k + ' to recheck' : '');
+};
 let diffSplit = true, diffFull = true;
 try { diffSplit = localStorage.getItem('dash-diff-split') !== '0'; } catch {}
 try { diffFull = localStorage.getItem('dash-diff-full') !== '0'; } catch {}
@@ -3280,10 +3296,12 @@ function drawFilesView(p) {
     }
     for (const f of node.files.slice().sort((a, b) => a.path.localeCompare(b.path))) {
       const seen = isViewed(p, f);
-      tree += '<div class="pf ' + f.st + (f === cur ? ' on' : '') + '" tabindex="0" style="--d:' + depth + '" data-file="' +
+      tree += '<div class="pf ' + f.st + (f === cur ? ' on' : '') + (isRecheck(p, f) ? ' rk' : '') + '" tabindex="0" style="--d:' + depth + '" data-file="' +
         escA(f.path) + '" title="' + escA(f.path) + '"><span class="chev"></span>' +
         '<input type="checkbox" tabindex="-1" aria-label="viewed" data-seen="' + escA(f.path) + '"' + (seen ? ' checked' : '') + ' title="viewed">' +
         '<span class="nm">' + esc(f.path.slice(f.path.lastIndexOf('/') + 1)) + '</span>' +
+        '<button class="flag" tabindex="-1" data-flag="' + escA(f.path) + '" aria-pressed="' + isRecheck(p, f) + '" ' +
+          'title="Recheck this file later (F)" aria-label="recheck later">⚑</button>' +
         '<span class="fst ' + f.st + '">' + f.st + '</span></div>';
     }
   };
@@ -3305,7 +3323,7 @@ function drawFilesView(p) {
         if (prFile[p.key] === cur.path && byId('ptree')) drawFilesView(p);
       });
   }
-  if (byId('rseen')) byId('rseen').textContent = nSeen + ' / ' + files.length + ' viewed';
+  if (byId('rseen')) byId('rseen').textContent = marksText(p, files);
   // a repaint of the same view keeps the diff where it was; a new file opens at its first change
   const view = cur.path + '|' + diffSplit + '|' + (wantFull && !!cur.full) + '|' + diffFull;
   const oldBody = v.querySelector('.pdbody');
@@ -3323,6 +3341,7 @@ function drawFilesView(p) {
       '<button data-full="0" class="' + (diffFull ? '' : 'on') + '">Changes only</button>' +
       '<button data-split="1" class="' + (diffSplit ? 'on' : '') + '">Side by side</button>' +
       '<button data-split="0" class="' + (diffSplit ? '' : 'on') + '">One column</button>' +
+      '<button class="flagbtn" data-flag="' + escA(cur.path) + '" aria-pressed="' + isRecheck(p, cur) + '" title="Come back to this file later (F)">⚑ Recheck</button>' +
       '<label><input type="checkbox" data-seen="' + escA(cur.path) + '"' + (isViewed(p, cur) ? ' checked' : '') + '> Viewed</label></div>' +
     '<div class="pdmain"><div class="pdbody' + (showMono ? ' monoon' : '') + '" tabindex="0" aria-label="diff">' +
       (showMono ? '<div class="mono" id="mono"></div>'
@@ -3367,6 +3386,8 @@ function drawFilesView(p) {
       e.preventDefault();
       const cb = rows[i].querySelector('input');
       cb.checked = !cb.checked; cb.dispatchEvent(new Event('change'));
+    } else if ((e.key === 'f' || e.key === 'F') && rows[i].dataset.file) {
+      e.preventDefault(); rows[i].querySelector('.flag').click();
     }
   });
   v.querySelectorAll('[data-file]').forEach((el) => el.addEventListener('click', (e) => {
@@ -3374,10 +3395,22 @@ function drawFilesView(p) {
     prFile[p.key] = el.dataset.file; drawFilesView(p);
   }));
   const markSeen = (list, on) => {
-    const m = prViewed[p.pr.url] = prViewed[p.pr.url] || {};
-    for (const f of list) { if (on) m[f.path] = f.hash; else delete m[f.path]; }
-    saveViewed();
-    // only the boxes and the count change: rebuilding the tree and the diff made the screen flicker
+    const m = prViewed[p.pr.url] = prViewed[p.pr.url] || {}, r = prRecheck[p.pr.url] = prRecheck[p.pr.url] || {};
+    for (const f of list) { if (on) { m[f.path] = f.hash; delete r[f.path]; } else delete m[f.path]; }
+    saveViewed(); saveRecheck(); paintMarks();
+  };
+  const markRecheck = (f, on) => {
+    const m = prViewed[p.pr.url] = prViewed[p.pr.url] || {}, r = prRecheck[p.pr.url] = prRecheck[p.pr.url] || {};
+    if (on) { r[f.path] = true; delete m[f.path]; } else delete r[f.path];
+    saveViewed(); saveRecheck(); paintMarks();
+  };
+  // only the marks and the count change: rebuilding the tree and the diff made the screen flicker
+  const paintMarks = () => {
+    v.querySelectorAll('[data-flag]').forEach((b) => {
+      const f = files.find((x) => x.path === b.dataset.flag), on = !!f && isRecheck(p, f);
+      b.setAttribute('aria-pressed', String(on));
+      if (b.classList.contains('flag')) b.closest('.pf').classList.toggle('rk', on);
+    });
     v.querySelectorAll('[data-seen]').forEach((cb) => {
       const f = files.find((x) => x.path === cb.dataset.seen);
       if (f) cb.checked = isViewed(p, f);
@@ -3386,8 +3419,13 @@ function drawFilesView(p) {
       const all = files.filter((x) => x.path.startsWith(cb.dataset.seendir + '/')), n = all.filter((x) => isViewed(p, x)).length;
       cb.checked = n === all.length; cb.indeterminate = n > 0 && n < all.length;
     });
-    if (byId('rseen')) byId('rseen').textContent = files.filter((x) => isViewed(p, x)).length + ' / ' + files.length + ' viewed';
+    if (byId('rseen')) byId('rseen').textContent = marksText(p, files);
   };
+  v.querySelectorAll('[data-flag]').forEach((el) => el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const f = files.find((x) => x.path === el.dataset.flag);
+    if (f) markRecheck(f, !isRecheck(p, f));
+  }));
   v.querySelectorAll('[data-seen]').forEach((el) => el.addEventListener('change', () =>
     markSeen(files.filter((x) => x.path === el.dataset.seen), el.checked)));
   v.querySelectorAll('[data-seendir]').forEach((el) => {
