@@ -37,6 +37,20 @@ else if (a[1] === 'edit') fs.writeFileSync(body, fs.readFileSync(0));
 else if (a[0] === 'api') process.stdout.write('whole file\\n');
 `;
 
+// stands in for `claude -p --resume`: echoes the question, refuses `git merge` until allowed
+const FAKE_CLAUDE = `#!/usr/bin/env node
+const fs = require('fs'), path = require('path');
+const a = process.argv.slice(2), q = fs.readFileSync(0, 'utf8');
+fs.appendFileSync(path.join(process.env.FAKE_GH_DIR, 'claude-calls.log'), a.join(' ') + ' <<< ' + q + '\\n');
+const id = a.includes('--fork-session') ? 'ses-copy' : a[a.indexOf('--resume') + 1];
+const denied = /merge/.test(q) && !a.includes('Bash(git merge main)')
+  ? [{ tool_name: 'Bash', tool_use_id: 't1', tool_input: { command: 'git fetch && git merge main' } }] : [];
+const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+out({ type: 'system', subtype: 'init', session_id: id });
+out({ type: 'assistant', session_id: id, message: { content: [{ type: 'text', text: 'answer: ' + q }] } });
+out({ type: 'result', subtype: 'success', is_error: false, session_id: id, total_cost_usd: 0.01, permission_denials: denied });
+`;
+
 const start = async () => {
   const child = spawn(process.execPath, [SCRIPT], {
     env: { ...process.env, HOME: home, DASH_PORT: String(port), DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1',
@@ -75,6 +89,7 @@ before(async () => {
   ghDir = path.join(tmp, 'gh');
   mkdirSync(path.join(ghDir, 'bin'), { recursive: true });
   writeFileSync(path.join(ghDir, 'bin', 'gh'), FAKE_GH, { mode: 0o755 });
+  writeFileSync(path.join(ghDir, 'bin', 'claude'), FAKE_CLAUDE, { mode: 0o755 });
   // written before the server starts: it caches the PR list for a minute
   writeFileSync(path.join(ghDir, 'list.json'), JSON.stringify([
     { number: 7, headRefName: 'auto/demo-plan', headRefOid: 'abc', isDraft: true, state: 'OPEN', title: 'Demo', url: 'https://github.com/o/r/pull/7' },
@@ -194,6 +209,46 @@ test("counts only the plan's own sessions, not every session in the repo", async
   let p;
   do { await sleep(200); p = await onlyPlan(); } while (Date.now() < deadline && (!p.run || p.live));
   assert.deepEqual(p.sessions.map((x) => x.id), ['ses-mine'], 'the unrelated session is not attributed to this plan');
+});
+
+test("the Ask tab resumes the plan's session, offers to allow a refused call, and can ask in a copy", async () => {
+  const ask = async (data) => {
+    assert.deepEqual(await post('/api/ask', { project: 'demo', slug: 'demo-plan', ...data }), { ok: true });
+    let st;
+    const deadline = Date.now() + 10000;
+    do { await sleep(100); st = await (await get('/api/ask?project=demo&slug=demo-plan')).json(); }
+    while (st.running && Date.now() < deadline);
+    return st;
+  };
+  const calls = () => readFileSync(path.join(ghDir, 'claude-calls.log'), 'utf8').trim().split('\n');
+
+  let st = await ask({ text: 'why the service?' });
+  assert.deepEqual(st.current, { id: 'ses-mine', base: 'ses-mine', copy: false, allowed: [] });
+  assert.deepEqual(st.items.filter((i) => i.who !== 'end').map((i) => i.who + ':' + i.text),
+    ['you:why the service?', 'agent:answer: why the service?']);
+  assert.match(calls().at(-1), /^-p --resume ses-mine --permission-mode acceptEdits/);
+  assert.doesNotMatch(calls().at(-1), /--fork-session/);
+
+  st = await ask({ text: 'merge main please' });
+  assert.deepEqual(st.denied, [{ tool: 'Bash', what: 'git fetch && git merge main',
+    rules: ['Bash(git fetch && git merge main)', 'Bash(git fetch)', 'Bash(git merge main)'] }]);
+  // only rules the agent was just refused are passed on
+  st = await ask({ text: 'merge main again', allow: [...st.denied[0].rules, 'Bash(rm -rf /)'] });
+  assert.deepEqual(st.denied, []);
+  assert.match(calls().at(-1), /Bash\(git merge main\)/);
+  assert.doesNotMatch(calls().at(-1), /rm -rf/);
+  assert.deepEqual(st.items.filter((i) => i.who === 'you').at(-1).allowed,
+    ['Bash(git fetch && git merge main)', 'Bash(git fetch)', 'Bash(git merge main)']);
+
+  st = await ask({ text: 'new topic', fresh: true, copy: true });
+  assert.match(calls().at(-1), /--resume ses-mine --fork-session/);
+  assert.deepEqual(st.current, { id: 'ses-copy', base: 'ses-mine', copy: true, allowed: [] });
+  assert.equal(st.items.filter((i) => i.who === 'you').at(-1).fresh, true);
+  await ask({ text: 'and then?' });
+  assert.match(calls().at(-1), /--resume ses-copy --permission-mode/);
+  assert.doesNotMatch(calls().at(-1), /--fork-session/);
+  assert.equal((await onlyPlan()).asked, true);
+  assert.equal((await post('/api/ask', { project: 'demo', slug: 'demo-plan', text: '  ' })).ok, false);
 });
 
 test('archives a plan and puts it back', async () => {
@@ -444,7 +499,7 @@ test("shows the PR on the plan's auto/<slug> branch and acts on it through gh", 
   const deadline = Date.now() + 10000;
   let p;
   while (!(p = await onlyPlan()).pr && Date.now() < deadline) await sleep(200);
-  assert.deepEqual(p.pr, { number: 7, state: 'OPEN', isDraft: true, title: 'Demo', url: 'https://github.com/o/r/pull/7', head: 'abc' });
+  assert.deepEqual(p.pr, { number: 7, state: 'OPEN', isDraft: true, title: 'Demo', url: 'https://github.com/o/r/pull/7', head: 'abc', mergedAt: null });
 
   const act = (b) => post('/api/pr-action', { project: 'demo', slug: 'demo-plan', number: 7, ...b });
   const calls = () => readFileSync(path.join(ghDir, 'calls.log'), 'utf8');

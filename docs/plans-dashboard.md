@@ -139,6 +139,26 @@ For a pipeline project without `--describe`, the setup guide shows a tip with a 
 
 Generic run state (pid, exit code, log) lives under `~/.claude/pipeline-dashboard/`. Statuses and tags are written to `<plansDir>/plan-meta.json` when the repo already tracks that file, otherwise centrally.
 
+## Pull requests
+
+When a plan's branch `auto/<slug>` has a PR on GitHub, the plan shows a `PR #n` chip, and its panel gets two more tabs. The plan tab itself opens on the summary and the buttons; status, tags and session history are under **⋯ more**, and the plan text is under **Show the full plan**. **Open PR** opens the Pull request tab.
+
+The PR's state, **↗ GitHub** and the next step (**Ready for review** for a draft, **Merge…** after that) sit at the right end of the tab row; the plan tab has **↗ GitHub** next to **Open PR**. **Files changed** opens in review mode: the plan list and the page header are hidden, and one bar holds **‹ Plan** (or Esc), the plan name, the tabs and that next step. The address bar keeps the open plan, tab and file, so a reload reopens them and Back goes to the previous plan or tab.
+
+- **Pull request**: the title, branches, size, a merge box, and the description as formatted text. The merge box lists what GitHub checks before a merge (draft, CI checks, review, conflicts). A draft or a PR with conflicts cannot be merged here; failed checks and a missing review are shown as warnings. When GitHub itself blocks the merge (a branch rule, such as a required approval), the box says so; a repo admin can tick **Merge as admin** (`gh pr merge --admin`). When GitHub refuses an action, its message shows at the top of the tab. **Merge into <base>** uses the methods the repo allows (your last choice is remembered), can delete the branch on GitHub, and merges only the commit you reviewed (`--match-head-commit`). After the merge, the dashboard runs `git pull --ff-only` in the repo's main checkout, never in the worktree, and only when that checkout is on the PR's base branch; the merged plan then shows in `done/`. **Back to draft** and **Close PR** are under **⋯**. A description checkbox writes the change back to GitHub, the same as ticking it on github.com. If the description changed on GitHub since the page loaded it, the tick is refused and the page loads the description again.
+- **Files changed**: the changed files as a folder tree, and the diff of one file at a time, side by side or in one column. The diff shows the whole file by default (the file at the PR's latest commit, read with `gh api`), or only the changed parts. A file you mark as viewed is remembered in this browser until its diff changes. A folder's box marks every file in it. In the tree, ↑/↓ move, Enter opens, Space marks a file viewed. A file opens at its first change. The strip at the right of the diff marks where lines were removed (red) and added (green), and shows the part on screen; click or drag it to move there. Drag the file list's right edge, or the line between the two sides of a diff, to resize them (double-click puts them back); this browser remembers both.
+
+Everything goes through the `gh` CLI, so it must be installed and logged in. The guide's first step shows a **GitHub CLI** row with the fix when it is not, and a plan in a GitHub repo says why its PRs are not shown. The dashboard checks the list of PRs at most once a minute per project. PRs on other branches (for example, a PR that you opened by hand) are not shown.
+
+## Ask the agent
+
+A plan with a session has an **Ask** tab, a chat with the Claude session that ran the plan. The dashboard resumes the plan's latest session (`claude -p --resume <id>`) in the plan's own folder (its worktree, or the repo root for a generic project), so the agent has its whole history: the plan, the files it read and what it decided. Ask why it did something, or tell it to do something, for example "merge develop into this branch". Follow-up messages continue the same chat. **New chat** starts again from the latest run session. The tab is locked while a run or another chat works in that folder. Done plans keep their sessions and their Ask tab.
+
+- **Ask in a copy of the session**: the first message of a new chat makes a copy (`--fork-session`), and the chat continues in the copy, so the session the run wrote keeps only what the run did. The choice is remembered in this browser. Without it, your messages are added to the run's session.
+- **Permissions**: the agent may edit files in that folder (`acceptEdits`) and run what the repo's `.claude/settings.json` and `settings.local.json` allow. A headless session cannot ask, so a command outside that list is refused and shown under the chat. **Allow for this chat and ask again** allows exactly those commands (each part of `a && b` on its own) until the next new chat.
+
+The chat is kept in `~/.claude/pipeline-dashboard/logs/<project>/<slug>.ask.log`, and the current chat's session in `state/<project>/ask/<slug>.json`.
+
 ## AI session history
 
 A plan's panel lists the Claude sessions that belong to that plan, with copy-ready commands to resume the latest one, or to hand a fresh reviewer the diff and the transcript to cross-check.

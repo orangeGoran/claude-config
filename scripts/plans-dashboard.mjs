@@ -320,7 +320,8 @@ const chatActiveIn = (wtPath) => {
 const pipelineLive = (proj, slug) =>
   new Promise((resolve) => {
     execFile('pgrep', ['-f', `skill-auto-pipeline ${slug}.md`], (err) =>
-      resolve(!err || chatActiveIn(path.join(proj.worktrees, slug))));
+      // the Ask tab's own claude runs there too, and asking is not running the plan
+      resolve(!err || (!askRuns.has(proj.name + '/' + slug) && chatActiveIn(path.join(proj.worktrees, slug)))));
   });
 
 // generic flavor: runs tracked by this dashboard in <stateDir>/runs.json
@@ -421,18 +422,11 @@ const listPlans = async (proj) => {
       const slug = f.replace(/\.md$/, '');
       const key = proj.name + '/' + slug;
       const content = readFileSync(path.join(proj.plansDir, f), 'utf8');
-      let run, live, wtPath, transcriptDir, sessionFilter;
+      let run, live;
       if (proj.hasPipeline) {
         run = pipelineRunInfo(proj, slug);
         live = await pipelineLive(proj, slug);
-        wtPath = path.join(proj.worktrees, slug);
-        transcriptDir = transcriptDirFor(wtPath);
-      } else {
-        ({ run, live } = genericRunInfo(proj, slug));
-        wtPath = proj.root;
-        transcriptDir = transcriptDirFor(proj.root);
-        sessionFilter = sessionIdsInLog(proj, slug);
-      }
+      } else ({ run, live } = genericRunInfo(proj, slug));
       return {
         slug, file: f, key,
         title: planTitle(content) || slug,
@@ -444,8 +438,8 @@ const listPlans = async (proj) => {
         worktree: proj.hasPipeline && existsSync(path.join(proj.worktrees, slug)),
         status: meta[slug]?.status || null,
         tags: meta[slug]?.tags || [],
-        wtPath, transcriptDir,
-        sessions: sessionsIn(transcriptDir, sessionFilter),
+        ...planSessions(proj, slug),
+        asked: existsSync(askLogFile(proj, slug)),
         pr: prs['auto/' + slug] || null,
       };
     }),
@@ -464,7 +458,8 @@ const listPlans = async (proj) => {
         validations: validationRounds(proj, slug),
         run: null, live: false, worktree: false, archived: true,
         status: meta[slug]?.status || null, tags: meta[slug]?.tags || [],
-        wtPath: proj.root, transcriptDir: transcriptDirFor(proj.root), sessions: [],
+        ...planSessions(proj, slug),
+        asked: existsSync(askLogFile(proj, slug)),
         pr: prs['auto/' + slug] || null,
       };
     });
@@ -1009,13 +1004,13 @@ const refreshPrList = (proj) => {
   if (c.loading) return;
   c.loading = true;
   gh(proj, ['pr', 'list', '--state', 'all', '--limit', '200',
-    '--json', 'number,headRefName,headRefOid,isDraft,state,title,url']).then((r) => {
+    '--json', 'number,headRefName,headRefOid,isDraft,state,title,url,changedFiles,baseRefName,mergedAt']).then((r) => {
     const byBranch = {};
     if (r.ok) try {
       for (const p of JSON.parse(r.out))   // newest first: keep the first PR per branch
         if (p.headRefName.startsWith('auto/') && !byBranch[p.headRefName])
           byBranch[p.headRefName] = { number: p.number, state: p.state, isDraft: p.isDraft, title: p.title,
-            url: p.url, head: p.headRefOid };
+            url: p.url, head: p.headRefOid, changedFiles: p.changedFiles, base: p.baseRefName, mergedAt: p.mergedAt || null };
     } catch {}
     Object.assign(c, { at: Date.now(), byBranch: r.ok ? byBranch : c.byBranch, loading: false,
       error: r.ok ? '' : ghProblem(r.output) });
@@ -1031,12 +1026,13 @@ const repoMerge = {};
 const mergeSettings = async (proj) => {
   if (!repoMerge[proj.root]) {
     const r = await gh(proj, ['repo', 'view', '--json',
-      'mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,viewerDefaultMergeMethod']);
+      'mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,viewerDefaultMergeMethod,viewerPermission']);
     if (!r.ok) return { methods: ['merge'], default: 'merge' };
     const m = JSON.parse(r.out);
     repoMerge[proj.root] = {
       methods: [m.mergeCommitAllowed && 'merge', m.squashMergeAllowed && 'squash', m.rebaseMergeAllowed && 'rebase'].filter(Boolean),
       default: String(m.viewerDefaultMergeMethod || 'MERGE').toLowerCase(),
+      admin: m.viewerPermission === 'ADMIN',   // may merge past the branch rules (--admin)
     };
   }
   return repoMerge[proj.root];
@@ -1059,7 +1055,7 @@ const pullRoot = async (proj, base) => {
 };
 const prDetail = async (proj, number) => {
   const r = await gh(proj, ['pr', 'view', String(number), '--json',
-    'number,title,body,state,isDraft,url,baseRefName,headRefName,headRefOid,mergeable,additions,deletions,changedFiles,commits,reviewDecision,statusCheckRollup']);
+    'number,title,body,state,isDraft,url,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus,additions,deletions,changedFiles,commits,reviewDecision,statusCheckRollup']);
   if (!r.ok) return r;
   const pr = JSON.parse(r.out);
   const checks = { passed: 0, failed: [], running: 0 };
@@ -1094,7 +1090,7 @@ const prAction = async (proj, b) => {
     if (!['merge', 'squash', 'rebase'].includes(b.method)) return { ok: false, output: 'Unknown merge method.' };
     if (!/^[0-9a-f]{40}$/.test(String(b.head))) return { ok: false, output: 'Bad head commit.' };
     // GitHub refuses when someone pushed after the page loaded, so what you reviewed is what merges
-    const m = await gh(proj, ['pr', 'merge', n, '--' + b.method, '--match-head-commit', b.head]);
+    const m = await gh(proj, ['pr', 'merge', n, '--' + b.method, '--match-head-commit', b.head, ...(b.admin ? ['--admin'] : [])]);
     if (!m.ok) return m;
     const v = await gh(proj, ['pr', 'view', n, '--json', 'baseRefName,headRefName']);
     const { baseRefName: base, headRefName: head } = v.ok ? JSON.parse(v.out) : {};
@@ -1121,6 +1117,164 @@ const prAction = async (proj, b) => {
     return gh(proj, ['pr', 'edit', n, '--body-file', '-'], lines.join('\n'));
   }
   return { ok: false, output: 'Unknown action.' };
+};
+
+// ---------- ask: talk to a plan's Claude session from the browser ----------
+// The Ask tab resumes the plan's latest run session (`claude -p --resume`) in the
+// plan's own folder: claude finds a transcript by its cwd. With "ask in a copy" the
+// first question forks it (--fork-session) and the chat goes on in the copy, so the
+// run's own transcript keeps only what the run did. A headless session cannot ask for
+// permission: a refused call comes back in the result's permission_denials, and the
+// tab offers to allow exactly that call for the rest of the chat and ask again.
+const askRuns = new Map();   // plan key -> the claude answering now
+const askFile = (proj, slug) => path.join(proj.stateDir, 'ask', slug + '.json');
+const askLogFile = (proj, slug) => path.join(proj.logsDir, slug + '.ask.log');
+const loadAsk = (proj, slug) => {
+  try { return JSON.parse(readFileSync(askFile(proj, slug), 'utf8')); } catch { return {}; }
+};
+const saveAsk = (proj, slug, a) => {
+  mkdirSync(path.dirname(askFile(proj, slug)), { recursive: true });
+  writeFileSync(askFile(proj, slug), JSON.stringify(a, null, 2));
+};
+// the sessions a plan's runs made; the Ask tab's copies are its own and not listed
+const planSessions = (proj, slug) => {
+  const wtPath = proj.hasPipeline ? path.join(proj.worktrees, slug) : proj.root;
+  const transcriptDir = transcriptDirFor(wtPath);
+  const copies = new Set(loadAsk(proj, slug).copies || []);
+  const sessions = sessionsIn(transcriptDir, proj.hasPipeline ? null : sessionIdsInLog(proj, slug))
+    .filter((s) => !copies.has(s.id));
+  return { wtPath, transcriptDir, sessions };
+};
+// headless runs ignore .claude/settings.json, so its allow rules travel on the command line
+const repoAllowRules = (dirs) => {
+  const rules = new Set();
+  for (const d of new Set(dirs))
+    for (const f of ['settings.json', 'settings.local.json'])
+      try {
+        for (const r of JSON.parse(readFileSync(path.join(d, '.claude', f), 'utf8')).permissions?.allow || [])
+          rules.add(String(r));
+      } catch {}
+  return [...rules];
+};
+// one refused call -> the rules that allow just that call. claude checks each part of
+// `a && b` on its own, so a shell command gets a rule per part.
+const rulesFor = (d) => {
+  const i = d.tool_input || {};
+  if (d.tool_name === 'Bash') {
+    const cmd = String(i.command || '').trim();
+    return [...new Set([cmd, ...cmd.split(/\s*(?:&&|\|\||;|\|)\s*/)].filter(Boolean))].map((c) => 'Bash(' + c + ')');
+  }
+  if (typeof i.file_path === 'string' && i.file_path.startsWith('/')) return [d.tool_name + '(/' + i.file_path + ')'];
+  return [d.tool_name];
+};
+const askStart = async (proj, slug, b) => {
+  const key = proj.name + '/' + slug;
+  const q = String(b.text || '').trim().slice(0, 20000);
+  if (!q) return { ok: false, output: 'Type a question first.' };
+  if (askRuns.has(key)) return { ok: false, output: 'The agent is still answering.' };
+  const { wtPath, sessions } = planSessions(proj, slug);
+  if (!existsSync(wtPath)) return { ok: false, output: 'The folder ' + tilde(wtPath) + ' is gone, so the session cannot run there.' };
+  if (existsSync(path.join(proj.plansDir, slug + '.md'))
+    && (proj.hasPipeline ? await pipelineLive(proj, slug) : genericRunInfo(proj, slug).live))
+    return { ok: false, output: 'A run or chat is working in this plan right now. Ask when it has stopped.' };
+  const a = loadAsk(proj, slug);
+  if (b.fresh) a.current = null;
+  // allow: only what the agent was refused last time
+  const offered = new Set((a.denied || []).flatMap(rulesFor));
+  const allow = (Array.isArray(b.allow) ? b.allow : []).filter((r) => offered.has(r));
+  const fresh = !a.current;
+  let resume;
+  if (a.current) {
+    resume = ['--resume', a.current.id];
+    a.current.allowed = [...new Set([...(a.current.allowed || []), ...allow])];
+  } else {
+    const base = sessions[sessions.length - 1];
+    if (!base) return { ok: false, output: 'This plan has no Claude session to ask yet.' };
+    resume = ['--resume', base.id, ...(b.copy ? ['--fork-session'] : [])];
+    a.current = { id: base.id, base: base.id, copy: !!b.copy, allowed: [] };
+  }
+  a.denied = [];
+  saveAsk(proj, slug, a);
+  const rules = [...new Set([...repoAllowRules([wtPath, proj.root]), ...a.current.allowed])];
+  mkdirSync(proj.logsDir, { recursive: true });
+  const logF = askLogFile(proj, slug);
+  writeFileSync(logF, JSON.stringify({ type: 'ask', text: q, at: new Date().toISOString(), fresh,
+    copy: a.current.copy, session: a.current.base, allowed: allow.length ? allow : undefined }) + '\n', { flag: 'a' });
+  const fd = openSync(logF, 'a');
+  // the question goes in on stdin: --allowedTools takes every word after it
+  const child = spawn('claude', ['-p', ...resume, '--permission-mode', 'acceptEdits',
+    '--verbose', '--output-format', 'stream-json', ...(rules.length ? ['--allowedTools', ...rules] : [])],
+  { cwd: wtPath, env: ENV, stdio: ['pipe', fd, fd] });
+  closeSync(fd);
+  askRuns.set(key, child);
+  child.stdin.on('error', () => {});
+  child.stdin.end(q);
+  const done = (code) => {
+    if (askRuns.get(key) !== child) return;
+    askRuns.delete(key);
+    let result = null;
+    try {
+      const lines = readFileSync(logF, 'utf8').split('\n');
+      for (let i = lines.length - 1; i >= 0 && !lines[i].includes('"type":"ask"'); i--)
+        if (lines[i].includes('"type":"result"')) { try { result = JSON.parse(lines[i]); } catch {} break; }
+    } catch {}
+    const s = loadAsk(proj, slug);
+    if (result && s.current) {
+      if (s.current.copy && result.session_id && result.session_id !== s.current.base)
+        s.copies = [...new Set([...(s.copies || []), result.session_id])];
+      if (result.session_id) s.current.id = result.session_id;
+      s.denied = result.permission_denials || [];
+    }
+    saveAsk(proj, slug, s);
+    writeFileSync(logF, JSON.stringify({ type: 'ask-end', code, at: new Date().toISOString() }) + '\n', { flag: 'a' });
+  };
+  child.on('exit', done);
+  child.on('error', (e) => {
+    writeFileSync(logF, 'Could not start claude: ' + e.message + '\n', { flag: 'a' });
+    done(-1);
+  });
+  return { ok: true };
+};
+const askStop = (proj, slug) => {
+  const c = askRuns.get(proj.name + '/' + slug);
+  if (c) c.kill('SIGINT');
+  return { ok: true };
+};
+// the chat as the tab shows it: questions, answer text, one line per tool call, outcomes
+const askState = (proj, slug) => {
+  const items = [];
+  let raw = '';
+  try { raw = readFileSync(askLogFile(proj, slug), 'utf8'); } catch {}
+  for (const line of raw.split('\n').slice(-4000)) {
+    if (!line.trim()) continue;
+    let j;
+    try { j = JSON.parse(line); } catch { items.push({ who: 'err', text: line.slice(0, 500) }); continue; }
+    if (j.type === 'ask') items.push({ who: 'you', text: j.text, at: j.at, allowed: j.allowed,
+      fresh: j.fresh, copy: j.copy, session: j.session });
+    else if (j.type === 'assistant')
+      for (const c of j.message?.content || []) {
+        if (c.type === 'text' && c.text?.trim()) items.push({ who: 'agent', text: c.text.trim() });
+        if (c.type === 'tool_use') {
+          const i = c.input || {};
+          const arg = i.command || i.file_path || i.path || i.pattern || i.url || i.description || '';
+          items.push({ who: 'tool', text: c.name + '  ' + String(arg).replace(/\s+/g, ' ').slice(0, 200) });
+        }
+      }
+    else if (j.type === 'result')
+      items.push({ who: 'end', ok: !j.is_error && j.subtype === 'success', subtype: j.subtype,
+        cost: j.total_cost_usd, blocked: (j.permission_denials || []).length });
+    else if (j.type === 'ask-end' && items.length && items[items.length - 1].who !== 'end')
+      items.push({ who: 'end', ok: j.code === 0, subtype: j.code === 0 ? 'success' : 'stopped (exit ' + j.code + ')' });
+  }
+  const a = loadAsk(proj, slug);
+  const running = askRuns.has(proj.name + '/' + slug);
+  return {
+    running, items, current: a.current || null,
+    denied: running ? [] : (a.denied || []).map((d) => ({
+      tool: d.tool_name, what: String(d.tool_input?.command || d.tool_input?.file_path || d.tool_input?.url || ''),
+      rules: rulesFor(d),
+    })),
+  };
 };
 
 // ---------- http ----------
@@ -1254,6 +1408,11 @@ const server = http.createServer(async (req, res) => {
       const f = path.join(proj.autoRunsDir, slug + '.md');
       return text(res, existsSync(f) ? readFileSync(f, 'utf8') : '(no report yet)');
     }
+    if (url.pathname === '/api/ask' && req.method === 'GET') {
+      const proj = getProj();
+      if (!proj || !safeName(slug)) return json(res, 400, { error: 'bad request' });
+      return json(res, 200, askState(proj, slug));
+    }
     if (url.pathname === '/api/pr' || url.pathname === '/api/pr-diff') {
       const proj = getProj();
       const n = url.searchParams.get('number') || '';
@@ -1328,6 +1487,8 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === '/api/archive') return json(res, 200, await archivePlan(proj, b.slug));
       if (url.pathname === '/api/unarchive') return json(res, 200, unarchivePlan(proj, b.slug));
       if (url.pathname === '/api/vscode') return json(res, 200, { ok: true, target: openInVsCode(proj, b.slug) });
+      if (url.pathname === '/api/ask') return json(res, 200, await askStart(proj, b.slug, b));
+      if (url.pathname === '/api/ask-stop') return json(res, 200, askStop(proj, b.slug));
       if (url.pathname === '/api/pr-action') {
         const r = await prAction(proj, b);
         return json(res, 200, r.ok ? { ok: true, notes: r.notes } : r);
@@ -1408,6 +1569,10 @@ const PAGE = /* html */ `<!doctype html>
   .chip.ok { color:var(--ok); border-color:var(--ok); }
   .chip.warn { color:var(--warn); border-color:var(--warn); }
   .chip.bad { color:var(--bad); border-color:var(--bad); }
+  .chip.merged { background:var(--merge); border-color:var(--merge); color:var(--mergefg); font-weight:600; }
+  .mergedline { display:flex; align-items:center; gap:8px; margin:10px 0 0; padding:8px 12px; border-radius:10px;
+                border:1px solid var(--merge); background:color-mix(in srgb, var(--merge) 14%, transparent); }
+  .mergedline a { margin-left:auto; color:var(--link); text-decoration:none; white-space:nowrap; }
   .chip.x { cursor:pointer; } .chip.x:hover { border-color:var(--bad); color:var(--bad); }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--dot); flex-shrink:0; margin-top:5px; }
   @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.3 } }
@@ -1666,7 +1831,7 @@ const PAGE = /* html */ `<!doctype html>
   .prbody li.task input { margin-right:6px; accent-color:var(--accent); }
   .prfiles { display:flex; border:1px solid var(--line); border-radius:10px; overflow:hidden;
              height:calc(100vh - 230px); min-height:360px; }
-  .ptree { width:360px; min-width:200px; max-width:60%; resize:horizontal; flex-shrink:0; overflow:auto; border-right:1px solid var(--line); background:var(--bg);
+  .ptree { width:360px; min-width:200px; max-width:60%; flex-shrink:0; overflow:auto; border-right:1px solid var(--line); background:var(--bg);
            padding:4px 0; font-size:calc(12.5px * var(--fs)); }
   .pf { display:flex; align-items:center; gap:6px; padding:2px 10px 2px calc(10px + var(--d) * 14px);
         cursor:pointer; white-space:nowrap; }
@@ -1686,13 +1851,24 @@ const PAGE = /* html */ `<!doctype html>
   .pdhead label { white-space:nowrap; }
   .pdhead button { white-space:nowrap; padding:3px 9px; font-size:calc(12px * var(--fs)); }
   .pdhead button.on { border-color:var(--accent); color:var(--accent); }
+  .pdmain { flex:1; min-height:0; display:flex; }
   .pdbody { flex:1; overflow:auto; }
+  .druler { width:14px; flex-shrink:0; position:relative; border-left:1px solid var(--line); background:var(--bg); cursor:pointer; touch-action:none; }
+  .druler i { position:absolute; width:50%; }
+  .druler i.d { left:0; background:var(--gitD); } .druler i.a { right:0; background:var(--gitA); }
+  .druler .dview { position:absolute; left:0; right:0; background:color-mix(in srgb, var(--fg) 18%, transparent);
+                   border:1px solid color-mix(in srgb, var(--fg) 30%, transparent); pointer-events:none; }
   .pdbody .dim { padding:14px; }
   .dtab { width:100%; border-collapse:collapse; table-layout:fixed; font:calc(12px * var(--fs))/1.5 ui-monospace,monospace; }
   .dtab td { padding:0 8px; white-space:pre-wrap; word-break:break-all; vertical-align:top; }
   .dtab col.lnc { width:calc(46px * var(--fs)); }
   .dtab td.ln { text-align:right; color:var(--dim); user-select:none; padding:0 6px; }
   .dtab.split td:nth-child(3) { border-left:1px solid var(--line); }
+  .dwrap { position:relative; }
+  .dsplit, .tsplit { position:absolute; top:0; bottom:0; width:9px; margin-left:-4px; cursor:col-resize; z-index:1; }
+  .tsplit { position:relative; flex-shrink:0; margin:0 -4px; }
+  .dsplit:hover, .dsplit:focus-visible, .tsplit:hover, .tsplit:focus-visible, body.dragging .dsplit.on, body.dragging .tsplit.on { background:color-mix(in srgb, var(--accent) 45%, transparent); outline:none; }
+  body.dragging { cursor:col-resize; user-select:none; }
   .dtab tr.hk td { background:var(--thbg); color:var(--dim); padding:3px 8px; }
   .dtab td.a { background:var(--addbg); } .dtab td.d { background:var(--delbg); } .dtab td.e { background:var(--codebg); }
   /* review mode: the PR tabs take the whole window; one thin bar holds the plan name, tabs and next step */
@@ -1726,6 +1902,33 @@ const PAGE = /* html */ `<!doctype html>
   .mergednote { border:1px solid var(--merge); border-radius:10px; padding:10px 14px; margin-bottom:16px; }
   .mergednote b { color:var(--merge); }
   .mergednote div { color:var(--dim); font-size:calc(12.5px * var(--fs)); }
+  .askwho { margin-left:auto; font-size:calc(12px * var(--fs)); }
+  #askview { display:flex; flex-direction:column; gap:10px; max-width:calc(900px * var(--fs)); }
+  .asklog { max-height:calc(100vh - 360px); min-height:120px; overflow:auto; display:flex; flex-direction:column; gap:8px; padding-right:4px; }
+  .amsg { padding:9px 13px; border-radius:10px; line-height:1.55; }
+  .amsg.you { align-self:flex-end; max-width:80%; background:color-mix(in srgb, var(--accent) 16%, var(--card)); white-space:pre-wrap; }
+  .amsg.agent { background:var(--card); border:1px solid var(--line); }
+  .amsg.agent > :first-child { margin-top:0; } .amsg.agent > :last-child { margin-bottom:0; }
+  .aallow { font-size:calc(11px * var(--fs)); margin-top:4px; white-space:normal; }
+  .atool { font:calc(11.5px * var(--fs)) ui-monospace,monospace; color:var(--dim); padding:0 4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .aend { font-size:calc(11px * var(--fs)); color:var(--dim); padding:0 4px; }
+  .aend.bad { color:var(--bad); }
+  .anew { text-align:center; font-size:calc(11px * var(--fs)); color:var(--dim); border-top:1px dashed var(--line); padding-top:6px; margin-top:6px; }
+  .askempty { padding:14px 4px; line-height:1.6; }
+  .askdeny { border:1px solid var(--warn); border-radius:10px; padding:10px 13px; display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
+  .askdeny code { font:calc(12px * var(--fs)) ui-monospace,monospace; word-break:break-all; }
+  .askbox { border:1px solid var(--line); border-radius:10px; background:var(--card); padding:8px; }
+  .askbox textarea { width:100%; resize:vertical; background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:inherit; }
+  .askrow { display:flex; align-items:center; gap:8px; margin-top:6px; font-size:calc(12.5px * var(--fs)); flex-wrap:wrap; }
+  .rbar kbd { font:calc(10px * var(--fs)) ui-monospace,monospace; border:1px solid var(--line); border-radius:4px; padding:0 4px; margin-left:4px; color:var(--dim); }
+  #ract { align-items:center; }
+  .merr { border:1px solid var(--bad); color:var(--bad); background:color-mix(in srgb, var(--bad) 10%, transparent);
+          border-radius:10px; padding:10px 13px; margin:0 0 12px; white-space:pre-wrap; }
+  .merr b { color:var(--fg); }
+  #ract .chip { white-space:nowrap; font-size:calc(11.5px * var(--fs)); padding:3px 9px; }
+  .ghbtn { display:inline-flex; align-items:center; line-height:calc(15px * var(--fs)); padding:7px 13px; border:1px solid var(--line); border-radius:8px;
+           background:var(--btn); color:var(--fg); text-decoration:none; font-size:calc(13px * var(--fs)); white-space:nowrap; }
+  .ghbtn:hover { border-color:var(--accent); }
   .ghhint { color:var(--dim); font-size:calc(12.5px * var(--fs)); border-top:1px dashed var(--line); padding-top:10px; margin-top:6px; }
   details.planfold > summary { cursor:pointer; color:var(--dim); margin-top:14px; }
   .pf:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
@@ -2178,7 +2381,9 @@ async function renderDetail(loadPlan) {
   const p = find(selected);
   if (!p) return renderEmptyDetail();
   CUR_ISSUES = p.issuesUrl || '';
-  const tab = p.pr ? prTab[p.key] || 'plan' : 'plan';
+  let tab = prTab[p.key] || 'plan';
+  if (tab === 'ask' ? !hasAsk(p) : tab !== 'plan' && !p.pr) tab = 'plan';
+  if (tab === 'ask') return renderAskTab(p, loadPlan);
   if (tab !== 'plan') return renderPrTab(p, tab, loadPlan);
   lastPrDraw = null;
   const launcherModes = !p.hasPipeline && !p.archived
@@ -2202,6 +2407,9 @@ async function renderDetail(loadPlan) {
     <div class="subtitle">\${inline(p.title)}</div>
     \${prTabs(p, 'plan')}
     <div class="badges">\${autoChips(p)}</div>
+    \${p.pr && p.pr.state === 'MERGED' ? '<div class="mergedline"><span>✓ PR #' + p.pr.number +
+      ' was merged into <code>' + esc(p.pr.base || '?') + '</code>' + (p.pr.mergedAt ? ' on ' + esc(new Date(p.pr.mergedAt).toLocaleString()) : '') +
+      '</span><a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener">↗ GitHub</a></div>' : ''}
     \${p.summary ? '<div class="summary">💡 ' + esc(p.summary) + '</div>'
       : p.summarizing ? '<div class="summary dim">💭 plain-language summary is being generated…</div>' : ''}
     \${p.run && p.run.lastEvent ? '<div class="laststep">last: ' + esc(p.run.lastEvent.slice(0, 200)) + '</div>' : ''}
@@ -2259,8 +2467,12 @@ async function renderDetail(loadPlan) {
   const launchNow = () => post('/api/launch-generic',
     { project: p.project, slug: p.slug, launcher: +modeOf(p) }, true);
   if (notStarted(p)) btn('⚠ Why it didn’t start', () => showLaunchError(p), 'danger');
-  for (const l of (p.run && p.run.links) || [])
+  for (const l of (p.run && p.run.links) || []) {
     btn('🔗 ' + l.label, () => openRunLink(p, l.url), 'primary');
+    // the button above opens the PR tab here; this one is for the page on GitHub
+    if (p.pr && l.url.replace(/[/]+$/, '') === p.pr.url.replace(/[/]+$/, ''))
+      btn('↗ GitHub', () => window.open(p.pr.url, '_blank', 'noopener'));
+  }
   if (stt === 'starting') {
     btn('⏳ Starting… setting up the worktree', () => {}).disabled = true;
   } else if (p.archived) {
@@ -2382,10 +2594,10 @@ try { mergeMethod = localStorage.getItem('dash-merge-method'); } catch {}
 // what the PR tab was last drawn from: a 5s poll with nothing new for it must not
 // throw away the open file and the scroll position
 let lastPrDraw = null;
-const PR_CHIP = { OPEN: 'ok', MERGED: 'st', CLOSED: 'bad' };
+const PR_CHIP = { OPEN: 'ok', MERGED: 'merged', CLOSED: 'bad' };
 const prChip = (pr) => {
   const draft = pr.isDraft && pr.state === 'OPEN';
-  return '<span class="chip ' + (draft ? '' : PR_CHIP[pr.state] || '') + '">PR #' + pr.number + ' · ' +
+  return '<span class="chip ' + (draft ? '' : PR_CHIP[pr.state] || '') + '">' + (pr.state === 'MERGED' ? '✓ ' : '') + 'PR #' + pr.number + ' · ' +
     (draft ? 'draft' : String(pr.state).toLowerCase()) + '</span>';
 };
 let prViewed = {};   // PR url -> { path: hash of its diff } — a file changed since is unviewed again
@@ -2396,17 +2608,140 @@ let diffSplit = true, diffFull = true;
 try { diffSplit = localStorage.getItem('dash-diff-split') !== '0'; } catch {}
 try { diffFull = localStorage.getItem('dash-diff-full') !== '0'; } catch {}
 
-const prTabs = (p, tab) => !p.pr ? '' : '<div class="prtabs">' + [
+const prTabs = (p, tab) => !p.pr && !hasAsk(p) ? '' : '<div class="prtabs">' + [
   ['plan', 'Plan'],
-  ['pr', 'Pull request <span class="n">#' + p.pr.number + '</span>'],
-  ['files', 'Files changed' + (prData[p.key] && prData[p.key].changedFiles != null
-    ? ' <span class="n">' + prData[p.key].changedFiles + '</span>' : '')],
-].map(([id, label]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '">' + label + '</button>').join('') +
+  hasAsk(p) && ['ask', 'Ask'],
+  p.pr && ['pr', 'Pull request <span class="n">#' + p.pr.number + '</span>'],
+  p.pr && ['files', 'Files changed' + ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
+    prData[p.key] && prData[p.key].changedFiles != null ? prData[p.key].changedFiles : p.pr.changedFiles)],
+].filter(Boolean).map(([id, label]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '">' + label + '</button>').join('') +
   '</div>';
 function bindPrTabs(p) {
   byId('detail').querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => {
     prTab[p.key] = el.dataset.tab; lastPrDraw = null; renderDetail(false);
   }));
+}
+// --- Ask tab: talk to the Claude session that ran the plan (the server resumes it) ---
+const hasAsk = (p) => !!((p.sessions && p.sessions.length) || p.asked);
+let askCopy = false;   // "ask in a copy": remembered for every new chat
+try { askCopy = localStorage.getItem('dash-ask-copy') === '1'; } catch {}
+const askDraft = {}, askFresh = new Set(), askSeen = {};
+async function renderAskTab(p, force) {
+  const sig = p.key + 'ask';
+  if (!force && lastPrDraw === sig && byId('askview')) return;
+  lastPrDraw = sig;
+  document.body.classList.remove('review');
+  byId('detail').innerHTML =
+    '<div class="crumb">' + esc(p.client) + ' / 📁 ' + esc(p.project) + '</div>' +
+    '<h2 class="fname">' + p.file + '</h2><div class="subtitle">' + inline(p.title) + '</div>' +
+    '<div class="prtabsrow">' + prTabs(p, 'ask') + '<span class="dim askwho" id="askwho"></span></div>' +
+    '<div id="askview">' +
+      '<div class="asklog" id="asklog" aria-live="polite"></div>' +
+      '<div id="askdeny"></div>' +
+      '<div class="askbox">' +
+        '<textarea id="askin" rows="3" aria-label="Message for the agent" placeholder="Ask what it did and why, or tell it what to do next. Enter sends, Shift+Enter starts a new line."></textarea>' +
+        '<div class="askrow">' +
+          '<label title="The first question of a new chat makes a copy of the session and the chat goes on in the copy. The session the run wrote keeps only what the run did."><input type="checkbox" id="askcopy"' + (askCopy ? ' checked' : '') + '> Ask in a copy of the session</label>' +
+          '<span style="flex:1"></span>' +
+          '<button id="asknew" title="The next message starts again from the run’s latest session">New chat</button>' +
+          '<button id="askstop" hidden>Stop</button>' +
+          '<button id="askgo" class="primary">Send</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  bindPrTabs(p);
+  const inp = byId('askin');
+  inp.value = askDraft[p.key] || '';
+  inp.addEventListener('input', () => { askDraft[p.key] = inp.value; });
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); askSend(p); }
+  });
+  byId('askgo').addEventListener('click', () => askSend(p));
+  byId('askstop').addEventListener('click', () => post('/api/ask-stop', { project: p.project, slug: p.slug }));
+  byId('askcopy').addEventListener('change', (e) => {
+    askCopy = e.target.checked;
+    try { localStorage.setItem('dash-ask-copy', askCopy ? '1' : '0'); } catch {}
+    drawAskWho(p);
+  });
+  byId('asknew').addEventListener('click', () => { askFresh.add(p.key); drawAskWho(p); inp.focus(); });
+  askSeen[p.key] = null;
+  await drawAsk(p);
+  if (lastPrDraw === sig) inp.focus();
+}
+async function askSend(p, text, allow) {
+  const inp = byId('askin');
+  const q = (text || inp.value).trim();
+  if (!q) return;
+  const r = await post('/api/ask', { project: p.project, slug: p.slug, text: q, allow,
+    copy: askCopy, fresh: askFresh.has(p.key) });
+  if (!r.ok) return;
+  askFresh.delete(p.key);
+  if (!text) { inp.value = ''; delete askDraft[p.key]; }
+  drawAsk(p);
+}
+let askLast = {};   // plan key -> the last /api/ask answer
+function drawAskWho(p) {
+  const el = byId('askwho');
+  if (!el) return;
+  const st = askLast[p.key] || {}, cur = st.current;
+  const latest = (p.sessions || []).slice(-1)[0];
+  const short = (id) => String(id || '').slice(0, 8);
+  el.textContent = cur && !askFresh.has(p.key)
+    ? (cur.copy ? 'Chat in a copy of session ' + short(cur.base) : 'Chat in the run’s session ' + short(cur.id))
+    : latest ? 'The next message starts a chat in ' + (askCopy ? 'a copy of ' : '') + 'session ' + short(latest.id)
+    : 'No session to resume';
+}
+async function drawAsk(p) {
+  const sig = lastPrDraw;
+  let st;
+  try { st = await (await fetch('/api/ask?project=' + p.project + '&slug=' + p.slug)).json(); }
+  catch { st = null; }
+  if (lastPrDraw !== sig || !byId('askview')) return;
+  if (st) {
+    askLast[p.key] = st;
+    const raw = JSON.stringify(st);
+    if (askSeen[p.key] !== raw) {
+      askSeen[p.key] = raw;
+      paintAsk(p, st);
+    }
+  }
+  drawAskWho(p);
+  if (st && st.running) setTimeout(() => { if (lastPrDraw === sig) drawAsk(p); }, 1500);
+}
+function paintAsk(p, st) {
+  const L = byId('asklog');
+  const atEnd = L.scrollHeight - L.scrollTop - L.clientHeight < 60;
+  const out = [];
+  for (const it of st.items) {
+    if (it.who === 'you') {
+      if (it.fresh) out.push('<div class="anew">New chat in ' + (it.copy ? 'a copy of ' : 'the run’s ') +
+        'session ' + esc(String(it.session || '').slice(0, 8)) + (it.at ? ' · ' + new Date(it.at).toLocaleString() : '') + '</div>');
+      out.push('<div class="amsg you">' + esc(it.text) +
+        (it.allowed ? '<div class="dim aallow">allowed: ' + it.allowed.map(esc).join(', ') + '</div>' : '') + '</div>');
+    } else if (it.who === 'agent') out.push('<div class="amsg agent mdc">' + md(it.text) + '</div>');
+    else if (it.who === 'tool') out.push('<div class="atool">' + esc(it.text) + '</div>');
+    else if (it.who === 'end') out.push('<div class="aend' + (it.ok ? '' : ' bad') + '">' +
+      (it.ok ? '' : esc(it.subtype || 'stopped') + ' · ') +
+      (it.blocked ? it.blocked + ' blocked · ' : '') + (it.cost != null ? '$' + it.cost.toFixed(2) : '') + '</div>');
+    else out.push('<div class="aend bad">' + esc(it.text) + '</div>');
+  }
+  if (st.running) out.push('<div class="aend">working…</div>');
+  L.innerHTML = out.join('') || '<div class="dim askempty">Ask the agent that ran this plan. It remembers the plan, ' +
+    'the files it read and what it decided, so you can ask why it did something. It can also work here, for ' +
+    'example: <i>merge develop into this branch</i>. A command it is not allowed to run shows up below, ' +
+    'and you choose whether to allow it.</div>';
+  if (atEnd || st.running) L.scrollTop = L.scrollHeight;
+  byId('askgo').hidden = st.running;
+  byId('askstop').hidden = !st.running;
+  const D = byId('askdeny');
+  D.innerHTML = '';
+  if (st.denied && st.denied.length) {
+    D.innerHTML = '<div class="askdeny"><b>The agent was not allowed to run:</b>' +
+      st.denied.map((d) => '<div><code>' + esc(d.what || d.tool) + '</code></div>').join('') +
+      '<button id="askallow" class="primary">Allow for this chat and ask again</button></div>';
+    byId('askallow').addEventListener('click', () => askSend(p,
+      'I allowed what was blocked. Please try again.', st.denied.flatMap((d) => d.rules)));
+  }
 }
 async function loadPr(p) {
   const r = await (await fetch('/api/pr?project=' + p.project + '&number=' + p.pr.number)).json();
@@ -2420,7 +2755,7 @@ async function renderPrTab(p, tab, force) {
   const review = tab === 'files';
   document.body.classList.toggle('review', review);
   byId('detail').innerHTML = (review ? \`
-    <div class="rbar"><button id="rback" title="back to the plan and the plan list">‹ Plans</button>
+    <div class="rbar"><button id="rback" title="back to the plan and the plan list (Esc)">‹ Plan <kbd>Esc</kbd></button>
       <span class="rname" title="\${escA(p.client + ' / ' + p.project + ' / ' + p.file)}">\${esc(p.slug)}</span>
       \${prTabs(p, tab)}<span class="seen" id="rseen"></span><span style="flex:1"></span>
       <span class="btns" id="ract"></span></div>\` : \`
@@ -2442,7 +2777,9 @@ async function renderPrTab(p, tab, force) {
 function drawBarAction(p, tab) {
   const d = prData[p.key], R = byId('ract');
   if (!R || !d || d.error) return;
-  R.innerHTML = prChip(d);
+  // the PR's state, then GitHub, then the one next step
+  R.innerHTML = prChip(d) + '<a class="ghbtn" href="' + escA(d.url) + '" target="_blank" rel="noopener" ' +
+    'title="Open the PR on GitHub">↗ GitHub</a>';
   if (d.state !== 'OPEN') return;
   const b = document.createElement('button');
   if (d.isDraft) {
@@ -2459,8 +2796,16 @@ function drawBarAction(p, tab) {
   }
   R.appendChild(b);
 }
+// what GitHub said when it refused, shown in the PR tab until the next action
+const prErr = {};
 async function prAct(p, data) {
-  const r = await post('/api/pr-action', { project: p.project, slug: p.slug, number: p.pr.number, ...data });
+  let r;
+  try {
+    r = await (await fetch('/api/pr-action', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: p.project, slug: p.slug, number: p.pr.number, ...data }) })).json();
+  } catch (e) { r = { output: String((e && e.message) || e) }; }
+  prErr[p.key] = r.ok ? null : { action: data.action, text: r.output || r.error || 'no message from gh' };
+  if (!r.ok && !byId('prbody')) alert('⚠️ GitHub refused: ' + prErr[p.key].text);
   if (r.notes) prNotes[p.key] = r.notes;
   await loadPr(p);
   drawBarAction(p, prTab[p.key]);
@@ -2499,12 +2844,20 @@ function drawPr(p) {
     else if (d.mergeable === 'MERGEABLE') line('ok', '✓', 'No conflicts with <code>' + esc(d.baseRefName) + '</code>');
     else line('dim', '…', 'GitHub is still checking for conflicts');
   }
+  // GitHub's own verdict: BLOCKED means a branch rule is not met (usually a required approval)
+  const rules = open && !d.isDraft && d.mergeable !== 'CONFLICTING' && d.mergeStateStatus === 'BLOCKED';
+  const admin = !!(d.merge && d.merge.admin);
+  if (rules) line('bad', '✕', '<b>GitHub blocks the merge</b> · ' + (d.reviewDecision === 'REVIEW_REQUIRED'
+    ? 'the branch rules need an approving review' : c.failed.length || c.running ? 'the branch rules need the checks to pass'
+    : 'a branch rule is not met yet') + (admin ? '' : '. Ask someone to approve it on GitHub.'));
   const blocked = d.isDraft || d.mergeable === 'CONFLICTING';
   const methods = (d.merge && d.merge.methods.length) ? d.merge.methods : ['merge'];
   const pick = methods.includes(mergeMethod) ? mergeMethod : methods.includes(d.merge && d.merge.default) ? d.merge.default : methods[0];
   const LABEL = { merge: 'Merge commit', squash: 'Squash and merge', rebase: 'Rebase and merge' };
-  const notes = prNotes[p.key];
+  const notes = prNotes[p.key], err = prErr[p.key];
   v.innerHTML =
+    (err ? '<div class="merr" role="alert"><b>GitHub refused' + (err.action === 'merge' ? ' the merge' : '') + ':</b> ' +
+      esc(err.text) + '</div>' : '') +
     (d.state === 'MERGED' && notes ? '<div class="mergednote"><b>Merged into ' + esc(d.baseRefName) + '.</b>' +
       notes.map((n) => '<div>' + esc(n) + '</div>').join('') + '</div>' : '') +
     '<div class="prhead">' +
@@ -2515,9 +2868,11 @@ function drawPr(p) {
       '<span style="flex:1"></span><span class="btns" id="practs"></span></div></div>' +
     (open ? '<div class="mbox" id="mbox">' + lines.join('') + '<div class="mfoot">' + (blocked
       ? '<span class="dim">' + (d.isDraft ? 'A draft cannot be merged. Use Ready for review in the bar above.' : 'Fix the conflicts first.') + '</span>'
+      : rules && !admin ? '<span class="dim">It can be merged once GitHub allows it.</span>'
       : '<select id="mmethod" aria-label="merge method">' + methods.map((m) => '<option value="' + m + '"' + (m === pick ? ' selected' : '') + '>' + LABEL[m] + '</option>').join('') + '</select>' +
         '<label><input type="checkbox" id="mdel" checked> Delete the branch on GitHub</label><span style="flex:1"></span>' +
-        '<button class="merge" id="mgo">Merge into ' + esc(d.baseRefName) + '</button>') + '</div></div>' : '') +
+        (rules ? '<label title="You are an admin of this repo: gh pr merge --admin"><input type="checkbox" id="madmin"> Merge as admin, past the branch rules</label>' : '') +
+        '<button class="merge" id="mgo"' + (rules ? ' disabled' : '') + '>Merge into ' + esc(d.baseRefName) + '</button>') + '</div></div>' : '') +
     '<div class="mdc prbody" id="prbody"></div>';
   const A = byId('practs');
   const btn = (label, fn, cls, parent) => {
@@ -2538,16 +2893,18 @@ function drawPr(p) {
     btn('Close PR', () => closePr(p).then(() => drawPr(p)), 'danger', more);
     A.appendChild(more);
   }
-  const go = byId('mgo');
+  const go = byId('mgo'), adm = byId('madmin');
+  if (adm) adm.addEventListener('change', () => { go.disabled = !adm.checked; });
   if (go) go.addEventListener('click', async () => {
-    const method = byId('mmethod').value, del = byId('mdel').checked;
-    if (!confirm('Merge PR #' + d.number + ' into ' + d.baseRefName + ' (' + LABEL[method].toLowerCase() + ')?' +
+    const method = byId('mmethod').value, del = byId('mdel').checked, asAdmin = !!(adm && adm.checked);
+    if (!confirm('Merge PR #' + d.number + ' into ' + d.baseRefName + ' (' + LABEL[method].toLowerCase() + ')' +
+      (asAdmin ? ' as admin, past the branch rules' : '') + '?' +
       (warns.length ? '\\n\\nWarnings: ' + warns.join('; ') + '.' : '') +
       '\\n\\nAfter the merge, ' + d.baseRefName + ' is pulled in ' + p.project + ' (fast-forward only, not in the worktree).')) return;
     mergeMethod = method;
     try { localStorage.setItem('dash-merge-method', method); } catch {}
     go.disabled = true; go.textContent = 'Merging…';
-    await prAct(p, { action: 'merge', method, deleteBranch: del, head: d.headRefOid });
+    await prAct(p, { action: 'merge', method, deleteBranch: del, head: d.headRefOid, admin: asAdmin });
   });
   // GitHub task lists: each box writes the description back, like ticking it on github.com
   let n = 0;
@@ -2620,8 +2977,9 @@ function diffHtml(f) {
   const cell = (cls, num, t) => '<td class="ln ' + cls + '">' + (num == null ? '' : num) + '</td><td class="' + cls + '">' +
     esc(t == null ? '' : t) + '</td>';
   // fixed layout takes its widths from the first row, a colspan hunk header — so set them here
-  let h = '<table class="dtab' + (diffSplit ? ' split' : '') + '"><colgroup>' +
-    (diffSplit ? '<col class="lnc"><col><col class="lnc"><col>' : '<col class="lnc"><col class="lnc"><col>') + '</colgroup>';
+  let h = (diffSplit ? '<div class="dwrap">' : '') +
+    '<table class="dtab' + (diffSplit ? ' split' : '') + '"><colgroup>' +
+    (diffSplit ? '<col class="lnc"><col class="dlc"><col class="lnc"><col>' : '<col class="lnc"><col class="lnc"><col>') + '</colgroup>';
   for (const hk of f.hunks) {
     if (hk.head) h += '<tr class="hk"><td colspan="' + (diffSplit ? 4 : 3) + '">' + esc(hk.head) + '</td></tr>';
     if (!diffSplit) {
@@ -2645,8 +3003,71 @@ function diffHtml(f) {
     }
     flush();
   }
-  return h + '</table>';
+  return h + '</table>' + (diffSplit ? '<div class="dsplit" role="separator" aria-orientation="vertical" tabindex="0" ' +
+    'aria-label="Divider between the two sides" title="Drag to resize the two sides. Double-click: equal halves."></div></div>' : '');
 }
+// Two dividers in Files changed, both dragged, both remembered in this browser: the file
+// list's right edge (its width in px) and the line between the two sides of a diff (the
+// share of the width the old side gets). A fixed-layout table ignores a calc() column
+// width, so the diff's columns are sized in px here and again whenever its box resizes.
+let diffRatio = 0.5, treeWidth = 0;
+try { diffRatio = Math.min(0.85, Math.max(0.15, +localStorage.getItem('dash-diff-ratio') || 0.5)); } catch {}
+try { treeWidth = +localStorage.getItem('dash-tree-w') || 0; } catch {}
+const layoutSplit = (w) => {
+  const ln = w.querySelector('td.ln'), col = w.querySelector('col.dlc'), bar = w.querySelector('.dsplit');
+  if (!col || !bar) return;
+  const g = ln ? ln.offsetWidth : 46, room = w.clientWidth - 2 * g;
+  col.style.width = Math.round(room * diffRatio) + 'px';
+  bar.style.left = Math.round(g + room * diffRatio) + 'px';
+};
+const splitObs = new ResizeObserver((es) => es.forEach((e) => layoutSplit(e.target)));
+new MutationObserver(() => document.querySelectorAll('.dwrap:not([data-obs])').forEach((w) => {
+  w.dataset.obs = '1'; splitObs.observe(w);
+})).observe(document.body, { childList: true, subtree: true });
+const setDiffRatio = (r, save) => {
+  diffRatio = Math.round(Math.min(0.85, Math.max(0.15, r)) * 1000) / 1000;
+  document.querySelectorAll('.dwrap').forEach(layoutSplit);
+  if (save) try { localStorage.setItem('dash-diff-ratio', diffRatio); } catch {}
+};
+const setTreeWidth = (px, save) => {
+  const t = byId('ptree');
+  if (!t) return;
+  t.style.width = px ? Math.round(Math.max(200, Math.min(px, window.innerWidth * 0.6))) + 'px' : '';
+  treeWidth = px ? t.offsetWidth : 0;
+  if (save) try { treeWidth ? localStorage.setItem('dash-tree-w', treeWidth) : localStorage.removeItem('dash-tree-w'); } catch {}
+};
+const dividerOf = (el) => el && el.closest && el.closest('.dsplit, .tsplit');
+document.addEventListener('pointerdown', (e) => {
+  const bar = dividerOf(e.target);
+  if (!bar) return;
+  e.preventDefault();
+  const diff = bar.classList.contains('dsplit');
+  const move = diff ? (ev) => {
+    const w = bar.parentElement, r = w.getBoundingClientRect(), ln = w.querySelector('td.ln');
+    const g = ln ? ln.offsetWidth : 46;
+    setDiffRatio((ev.clientX - r.left - g) / (r.width - 2 * g));
+  } : (ev) => setTreeWidth(ev.clientX - byId('ptree').getBoundingClientRect().left);
+  const up = () => {
+    document.removeEventListener('pointermove', move);
+    document.body.classList.remove('dragging'); bar.classList.remove('on');
+    diff ? setDiffRatio(diffRatio, true) : setTreeWidth(treeWidth, true);
+  };
+  document.body.classList.add('dragging'); bar.classList.add('on');
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', up, { once: true });
+});
+document.addEventListener('dblclick', (e) => {
+  const bar = dividerOf(e.target);
+  if (bar) bar.classList.contains('dsplit') ? setDiffRatio(0.5, true) : setTreeWidth(0, true);
+});
+document.addEventListener('keydown', (e) => {
+  const bar = dividerOf(e.target);
+  if (!bar || !/^Arrow(Left|Right)$/.test(e.key)) return;
+  e.preventDefault();
+  const d = e.key === 'ArrowLeft' ? -1 : 1;
+  bar.classList.contains('dsplit') ? setDiffRatio(diffRatio + d * 0.05, true)
+    : setTreeWidth(byId('ptree').offsetWidth + d * 40, true);
+});
 async function drawFiles(p, force) {
   const sig = lastPrDraw;
   let df = prDiff[p.key];
@@ -2657,6 +3078,55 @@ async function drawFiles(p, force) {
   }
   if (lastPrDraw !== sig) return;
   drawFilesView(p);
+}
+// Overview ruler at the right of a diff, like VS Code's scrollbar: a mark for every run of
+// removed (left half) and added (right half) lines at its place in the file, and a box for
+// the part on screen. Click or drag on it to scroll there.
+const diffShown = {};   // plan key -> the file and layout last opened, so a repaint keeps the scroll
+const rulerObs = new ResizeObserver((es) => es.forEach((e) => e.target._ruler && e.target._ruler()));
+function bindRuler(body, ruler) {
+  const tab = body.querySelector('.dtab');
+  const view = document.createElement('div');
+  view.className = 'dview';
+  const paint = () => {
+    if (!ruler.isConnected) return;
+    const H = ruler.clientHeight, total = body.scrollHeight;
+    const t0 = body.getBoundingClientRect().top - body.scrollTop;   // where the content's top is now
+    const marks = [];
+    let last = {};
+    for (const td of tab.querySelectorAll('td.ln.a, td.ln.d')) {
+      const side = td.classList.contains('a') ? 'a' : 'd';
+      const r = td.getBoundingClientRect();
+      const top = (r.top - t0) / total * H, h = Math.max(2, r.height / total * H);
+      const m = last[side];
+      if (m && top <= m.top + m.h + 1) m.h = Math.max(m.h, top + h - m.top);
+      else marks.push(last[side] = { side, top, h });
+    }
+    ruler.innerHTML = marks.map((m) => '<i class="' + m.side + '" style="top:' + m.top.toFixed(1) + 'px;height:' +
+      m.h.toFixed(1) + 'px"></i>').join('');
+    ruler.appendChild(view);
+    place();
+  };
+  const place = () => {
+    const H = ruler.clientHeight, total = body.scrollHeight;
+    view.style.top = (body.scrollTop / total * H) + 'px';
+    view.style.height = Math.max(8, body.clientHeight / total * H) + 'px';
+  };
+  const go = (e) => {
+    const r = ruler.getBoundingClientRect();
+    body.scrollTop = (e.clientY - r.top) / r.height * body.scrollHeight - body.clientHeight / 2;
+  };
+  body.addEventListener('scroll', place, { passive: true });
+  ruler.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); go(e);
+    ruler.setPointerCapture(e.pointerId);
+    const mv = (ev) => go(ev);
+    ruler.addEventListener('pointermove', mv);
+    ruler.addEventListener('pointerup', () => ruler.removeEventListener('pointermove', mv), { once: true });
+  });
+  tab._ruler = paint; body._ruler = paint;
+  rulerObs.observe(tab); rulerObs.observe(body);
+  paint();
 }
 function drawFilesView(p) {
   const v = byId('prview'), df = prDiff[p.key];
@@ -2726,9 +3196,15 @@ function drawFilesView(p) {
       });
   }
   if (byId('rseen')) byId('rseen').textContent = nSeen + ' / ' + files.length + ' viewed';
+  // a repaint of the same view keeps the diff where it was; a new file opens at its first change
+  const view = cur.path + '|' + diffSplit + '|' + (wantFull && !!cur.full);
+  const oldBody = v.querySelector('.pdbody');
+  const keepTop = oldBody && diffShown[p.key] === view ? oldBody.scrollTop : null;
   const focusKey = document.activeElement && document.activeElement.closest && document.activeElement.closest('.pf')
     ? document.activeElement.closest('.pf').dataset.file || document.activeElement.closest('.pf').dataset.dir : null;
   v.innerHTML = '<div class="prfiles"><div class="ptree" id="ptree">' + tree + '</div>' +
+    '<div class="tsplit" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Divider between the file list and the diff" ' +
+    'title="Drag to resize the file list. Double-click: default width."></div>' +
     '<div class="pdiff"><div class="pdhead"><span class="pdpath" title="' + escA(cur.path) + '">' + esc(cur.path) + '</span>' +
       '<span class="add">+' + cur.add + '</span><span class="del">−' + cur.del + '</span>' +
       '<button data-full="1" class="' + (diffFull ? 'on' : '') + '">Whole file</button>' +
@@ -2736,14 +3212,27 @@ function drawFilesView(p) {
       '<button data-split="1" class="' + (diffSplit ? 'on' : '') + '">Side by side</button>' +
       '<button data-split="0" class="' + (diffSplit ? '' : 'on') + '">One column</button>' +
       '<label><input type="checkbox" data-seen="' + escA(cur.path) + '"' + (isViewed(p, cur) ? ' checked' : '') + '> Viewed</label></div>' +
-    '<div class="pdbody" tabindex="0" aria-label="diff">' + (cur.binary ? '<div class="dim">Binary file — no diff to show.</div>'
+    '<div class="pdmain"><div class="pdbody" tabindex="0" aria-label="diff">' + (cur.binary ? '<div class="dim">Binary file — no diff to show.</div>'
       : !cur.hunks.length ? '<div class="dim">' + (cur.st === 'R' ? 'Renamed, no content changes.' : 'No content changes.') + '</div>'
       : big ? '<div class="dim">Large diff (' + cur.n + ' lines). <button id="showbig">Show it</button></div>'
       : wantFull && cur.full === undefined ? '<div class="dim">Loading the whole file…</div>'
       : (wantFull && cur.fullErr ? '<div class="dim">⚠️ Could not load the whole file (' + esc(cur.fullErr) +
           '). Showing the changes only.</div>' : '') +
-        diffHtml(wantFull && cur.full ? { hunks: cur.full } : cur)) + '</div></div></div>';
-  byId('ptree').style.width = treeW;
+        diffHtml(wantFull && cur.full ? { hunks: cur.full } : cur)) + '</div>' +
+      '<div class="druler" aria-hidden="true" title="Where the changes are. Click or drag to move there."></div></div></div></div>';
+  byId('ptree').style.width = treeW || (treeWidth ? treeWidth + 'px' : '');
+  const body = v.querySelector('.pdbody'), tab = body.querySelector('.dtab');
+  // size the two sides now: done later by the observer, the rewrap moves the lines after the jump
+  body.querySelectorAll('.dwrap').forEach((w) => { w.dataset.obs = '1'; splitObs.observe(w); layoutSplit(w); });
+  if (tab) {
+    if (keepTop != null) body.scrollTop = keepTop;
+    else {
+      diffShown[p.key] = view;
+      const first = tab.querySelector('td.a, td.d');
+      if (first) body.scrollTop += first.getBoundingClientRect().top - body.getBoundingClientRect().top - body.clientHeight / 4;
+    }
+    bindRuler(body, v.querySelector('.druler'));
+  }
   byId('ptree').scrollTop = treeTop;
   // keyboard: ↑/↓ move, Enter opens a file or folds a folder, Space marks it viewed
   const rows = [...v.querySelectorAll('.pf')];
@@ -2770,7 +3259,17 @@ function drawFilesView(p) {
   const markSeen = (list, on) => {
     const m = prViewed[p.pr.url] = prViewed[p.pr.url] || {};
     for (const f of list) { if (on) m[f.path] = f.hash; else delete m[f.path]; }
-    saveViewed(); drawFilesView(p);
+    saveViewed();
+    // only the boxes and the count change: rebuilding the tree and the diff made the screen flicker
+    v.querySelectorAll('[data-seen]').forEach((cb) => {
+      const f = files.find((x) => x.path === cb.dataset.seen);
+      if (f) cb.checked = isViewed(p, f);
+    });
+    v.querySelectorAll('[data-seendir]').forEach((cb) => {
+      const all = files.filter((x) => x.path.startsWith(cb.dataset.seendir + '/')), n = all.filter((x) => isViewed(p, x)).length;
+      cb.checked = n === all.length; cb.indeterminate = n > 0 && n < all.length;
+    });
+    if (byId('rseen')) byId('rseen').textContent = files.filter((x) => isViewed(p, x)).length + ' / ' + files.length + ' viewed';
   };
   v.querySelectorAll('[data-seen]').forEach((el) => el.addEventListener('change', () =>
     markSeen(files.filter((x) => x.path === el.dataset.seen), el.checked)));
@@ -3115,6 +3614,9 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key !== 'Escape') return;
   if (byId('onb').classList.contains('open')) return closeGuide();
+  // Files changed fills the window; Esc goes back to the plan, as ‹ Plan does
+  if (document.body.classList.contains('review') && !byId('logpane').classList.contains('open'))
+    return byId('rback')?.click();
   if (drawerBack) drawerBack(); else closeLog();
 });
 byId('q').addEventListener('input', renderList);
