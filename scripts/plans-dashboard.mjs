@@ -440,6 +440,7 @@ const listPlans = async (proj) => {
         tags: meta[slug]?.tags || [],
         ...planSessions(proj, slug),
         asked: existsSync(askLogFile(proj, slug)),
+        asking: askRuns.has(proj.name + '/' + slug),
         pr: prs['auto/' + slug] || null,
       };
     }),
@@ -460,6 +461,7 @@ const listPlans = async (proj) => {
         status: meta[slug]?.status || null, tags: meta[slug]?.tags || [],
         ...planSessions(proj, slug),
         asked: existsSync(askLogFile(proj, slug)),
+        asking: askRuns.has(proj.name + '/' + slug),
         pr: prs['auto/' + slug] || null,
       };
     });
@@ -1001,9 +1003,8 @@ const ghProblem = (out) => /ENOENT/.test(out) ? 'gh is not installed'
   : /auth login|not logged/i.test(out) ? 'gh is not logged in' : out.split('\n')[0].slice(0, 160);
 const refreshPrList = (proj) => {
   const c = prLists[proj.root] = prLists[proj.root] || { at: 0, byBranch: {} };
-  if (c.loading) return;
-  c.loading = true;
-  gh(proj, ['pr', 'list', '--state', 'all', '--limit', '200',
+  if (c.loading) return c.loading;
+  return c.loading = gh(proj, ['pr', 'list', '--state', 'all', '--limit', '200',
     '--json', 'number,headRefName,headRefOid,isDraft,state,title,url,changedFiles,baseRefName,mergedAt']).then((r) => {
     const byBranch = {};
     if (r.ok) try {
@@ -1012,7 +1013,7 @@ const refreshPrList = (proj) => {
           byBranch[p.headRefName] = { number: p.number, state: p.state, isDraft: p.isDraft, title: p.title,
             url: p.url, head: p.headRefOid, changedFiles: p.changedFiles, base: p.baseRefName, mergedAt: p.mergedAt || null };
     } catch {}
-    Object.assign(c, { at: Date.now(), byBranch: r.ok ? byBranch : c.byBranch, loading: false,
+    Object.assign(c, { at: Date.now(), byBranch: r.ok ? byBranch : c.byBranch, loading: null,
       error: r.ok ? '' : ghProblem(r.output) });
   });
 };
@@ -1489,6 +1490,8 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === '/api/vscode') return json(res, 200, { ok: true, target: openInVsCode(proj, b.slug) });
       if (url.pathname === '/api/ask') return json(res, 200, await askStart(proj, b.slug, b));
       if (url.pathname === '/api/ask-stop') return json(res, 200, askStop(proj, b.slug));
+      // ⟳ in the PR bar: read the PR list now, not at the next minute (a push changes the head)
+      if (url.pathname === '/api/pr-refresh') { await refreshPrList(proj); return json(res, 200, { ok: true }); }
       if (url.pathname === '/api/pr-action') {
         const r = await prAction(proj, b);
         return json(res, 200, r.ok ? { ok: true, notes: r.notes } : r);
@@ -1638,6 +1641,7 @@ const PAGE = /* html */ `<!doctype html>
   .mdc pre { background:var(--codebg); border:1px solid var(--line); border-radius:10px; padding:13px;
              overflow-x:auto; font:calc(12px * var(--fs))/1.5 ui-monospace,monospace; }
   .mdc pre code { background:none; padding:0; }
+  a { color:var(--link); }   /* every link, not only plan text: the browser's blue is unreadable on the dark theme */
   .mdc a { color:var(--link); }
   .mdc blockquote { border-left:3px solid var(--accent); margin:8px 0; padding:2px 14px; color:var(--dim); }
   .mdc table { border-collapse:collapse; margin:10px 0; display:block; overflow-x:auto; }
@@ -1852,6 +1856,8 @@ const PAGE = /* html */ `<!doctype html>
   .pdhead button { white-space:nowrap; padding:3px 9px; font-size:calc(12px * var(--fs)); }
   .pdhead button.on { border-color:var(--accent); color:var(--accent); }
   .pdmain { flex:1; min-height:0; display:flex; }
+  .pdbody.monoon { overflow:hidden; }
+  .mono { width:100%; height:100%; }
   .pdbody { flex:1; overflow:auto; }
   .druler { width:14px; flex-shrink:0; position:relative; border-left:1px solid var(--line); background:var(--bg); cursor:pointer; touch-action:none; }
   .druler i { position:absolute; width:50%; }
@@ -1929,6 +1935,7 @@ const PAGE = /* html */ `<!doctype html>
   .ghbtn { display:inline-flex; align-items:center; line-height:calc(15px * var(--fs)); padding:7px 13px; border:1px solid var(--line); border-radius:8px;
            background:var(--btn); color:var(--fg); text-decoration:none; font-size:calc(13px * var(--fs)); white-space:nowrap; }
   .ghbtn:hover { border-color:var(--accent); }
+  .rfbtn { line-height:calc(15px * var(--fs)); }
   .ghhint { color:var(--dim); font-size:calc(12.5px * var(--fs)); border-top:1px dashed var(--line); padding-top:10px; margin-top:6px; }
   details.planfold > summary { cursor:pointer; color:var(--dim); margin-top:14px; }
   .pf:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
@@ -1955,6 +1962,7 @@ const PAGE = /* html */ `<!doctype html>
   <span class="dim" style="margin-left:auto">auto-refresh 5s · summaries generate in background</span>
   <button id="guidebtn" title="how it works, add a repo, start a run">Guide</button>
   <button id="settingsbtn" title="projects & settings">⚙ Settings</button>
+  <button id="alertBtn" aria-pressed="false" title="Sound and notification when a run stops or the agent answers">🔕</button>
   <button id="themeBtn" title="toggle light/dark">🌙</button></header>
 <div class="wrap">
   <aside>
@@ -1995,6 +2003,7 @@ const PAGE = /* html */ `<!doctype html>
 const applyTheme = (t) => {
   document.documentElement.dataset.theme = t;
   document.getElementById('themeBtn').textContent = t === 'light' ? '🌙' : '☀️';
+  if (window.monaco && typeof monoTheme === 'function') monoTheme();
 };
 let theme;
 try { theme = localStorage.getItem('dash-theme'); } catch {}
@@ -2154,7 +2163,7 @@ const autoChips = (p) => {
   else if (starting(p)) c += '<span class="chip warn">⏳ starting…</span>';
   else if (notStarted(p)) c += '<span class="chip bad">⚠ didn’t start</span>';
   else if (p.run) c += '<span class="chip ' + OUT_CLASS[outOf(p)] +
-    '">' + esc(p.run.status.split(/[.—]/)[0].slice(0, 42)) + '</span>';
+    '">' + esc(String(p.run.status || outOf(p) || 'run').split(/[.—]/)[0].slice(0, 42)) + '</span>';
   if (p.validations) c += '<span class="chip ok">validated ×' + p.validations + '</span>';
   if (p.worktree) c += '<span class="chip">worktree</span>';
   if (p.archived) c += '<span class="chip">📦 archived</span>';
@@ -2222,11 +2231,11 @@ function renderList() {
   const ready = plans.filter((p) => !p.live && !p.launch && outOf(p) === 'needs-you');
   const launching = plans.filter(starting);
   const failed = plans.filter(notStarted);
-  const bad = plans.filter((p) => !p.live && outOf(p) === 'failed');
+  const bad = plans.filter((p) => !p.live && !p.launch && outOf(p) === 'failed');
   setMood({ live: live.length, inflight: inflight.length, bad: bad.length, ready: ready.length });
   const rs = byId('runstrip');
   rs.className = 'runstrip' +
-    (live.length || inflight.length || ready.length || launching.length || failed.length ? ' on' : '');
+    (live.length || inflight.length || ready.length || bad.length || launching.length || failed.length ? ' on' : '');
   let sh = '';
   const stripName = (p) => '<span class="pfx">[' + esc(p.project) + ']</span> ' + p.file;
   if (failed.length) sh += '<div class="cap bc">⚠ DIDN’T START — ' + failed.length + '</div>' +
@@ -2242,14 +2251,18 @@ function renderList() {
     inflight.map((p) => '<div class="rp wp" data-go="' + p.key + '"><span class="dot warn"></span><span class="n">' +
       stripName(p) + '</span><button class="mini" data-rep="' + p.key + '">' +
       (p.hasPipeline ? '📋 report' : '📜 log') + '</button></div>').join('');
-  // the run's own status says what it waits for ("VERIFIED", "PR OPEN — 3 DECISIONS WAITING")
-  if (ready.length) sh += '<div class="cap okc">✓ WAITING ON YOU — ' + ready.length + '</div>' +
-    ready.map((p) => '<div class="rp okp" data-go="' + p.key + '"><span class="dot ok"></span><span class="n">' +
-      stripName(p) + '<span class="rst" title="' + escA(p.run.status) + '">' + esc(p.run.status) + '</span></span>' +
+  // the run's own status says what it waits for ("VERIFIED", "PR OPEN — 3 DECISIONS WAITING",
+  // "BLOCKED: step 10 …"); a run that stopped blocked or failed needs you as much as a finished one
+  const doneRow = (p, cls, dot) => '<div class="rp ' + cls + '" data-go="' + p.key + '"><span class="dot ' + dot + '"></span><span class="n">' +
+      stripName(p) + '<span class="rst" title="' + escA(p.run.status || '') + '">' + esc(p.run.status || '') + '</span></span>' +
       '<span class="acts">' + (p.run.links || []).map((l) => '<button class="mini" data-url="' + escA(l.url) + '">🔗 ' +
         esc(l.label) + '</button>').join('') +
       '<button class="mini" data-rep="' + p.key + '">' +
-      (p.hasPipeline ? '📋 report' : '📜 log') + '</button></span></div>').join('');
+      (p.hasPipeline ? '📋 report' : '📜 log') + '</button></span></div>';
+  if (bad.length) sh += '<div class="cap bc">✕ STOPPED — BLOCKED OR FAILED — ' + bad.length + '</div>' +
+    bad.map((p) => doneRow(p, 'bp', 'bad')).join('');
+  if (ready.length) sh += '<div class="cap okc">✓ WAITING ON YOU — ' + ready.length + '</div>' +
+    ready.map((p) => doneRow(p, 'okp', 'ok')).join('');
   rs.innerHTML = sh;
   rs.querySelectorAll('[data-go]').forEach((el) =>
     el.addEventListener('click', () => { selected = el.dataset.go; renderList(); renderDetail(true); }));
@@ -2748,8 +2761,20 @@ async function loadPr(p) {
   prData[p.key] = r.ok ? { ...r.pr, from: JSON.stringify(p.pr) } : { error: r.output || r.error, from: JSON.stringify(p.pr) };
 }
 async function renderPrTab(p, tab, force) {
-  const sig = p.key + tab + JSON.stringify(p.pr);
-  if (!force && lastPrDraw === sig && byId('prview')) return;
+  // a new PR or a new commit redraws the tab; a state change (draft, ready, merged) only the bar
+  // and the PR text, so Ready for review does not reload the diff
+  const sig = p.key + tab + p.pr.number + p.pr.head;
+  if (!force && lastPrDraw === sig && byId('prview')) {
+    if (prData[p.key] && prData[p.key].from !== JSON.stringify(p.pr)) {
+      // after an action here the tab already shows the new state: draw only what GitHub changed since
+      const was = JSON.stringify({ ...prData[p.key], from: 0 });
+      await loadPr(p);
+      if (lastPrDraw !== sig || JSON.stringify({ ...prData[p.key], from: 0 }) === was) return;
+      drawBarAction(p, tab);
+      if (tab === 'pr' && byId('prbody')) drawPr(p);
+    }
+    return;
+  }
   lastPrDraw = sig;
   // only Files changed needs the whole window; the Pull request tab keeps the normal layout
   const review = tab === 'files';
@@ -2780,6 +2805,20 @@ function drawBarAction(p, tab) {
   // the PR's state, then GitHub, then the one next step
   R.innerHTML = prChip(d) + '<a class="ghbtn" href="' + escA(d.url) + '" target="_blank" rel="noopener" ' +
     'title="Open the PR on GitHub">↗ GitHub</a>';
+  // the PR list is read once a minute; after a push this reads it, the PR and the diff now
+  const rf = document.createElement('button');
+  rf.textContent = '⟳'; rf.className = 'rfbtn'; rf.title = 'Reload the PR from GitHub, for example after a push';
+  rf.setAttribute('aria-label', 'Reload the PR from GitHub');
+  rf.addEventListener('click', async () => {
+    rf.disabled = true; rf.textContent = '⟳ …';
+    await fetch('/api/pr-refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: p.project, slug: p.slug }) }).catch(() => {});
+    while (ticking) await new Promise((r) => setTimeout(r, 100));
+    const before = lastPrDraw;
+    await refresh();   // a new head commit redraws the tab from here already
+    if (lastPrDraw === before) { lastPrDraw = null; renderDetail(true); }
+  });
+  R.appendChild(rf);
   if (d.state !== 'OPEN') return;
   const b = document.createElement('button');
   if (d.isDraft) {
@@ -3079,6 +3118,74 @@ async function drawFiles(p, force) {
   if (lastPrDraw !== sig) return;
   drawFilesView(p);
 }
+// --- VS Code's diff view: Monaco, the editor inside VS Code, loaded from a CDN the first time
+// Files changed opens. It gets the whole file at both sides, rebuilt from the head version and
+// the diff (fullHunks), so no second gh call. Offline it fails once and the table above stays.
+const MONACO = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min';
+let monaco = null, monacoLoad = null, monacoFailed = false, monoEd = null;
+function loadMonaco() {
+  if (monacoLoad) return monacoLoad;
+  // the workers come from the CDN too; a data: URL lets them start from this page's origin
+  window.MonacoEnvironment = { getWorkerUrl: () => 'data:text/javascript;charset=utf-8,' + encodeURIComponent(
+    'self.MonacoEnvironment={baseUrl:"' + MONACO + '/"};importScripts("' + MONACO + '/vs/base/worker/workerMain.js");') };
+  monacoLoad = new Promise((resolve, reject) => {
+    setTimeout(() => reject(new Error('timeout')), 20000);
+    const sc = document.createElement('script');
+    sc.src = MONACO + '/vs/loader.js';
+    sc.onerror = reject;
+    sc.onload = () => {
+      window.require.config({ paths: { vs: MONACO + '/vs' } });
+      window.require(['vs/editor/editor.main'], () => resolve(window.monaco), reject);
+    };
+    document.head.appendChild(sc);
+  }).then((m) => {
+    monaco = m;
+    // a lone file has no project around it: type errors would be false alarms
+    for (const d of [m.languages.typescript.typescriptDefaults, m.languages.typescript.javascriptDefaults])
+      d.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: true, noSuggestionDiagnostics: true });
+    monoTheme();
+    return m;
+  }, (e) => { monacoFailed = true; throw e; });
+  return monacoLoad;
+}
+// VS Code's Dark+ / Light+ colours on the dashboard's own background
+function monoTheme() {
+  const css = getComputedStyle(document.documentElement), light = document.documentElement.dataset.theme === 'light';
+  const bg = css.getPropertyValue('--codebg').trim();
+  monaco.editor.defineTheme('dash', { base: light ? 'vs' : 'vs-dark', inherit: true, rules: [],
+    colors: bg ? { 'editor.background': bg, 'editorGutter.background': bg } : {} });
+  monaco.editor.setTheme('dash');
+}
+const monoLang = (file) => {
+  const name = file.slice(file.lastIndexOf('/') + 1).toLowerCase();
+  const ext = name.includes('.') ? name.slice(name.lastIndexOf('.')) : '';
+  const l = monaco.languages.getLanguages().find((x) =>
+    (x.filenames || []).some((f) => f.toLowerCase() === name) || (ext && (x.extensions || []).includes(ext)));
+  return l ? l.id : 'plaintext';
+};
+function mountMonaco(cur, keepTop) {
+  const rows = (cur.full || cur.hunks).flatMap((h) => h.lines);
+  const text = (skip) => rows.filter((l) => l[0] !== skip).map((l) => l[3]).join('\\n');
+  const lang = monoLang(cur.path);
+  const models = [monaco.editor.createModel(text('+'), lang), monaco.editor.createModel(text('-'), lang)];
+  const fs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fs')) || 1;
+  const ed = monaco.editor.createDiffEditor(byId('mono'), {
+    readOnly: true, originalEditable: false, automaticLayout: true, renderSideBySide: diffSplit,
+    useInlineViewWhenSpaceIsLimited: false, hideUnchangedRegions: { enabled: !diffFull },
+    wordWrap: 'on', diffWordWrap: 'on', scrollBeyondLastLine: false, fontSize: Math.round(12 * fs),
+    minimap: { enabled: true }, renderOverviewRuler: true, ignoreTrimWhitespace: false,
+  });
+  ed.setModel({ original: models[0], modified: models[1] });
+  monoEd = { dispose: () => ed.dispose(), models, getModifiedEditor: () => ed.getModifiedEditor() };
+  // first diff: a new file opens at its first change, a repaint where it was
+  const once = ed.onDidUpdateDiff(() => {
+    once.dispose();
+    const m = ed.getModifiedEditor();
+    if (keepTop != null) return m.setScrollTop(keepTop);
+    const c = (ed.getLineChanges() || [])[0];
+    if (c) m.revealLineNearTop(Math.max(1, c.modifiedStartLineNumber || c.modifiedEndLineNumber || 1));
+  });
+}
 // Overview ruler at the right of a diff, like VS Code's scrollbar: a mark for every run of
 // removed (left half) and added (right half) lines at its place in the file, and a box for
 // the part on screen. Click or drag on it to scroll there.
@@ -3182,9 +3289,12 @@ function drawFilesView(p) {
   };
   walk(root, '', 0);
   const nSeen = files.filter((f) => isViewed(p, f)).length;
-  const big = cur.n > 3000 && !cur.show;
+  // VS Code's diff view (Monaco) when it loads; our own table is the fallback (offline, binary)
+  const mono = !monacoFailed && !cur.binary && cur.hunks.length > 0 && !(cur.full === null && cur.fullErr);
+  if (mono && !monaco) loadMonaco().then(() => {}, () => {}).then(() => { if (prFile[p.key] === cur.path && byId('ptree')) drawFilesView(p); });
+  const big = !mono && cur.n > 3000 && !cur.show;
   // whole file: added and deleted files are whole in the diff already; others need the head version
-  const wantFull = diffFull && cur.hunks.length && !big && (cur.st === 'M' || cur.st === 'R');
+  const wantFull = (mono || diffFull) && cur.hunks.length && !big && (cur.st === 'M' || cur.st === 'R');
   if (wantFull && cur.full === undefined && !cur.loading) {
     cur.loading = true;
     fetch('/api/pr-file?project=' + p.project + '&sha=' + p.pr.head + '&path=' + encodeURIComponent(cur.path))
@@ -3197,9 +3307,11 @@ function drawFilesView(p) {
   }
   if (byId('rseen')) byId('rseen').textContent = nSeen + ' / ' + files.length + ' viewed';
   // a repaint of the same view keeps the diff where it was; a new file opens at its first change
-  const view = cur.path + '|' + diffSplit + '|' + (wantFull && !!cur.full);
+  const view = cur.path + '|' + diffSplit + '|' + (wantFull && !!cur.full) + '|' + diffFull;
   const oldBody = v.querySelector('.pdbody');
-  const keepTop = oldBody && diffShown[p.key] === view ? oldBody.scrollTop : null;
+  const keepTop = diffShown[p.key] !== view ? null : monoEd ? monoEd.getModifiedEditor().getScrollTop()
+    : oldBody ? oldBody.scrollTop : null;
+  const showMono = mono && monaco && !(wantFull && cur.full === undefined);
   const focusKey = document.activeElement && document.activeElement.closest && document.activeElement.closest('.pf')
     ? document.activeElement.closest('.pf').dataset.file || document.activeElement.closest('.pf').dataset.dir : null;
   v.innerHTML = '<div class="prfiles"><div class="ptree" id="ptree">' + tree + '</div>' +
@@ -3212,14 +3324,19 @@ function drawFilesView(p) {
       '<button data-split="1" class="' + (diffSplit ? 'on' : '') + '">Side by side</button>' +
       '<button data-split="0" class="' + (diffSplit ? '' : 'on') + '">One column</button>' +
       '<label><input type="checkbox" data-seen="' + escA(cur.path) + '"' + (isViewed(p, cur) ? ' checked' : '') + '> Viewed</label></div>' +
-    '<div class="pdmain"><div class="pdbody" tabindex="0" aria-label="diff">' + (cur.binary ? '<div class="dim">Binary file — no diff to show.</div>'
+    '<div class="pdmain"><div class="pdbody' + (showMono ? ' monoon' : '') + '" tabindex="0" aria-label="diff">' +
+      (showMono ? '<div class="mono" id="mono"></div>'
+      : cur.binary ? '<div class="dim">Binary file — no diff to show.</div>'
       : !cur.hunks.length ? '<div class="dim">' + (cur.st === 'R' ? 'Renamed, no content changes.' : 'No content changes.') + '</div>'
+      : mono && !monaco ? '<div class="dim">Loading VS Code\u2019s diff view…</div>'
       : big ? '<div class="dim">Large diff (' + cur.n + ' lines). <button id="showbig">Show it</button></div>'
       : wantFull && cur.full === undefined ? '<div class="dim">Loading the whole file…</div>'
       : (wantFull && cur.fullErr ? '<div class="dim">⚠️ Could not load the whole file (' + esc(cur.fullErr) +
           '). Showing the changes only.</div>' : '') +
         diffHtml(wantFull && cur.full ? { hunks: cur.full } : cur)) + '</div>' +
-      '<div class="druler" aria-hidden="true" title="Where the changes are. Click or drag to move there."></div></div></div></div>';
+      (showMono ? '' : '<div class="druler" aria-hidden="true" title="Where the changes are. Click or drag to move there."></div>') + '</div></div></div>';
+  if (monoEd) { monoEd.dispose(); monoEd.models.forEach((m) => m.dispose()); monoEd = null; }
+  if (showMono) { mountMonaco(cur, keepTop); diffShown[p.key] = view; }
   byId('ptree').style.width = treeW || (treeWidth ? treeWidth + 'px' : '');
   const body = v.querySelector('.pdbody'), tab = body.querySelector('.dtab');
   // size the two sides now: done later by the observer, the rewrap moves the lines after the jump
@@ -3613,6 +3730,7 @@ document.addEventListener('keydown', (e) => {
     return paintDemo();
   }
   if (e.key !== 'Escape') return;
+  if (e.target.closest && e.target.closest('.monaco-editor') && document.querySelector('.monaco-editor .find-widget.visible')) return;
   if (byId('onb').classList.contains('open')) return closeGuide();
   // Files changed fills the window; Esc goes back to the plan, as ‹ Plan does
   if (document.body.classList.contains('review') && !byId('logpane').classList.contains('open'))
@@ -3960,6 +4078,72 @@ const connMsg = (m) => {
 // A cold /api/state builds every plan in every project and can take ~9s — far longer
 // than the 5s tick. Without this guard the ticks pile up and their responses can land
 // out of order, repainting the list from a stale payload.
+// --- alerts: a sound, and a desktop notification when this tab is not in front, when a run
+// stops (needs you, failed, finished) or the Ask agent finishes. Off until 🔔 is clicked,
+// which is also the click the browser wants before it allows sound and notifications.
+let alertsOn = false, audio = null;
+try { alertsOn = localStorage.getItem('dash-alerts') === '1'; } catch {}
+const wasBusy = {};   // plan key -> 'run' / 'ask' flags at the last state
+function paintAlertBtn() {
+  const b = byId('alertBtn');
+  b.textContent = alertsOn ? '🔔' : '🔕';
+  b.setAttribute('aria-pressed', String(alertsOn));
+  b.title = alertsOn ? 'Alerts on: sound and notification when a run stops or the agent answers. Click to turn off.'
+    : 'Alerts off. Click for a sound and a notification when a run stops or the agent answers.';
+}
+function chime() {
+  try {
+    audio = audio || new AudioContext();
+    if (audio.state === 'suspended') audio.resume();
+    const t = audio.currentTime;
+    [[660, 0], [880, 0.16]].forEach(([f, at]) => {
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.frequency.value = f; o.type = 'sine';
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(0.25, t + at + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.35);
+      o.connect(g).connect(audio.destination);
+      o.start(t + at); o.stop(t + at + 0.4);
+    });
+  } catch {}
+}
+function alertUser(title, body, key, tab) {
+  if (!alertsOn) return;
+  chime();
+  if (document.hasFocus() || !('Notification' in window) || Notification.permission !== 'granted') return;
+  const n = new Notification(title, { body, tag: key + title });
+  n.onclick = () => {
+    window.focus(); n.close();
+    selected = key; if (tab) prTab[key] = tab;
+    lastPrDraw = null; renderList(); renderDetail(true);
+  };
+}
+function checkAlerts() {
+  for (const p of plans) {
+    const run = !!(p.live || starting(p)), ask = !!p.asking, was = wasBusy[p.key];
+    if (was && was.run && !run) {
+      const o = outOf(p);
+      alertUser(o === 'failed' ? 'Run failed' : o === 'needs-you' ? 'Run needs you' : 'Run finished',
+        p.project + ' / ' + p.file, p.key);
+    }
+    if (was && was.ask && !ask) alertUser('The agent answered', p.project + ' / ' + p.file, p.key, 'ask');
+    wasBusy[p.key] = { run, ask };
+  }
+}
+byId('alertBtn').addEventListener('click', async () => {
+  alertsOn = !alertsOn;
+  try { localStorage.setItem('dash-alerts', alertsOn ? '1' : '0'); } catch {}
+  paintAlertBtn();
+  if (alertsOn) {
+    chime();   // a sample, and it unlocks sound for this tab
+    if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
+    if ('Notification' in window && Notification.permission === 'denied')
+      alert('Notifications are blocked for this site, so you will only hear the sound. Allow them in the browser’s site settings.');
+  }
+});
+// a browser keeps sound locked until the page gets a click; the first click anywhere unlocks it
+document.addEventListener('pointerdown', () => { if (alertsOn && !audio) { try { audio = new AudioContext(); } catch {} } }, { once: true });
+paintAlertBtn();
 async function refresh() {
   if (ticking) return;
   ticking = true;
@@ -4008,6 +4192,7 @@ async function refreshOnce() {
     // don't clobber the pane (and steal focus) while the user is typing in it
     const typing = byId('detail').contains(document.activeElement)
       && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
+    checkAlerts();
     renderList();
     if (selected && !typing) renderDetail(false);
     else if (!selected) renderEmptyDetail();
