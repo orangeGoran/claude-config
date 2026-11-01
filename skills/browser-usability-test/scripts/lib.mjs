@@ -427,6 +427,23 @@ export async function beforeAfterShot(page, name, opts = {}) {
   const phase = process.env.QA_PHASE ?? "before";
   if (!["before", "after"].includes(phase))
     throw new Error(`QA_PHASE must be "before" or "after", got "${phase}".`);
+  return recordShot(page, name, phase, opts);
+}
+
+/**
+ * Screenshot of a view the change under test redesigns, for the report's "What
+ * changed" section. QA_VERSION=old (with QA_APP_URL pointing at the app built
+ * from the code without the change) or new (default, the code under test).
+ *   await changeShot(page, 'd4-causes', { fullPage: true });
+ */
+export async function changeShot(page, name, opts = {}) {
+  const phase = process.env.QA_VERSION ?? "new";
+  if (!["old", "new"].includes(phase))
+    throw new Error(`QA_VERSION must be "old" or "new", got "${phase}".`);
+  return recordShot(page, name, phase, opts);
+}
+
+async function recordShot(page, name, phase, opts) {
   const file = await screenshot(page, `${name}.${phase}`, opts);
   const url = new URL(page.url());
   const records = existsSync(BEFORE_AFTER_FILE)

@@ -11,12 +11,17 @@
 //     "issues": ["https://github.com/acme/shop-web/issues/435"],  // GitHub issues/PRs the run tests; the QA list searches them
 //     "summary": "…",                                        // TLDR: does it work now, what is still open
 //     "before": "HEAD 89dd94d", "after": "working tree",     // optional, what each side was taken from
+//     "old": "main 1a2b3c4",                                 // feature/redesign runs: the code without the change
+//     "changes": [{ "title": "Causes and validation on one page", "note": "…",  // feature/redesign runs: old vs new
+//                   "shots": ["d4-page", { "name": "d4-header", "caption": "Header", "oldCaption": "…", "newCaption": "…" }] }],  // changeShot names
 //     "dirs": ["<other account's QA_DIR>"],                  // optional
 //     "items": [{ "id": "1", "problem": "…", "severity": "Medium", "fix": "…",
 //                 "cause": "src/…/FilterBar.tsx:42",          // optional
 //                 "result": "fixed" | "partly" | "not-fixed",  // leave out while the finding is open
 //                 "note": "…",                                // optional, what to look at in the pictures
 //                 "shots": ["filterbar-390", { "name": "filterbar-dark", "caption": "Dark theme" }],  // beforeAfterShot names
+//                 // "caption" names the view and shows on both sides; "beforeCaption" / "afterCaption"
+//                 // describe each side ("D8 is cut off" / "all steps show")
 //                 "references": [{ "file": "/…/sibling.png", "caption": "Admin users list" }],  // optional, the standard it should match
 //                 "beforeText": "API total 12", "afterText": "API total 3",                     // optional, non-visual proof
 //                 "review": true }],                         // optional, adds "Is this fix good?" to this finding
@@ -87,7 +92,8 @@ function stateDiff(b, a) {
   return diff;
 }
 
-const TAG = { before: "Before", after: "After", ref: "Standard" };
+// Reader-facing names: a ticket's change is "Original / Current", a finding's fix is "Bug / Fixed".
+const TAG = { before: "Bug", after: "Fixed", ref: "Standard", old: "Original", new: "Current" };
 
 function figure(kind, file, caption, alt, rec) {
   const state = rec ? `<span class="state">${esc(describe(rec))}</span>` : "";
@@ -101,22 +107,56 @@ const textFigure = (kind, text) =>
   `<figure><pre class="proof">${esc(text ?? "—")}</pre><figcaption><span class="tag ${kind}">${TAG[kind]}</span></figcaption></figure>`;
 
 function pair(item, shot) {
-  const { name, caption } = typeof shot === "string" ? { name: shot } : shot;
+  const { name, caption, beforeCaption, afterCaption } = typeof shot === "string" ? { name: shot } : shot;
+  // "caption" names the view; a caption that describes the defect belongs on the before side only
+  const before = beforeCaption ?? caption ?? name;
+  const after = afterCaption ?? caption ?? name;
   const rec = shots[name] ?? {};
   if (!rec.before) warnings.push(`#${item.id}: no "before" shot named ${name}`);
   if (!done(item) && !rec.after)
     return `<div class="gallery">
-${figure("before", rec.before?.file, caption ?? name, `#${item.id} as found`, rec.before)}
+${figure("before", rec.before?.file, before, `#${item.id} as found`, rec.before)}
 </div>`;
   if (!rec.after)
     warnings.push(`#${item.id}: no "after" shot named ${name} (rerun with QA_PHASE=after)`);
   const diff = rec.before && rec.after ? stateDiff(rec.before, rec.after) : [];
   if (diff.length) warnings.push(`#${item.id} ${name}: state differs — ${diff.join(", ")}`);
   return `<div class="gallery">
-${figure("before", rec.before?.file, caption ?? name, `#${item.id} before the fix`, rec.before)}
-${figure("after", rec.after?.file, caption ?? name, `#${item.id} after the fix`, rec.after)}
+${figure("before", rec.before?.file, before, `#${item.id} before the fix`, rec.before)}
+${figure("after", rec.after?.file, after, `#${item.id} after the fix`, rec.after)}
 </div>${diff.length ? `<p class="warn">Not taken in the same state: ${esc(diff.join(", "))}</p>` : ""}`;
 }
+
+// One view the change redesigns: the app without the change next to the app with it.
+function changePair(change, shot) {
+  const { name, caption, oldCaption, newCaption } = typeof shot === "string" ? { name: shot } : shot;
+  const rec = shots[name] ?? {};
+  if (!rec.old) warnings.push(`"${change.title}": no "old" shot named ${name} (run with QA_VERSION=old)`);
+  if (!rec.new) warnings.push(`"${change.title}": no "new" shot named ${name}`);
+  const diff = rec.old && rec.new ? stateDiff(rec.old, rec.new) : [];
+  if (diff.length) warnings.push(`"${change.title}" ${name}: state differs — ${diff.join(", ")}`);
+  return `<div class="gallery">
+${figure("old", rec.old?.file, oldCaption ?? caption ?? name, `${change.title}: original`, rec.old)}
+${figure("new", rec.new?.file, newCaption ?? caption ?? name, `${change.title}: current`, rec.new)}
+</div>${diff.length ? `<p class="warn">Not taken in the same state: ${esc(diff.join(", "))}</p>` : ""}`;
+}
+
+const changes = (spec.changes ?? []).length
+  ? `<section aria-labelledby="changes">
+<span class="eyebrow">The change</span>
+<h2 id="changes">What changed</h2>
+<p class="lead">Original: the page before the ticket${spec.old ? ` (${esc(spec.old)})` : ""}. Current: the page with all its changes${spec.after ?? spec.before ? ` (${esc(spec.after ?? spec.before)})` : ""}. Same width, theme and account on both sides.</p>
+</section>
+${spec.changes
+  .map(
+    (c, n) => `<section aria-labelledby="ch${n}">
+<h2 id="ch${n}">${esc(c.title)}</h2>
+${c.note ? `<p class="note">${esc(c.note)}</p>` : ""}
+${(c.shots ?? []).map((s) => changePair(c, s)).join("\n")}
+</section>`,
+  )
+  .join("\n")}`
+  : "";
 
 const RESULT = {
   fixed: ["Fixed", "good"],
@@ -266,15 +306,16 @@ const eyebrow = [PROJECT.name, route, ANY_DONE ? "findings and fixes" : "finding
   .filter(Boolean)
   .join(" · ");
 // Screens and themes actually used, from the shot records of this report.
-const used = items
+const used = [...items, ...(spec.changes ?? [])]
   .flatMap((i) => i.shots ?? [])
   .map((s) => shots[typeof s === "string" ? s : s.name])
-  .flatMap((r) => [r?.before, r?.after])
+  .flatMap((r) => [r?.before, r?.after, r?.old, r?.new])
   .filter(Boolean);
 const uniq = (xs) => [...new Set(xs.filter(Boolean))].join(", ");
 const meta = [
+  spec.old && `Original: ${spec.old}`,
   spec.before && `Tested: ${spec.before}`,
-  spec.after && `After: ${spec.after}`,
+  spec.after && `Fixed in: ${spec.after}`,
   spec.account,
   uniq(used.map((r) => r.viewport && `${r.viewport.width} × ${r.viewport.height}`)),
   uniq(used.map((r) => r.theme)),
@@ -373,8 +414,8 @@ ${issues.length ? `<meta name="qa:issues" content="${esc(issues.join(" "))}">\n`
   figure { margin: 0; display: grid; gap: 8px; min-width: 0; align-content: start; }
   figcaption { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
   .tag { font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
-  .tag.before { color: var(--muted); border: 1px solid var(--line); }
-  .tag.after, .tag.good { color: var(--good); background: var(--good-soft); }
+  .tag.before, .tag.old { color: var(--muted); border: 1px solid var(--line); }
+  .tag.after, .tag.new, .tag.good { color: var(--good); background: var(--good-soft); }
   .tag.ref, .tag.part { color: var(--accent); background: var(--accent-soft); }
   .tag.bad { color: var(--bad); background: var(--bad-soft); }
   .tag.open { color: var(--muted); background: transparent; border: 1px solid var(--line); }
@@ -407,8 +448,9 @@ ${issues.length ? `<meta name="qa:issues" content="${esc(issues.join(" "))}">\n`
 <h1>${esc(title)}</h1>
 ${spec.summary ? `<div class="tldr"><strong>TLDR.</strong> ${esc(spec.summary)}</div>` : ""}
 <p class="meta">${issueLinks.map((l) => `<span>${l}</span>`).join("")}${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</p>
-<p class="note">${esc(totals)}. ${ANY_DONE ? "A fixed finding shows the same view before and after the fix, taken at the same width, theme and account; an open one shows the screen as it was found." : "Nothing is fixed yet. Each finding shows the screen as it was found, with the width, theme and account it was taken at."} Click a picture to enlarge it.${askedCount ? ` This page has ${askedCount} question${askedCount === 1 ? "" : "s"} for you; answer them in place and <a href="#questions">copy all answers at the end</a>.` : ""}</p>
+<p class="note">${esc(totals)}. ${ANY_DONE ? "A fixed finding shows the same view with the bug and with the fix (Bug / Fixed), taken at the same width, theme and account; an open one shows the screen as it was found." : "Nothing is fixed yet. Each finding shows the screen as it was found, with the width, theme and account it was taken at."} Click a picture to enlarge it.${askedCount ? ` This page has ${askedCount} question${askedCount === 1 ? "" : "s"} for you; answer them in place and <a href="#questions">copy all answers at the end</a>.` : ""}</p>
 </header>
+${changes}
 ${overview}
 ${findings.join("\n")}
 ${works}
