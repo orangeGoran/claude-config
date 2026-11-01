@@ -273,7 +273,7 @@ const validationRounds = (proj, slug) => {
 // A report that has no `**Outcome**:` line is judged by its status words.
 const OUTCOMES = ['running', 'needs-you', 'failed'];
 const outcomeOf = (status) =>
-  /^(VERIFIED|REVIEWED|COMMITTED|FINISHED)/i.test(status) ? 'needs-you'
+  /^(VERIFIED|REVIEWED|COMMITTED|FINISHED|PR OPEN)/i.test(status) ? 'needs-you'
   : /^(BLOCKED|FAILED|ENDED)/i.test(status) ? 'failed' : 'running';
 
 // The run-report lines both flavors read: `## Status:`, `- **Outcome**:`, `- **Mode**:`
@@ -298,7 +298,11 @@ const pipelineRunInfo = (proj, slug) => {
   const r = parseReport(content);
   const status = r.status || 'unknown';
   const timeline = [...content.matchAll(/^- (20\d\d[^\n]+)$/gm)].map((m) => m[1]);
-  return { ...r, status, lastEvent: timeline.at(-1) || '', outcome: r.outcome || outcomeOf(status) };
+  // the launcher writes Outcome only after its own sessions; a chat that later fixes
+  // the run moves the status on (e.g. to "PR OPEN") and leaves a stale "failed" behind
+  const stale = r.outcome === 'failed' && outcomeOf(status) !== 'failed';
+  return { ...r, status, lastEvent: timeline.at(-1) || '',
+    outcome: !stale && r.outcome || outcomeOf(status) };
 };
 // An interactive claude chat (VS Code, terminal) can continue a run inside the
 // worktree after the headless pipeline exits. pgrep does not see that chat, so the
