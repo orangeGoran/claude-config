@@ -1664,6 +1664,7 @@ const PAGE = /* html */ `<!doctype html>
              box-shadow:-10px 0 34px rgba(0,0,0,.3);
              display:none; flex-direction:column; z-index:10; }
   #logpane.open { display:flex; }
+  #logbody .logmd { white-space:normal; font:calc(13.5px * var(--fs))/1.6 -apple-system,system-ui,sans-serif; color:var(--fg); max-width:none; }
   #logbody { flex:1; overflow:auto; padding:16px; white-space:pre-wrap;
              font:calc(12px * var(--fs))/1.5 ui-monospace,monospace; color:var(--logfg); }
   .setup { font-family:-apple-system,sans-serif; font-size:calc(13px * var(--fs)); line-height:1.7; white-space:normal; color:var(--fg); }
@@ -3523,7 +3524,7 @@ const setBack = (fn) => {
 byId('backBtn').addEventListener('click', () => { const f = drawerBack; if (f) f(); });
 function openLog(key, kind) {
   setBack(null);
-  logKey = key; logKind = kind; byId('logpane').classList.add('open'); loadLog();
+  logKey = key; logKind = kind; byId('logbody')._raw = null; byId('logpane').classList.add('open'); loadLog();
 }
 function closeLog() { setBack(null); logKey = null; byId('logpane').classList.remove('open'); }
 async function loadLog() {
@@ -3532,10 +3533,18 @@ async function loadLog() {
   byId('logtitle').textContent = logKind + ': [' + p.project + '] ' + p.slug;
   const t = await (await fetch('/api/' + logKind + '?project=' + p.project + '&slug=' + p.slug)).text();
   const el = byId('logbody');
-  if (el.textContent === t || selectionIn(el)) return;
+  if (el._raw === t || selectionIn(el)) return;
   const stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
-  el.textContent = t;
-  if (stick) el.scrollTop = el.scrollHeight;
+  el._raw = t;
+  // a run report is a Markdown file: show it formatted, like the plan; the log stays plain text
+  if (logKind === 'report' && !/^\(no report yet\)$/.test(t.trim())) {
+    const top = el.scrollTop;
+    el.innerHTML = '<div class="mdc logmd">' + md(t) + '</div>';
+    el.scrollTop = top;   // reports are read from the top; a 5 s reload keeps the place
+  } else {
+    el.textContent = t;
+    if (stick) el.scrollTop = el.scrollHeight;
+  }
 }
 // --- launcher setup dialog (generic projects): pick a skill/script or write a command ---
 // back: where ‹ Back and a save return to (the settings panel, the setup guide), or null
