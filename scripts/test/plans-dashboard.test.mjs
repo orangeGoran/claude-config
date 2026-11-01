@@ -54,7 +54,7 @@ out({ type: 'result', subtype: 'success', is_error: false, session_id: id, total
 const start = async () => {
   const child = spawn(process.execPath, [SCRIPT], {
     env: { ...process.env, HOME: home, DASH_PORT: String(port), DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1',
-           QA_REPORTS_PORT: String(qaPort), QA_HOME: '',
+           QA_REPORTS_PORT: String(qaPort), QA_HOME: '', CLAUDE_TMP: path.join(tmp, 'claude-tmp'),
            PATH: path.join(ghDir, 'bin') + ':' + process.env.PATH, FAKE_GH_DIR: ghDir },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -592,4 +592,39 @@ test('serves browser-usability-test reports read-only on their own port, with a 
   assert.equal(rebound, 403, 'a rebound public name is refused');
   assert.equal((await get('/solver/2026-11-01-cases-report.html')).status, 404, 'the dashboard port does not serve reports');
   assert.match(await (await get('/')).text(), new RegExp(`href="http://localhost:${qaPort}/"`), 'the header links the list');
+});
+
+test('the QA list shows ticket numbers, saved Claude artifacts and scratchpad drafts', async () => {
+  const qa = (p) => fetch(`http://127.0.0.1:${qaPort}${p}`);
+  const reports = path.join(home, '.claude', 'browser-usability-test', 'projects', 'solver', 'reports');
+  mkdirSync(reports, { recursive: true });
+  writeFileSync(path.join(reports, '2026-11-01-fs2-report.html'),
+    '<!doctype html><title>FS2 works</title><meta name="qa:issues" content="https://github.com/acme/SolveR/issues/435"><p>r</p>');
+  const projects = path.join(home, '.claude', 'browser-usability-test', 'projects');
+  mkdirSync(path.join(projects, 'solver', 'artifacts'), { recursive: true });
+  mkdirSync(path.join(projects, '_other', 'artifacts'), { recursive: true });
+  writeFileSync(path.join(projects, 'solver', 'artifacts', '2026-10-29-fs2.html'), '<!doctype html><meta name="qa:title" content="FS2 Before and After">\n'
+    + '<meta name="qa:updated" content="2026-10-29">\n<meta name="qa:source" content="https://claude.ai/artifact/abc">\n<meta name="qa:issues" content="#435">\n<p>page');
+  writeFileSync(path.join(projects, '_other', 'artifacts', '2026-10-25-sow.html'), '<!doctype html><meta name="qa:title" content="Statement of Work">\n'
+    + '<meta name="qa:updated" content="2026-10-25">\n<meta name="qa:source" content="https://claude.ai/artifact/doc">\n<meta name="qa:remote-only" content="1">\n<p>stub');
+  const sp = path.join(tmp, 'claude-tmp', '-Users-me-Workspace-shop', 'sess-1', 'scratchpad', 'ba');
+  mkdirSync(path.join(sp, 'img'), { recursive: true });
+  writeFileSync(path.join(sp, 'img', 'a.png'), Buffer.from('89504e470d0a1a0a', 'hex'));
+  writeFileSync(path.join(sp, 'page.html'), '<title>Draft for #440</title><img src="img/a.png">');
+  writeFileSync(path.join(tmp, 'claude-tmp', 'outside.html'), 'secret');
+
+  const list = await (await qa('/')).text();
+  assert.match(list, /class="tk" href="https:\/\/github\.com\/acme\/SolveR\/issues\/435"[^>]*>SolveR#435</, 'a report shows its ticket as a link');
+  assert.match(list, /data-search="[^"]*solver#435/i, 'the ticket number is searchable');
+  assert.match(list, /href="\/solver\/artifacts\/2026-10-29-fs2\.html"[^>]*>FS2 Before and After</, 'a saved artifact opens locally');
+  assert.match(list, /href="https:\/\/claude\.ai\/artifact\/doc"[^>]*>Statement of Work ↗</, 'a Docs artifact links to claude.ai');
+  assert.ok(list.indexOf('solver · artifacts') > list.indexOf('<h2>solver ') && list.indexOf('solver · artifacts') < list.indexOf('Other artifacts'),
+    "a project's artifacts come right after its reports, the rest at the end");
+  assert.match(list, /href="\/drafts\/-Users-me-Workspace-shop\/sess-1\/scratchpad\/ba\/page\.html"[^>]*>Draft for #440</, 'a scratchpad draft is listed');
+  assert.equal((await qa('/solver/artifacts/2026-10-29-fs2.html')).status, 200);
+  const draft = await (await qa('/drafts/-Users-me-Workspace-shop/sess-1/scratchpad/ba/page.html')).text();
+  assert.match(draft, /src="data:image\/png;base64,/, 'a draft comes back as one file with its images inside');
+  for (const p of ['/drafts/outside.html', '/drafts/-Users-me-Workspace-shop/sess-1/scratchpad/..%2F..%2F..%2Foutside.html',
+    '/drafts/-Users-me-Workspace-shop/sess-1/scratchpad/ba/img/a.png', '/solver/artifacts/..%2Freports%2Fx.html', '/solver/artifacts/nope.html'])
+    assert.equal((await qa(p)).status, 404, p);
 });

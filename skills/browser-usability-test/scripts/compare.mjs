@@ -8,6 +8,7 @@
 //     "date": "2026-10-31",                                  // day of the test run: keeps one file across updates
 //     "route": "/cases", "account": "Ana (Member, Acme)",
 //     "title": "Filters on /cases fit a phone",              // optional, plain-words headline
+//     "issues": ["https://github.com/acme/shop-web/issues/435"],  // GitHub issues/PRs the run tests; the QA list searches them
 //     "summary": "…",                                        // TLDR: does it work now, what is still open
 //     "before": "HEAD 89dd94d", "after": "working tree",     // optional, what each side was taken from
 //     "dirs": ["<other account's QA_DIR>"],                  // optional
@@ -279,6 +280,16 @@ const meta = [
   uniq(used.map((r) => r.theme)),
   date,
 ].filter(Boolean);
+// "https://github.com/o/r/issues/435" → "r#435"; a bare "#435" stays as it is
+const issueLabel = (u) => {
+  const m = String(u).match(/github\.com\/[^/]+\/([^/]+)\/(?:issues|pull)\/(\d+)/);
+  return m ? `${m[1]}#${m[2]}` : String(u);
+};
+const issues = spec.issues ?? [];
+if (!issues.length) warnings.push('no "issues": add the GitHub issue or PR this run tests');
+const issueLinks = issues.map((u) =>
+  /^https?:\/\//.test(u) ? `<a href="${esc(u)}">${esc(issueLabel(u))}</a>` : esc(u),
+);
 const severities = uniq(
   ["High", "Medium", "Low"].map((s) => {
     const n = items.filter((i) => i.severity === s).length;
@@ -301,7 +312,7 @@ const html = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
-<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(QA_ICON)}">
+${issues.length ? `<meta name="qa:issues" content="${esc(issues.join(" "))}">\n` : ""}<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(QA_ICON)}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -395,7 +406,7 @@ const html = `<!doctype html>
 <span class="eyebrow">${esc(eyebrow)}</span>
 <h1>${esc(title)}</h1>
 ${spec.summary ? `<div class="tldr"><strong>TLDR.</strong> ${esc(spec.summary)}</div>` : ""}
-<p class="meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</p>
+<p class="meta">${issueLinks.map((l) => `<span>${l}</span>`).join("")}${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</p>
 <p class="note">${esc(totals)}. ${ANY_DONE ? "A fixed finding shows the same view before and after the fix, taken at the same width, theme and account; an open one shows the screen as it was found." : "Nothing is fixed yet. Each finding shows the screen as it was found, with the width, theme and account it was taken at."} Click a picture to enlarge it.${askedCount ? ` This page has ${askedCount} question${askedCount === 1 ? "" : "s"} for you; answer them in place and <a href="#questions">copy all answers at the end</a>.` : ""}</p>
 </header>
 ${overview}

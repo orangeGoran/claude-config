@@ -5,6 +5,8 @@ Use this structure. Plain words, concrete examples (real values, real ids).
 ````markdown
 ## Usability test — <route> (<date>, <account role>, <tenant>)
 
+**Ticket:** <[repo#435](https://github.com/…/issues/435), one per issue or PR tested; "none found" when there is none>
+
 **TLDR:** <2–3 plain sentences: does it work, the worst problem, what to do first.>
 
 **Report page:** [<date>-<route>-report.html](<url that compare.mjs printed>) — updated after every change

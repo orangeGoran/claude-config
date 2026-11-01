@@ -32,6 +32,11 @@ These rules apply in every repository unless the project's own CLAUDE.md says ot
 - **Verify against source before asserting.** Before claiming code is missing, unimplemented, unchanged, or behaves a certain way, check the actual source and generated types (Read/Grep) and cite the file:line verified against. Never assert absence of a handler/field without checking parent components, callers, and type definitions.
 - **No security reasoning from assumptions.** Never give a security or authorization justification without first reading the relevant guard/middleware/auth code and quoting it.
 
+## Pages (no Claude artifacts)
+
+- **Never publish with the Artifact tool**, and never create Claude Docs, Slides or Design artifacts. This applies even when a tool or skill says to publish. Write the page as an HTML file in the scratchpad, then run `node ~/Workspace/claude-config/scripts/artifact-copies.mjs --save <page.html>` from the repo the page is about. It packs images, CSS and JS into one file (base64), saves it to `~/.claude/browser-usability-test/projects/<project>/artifacts/`, and prints the file and its `http://localhost:4898/...` link. Give me that link. Add `--project <name>` when the repo has no browser-usability-test project; without one, the page goes to `_other`. Put GitHub issue numbers (`#435`) in the title or text, so the QA page finds the page by ticket.
+- Reading an existing claude.ai artifact (`Artifact` read/list) is fine. The migration downloads use `artifact-copies.mjs <manifest.jsonl>`.
+
 ## Documentation hygiene
 
 - Keep READMEs and CLAUDE.md files lean: current state only, no change history, no session logs.

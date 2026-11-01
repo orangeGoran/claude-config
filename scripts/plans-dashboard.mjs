@@ -26,12 +26,13 @@
 import http from 'node:http';
 import {
   readFileSync, readdirSync, existsSync, openSync, mkdirSync, unlinkSync,
-  writeFileSync, renameSync, statSync, closeSync, readSync,
+  writeFileSync, renameSync, statSync, closeSync, readSync, realpathSync,
 } from 'node:fs';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { OTHER, inlineHtml, findIssues, readMeta } from './artifact-copies.mjs';
 
 const VERSION = '1.0.0';
 const HOME = os.homedir();
@@ -40,6 +41,8 @@ const CENTRAL = path.join(HOME, '.claude', 'pipeline-dashboard');
 // report pages written by the browser-usability-test skill, one folder per project
 const QA_REPORTS = process.env.QA_HOME || path.join(HOME, '.claude', 'browser-usability-test', 'projects');
 const QA_PORT = +(process.env.QA_REPORTS_PORT || 4898);
+// Claude Code's per-session temp folders; HTML in their scratchpads shows as unpublished drafts
+const CLAUDE_TMP = process.env.CLAUDE_TMP ?? `/private/tmp/claude-${process.getuid?.() ?? ''}`;
 const PORT = +(process.env.DASH_PORT || 4899);
 const NO_SUMMARY = !!process.env.DASH_NO_SUMMARY;
 const SUMMARY_MODEL = process.env.DASH_SUMMARY_MODEL || 'haiku';
@@ -4342,36 +4345,96 @@ const htmlText = (s) => s.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)
 const QA_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="32" y="50" font-size="52" text-anchor="middle">📊</text></svg>`;
 const escH = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // every report page, grouped by project, the project with the newest report first
+// every project's report pages and artifacts (single-file pages, see scripts/artifact-copies.mjs),
+// the project with the newest page first. What the list shows comes from <title> and the
+// qa:* meta tags in the first KB: a page can be MBs of embedded screenshots.
+const qaPages = (project, folder) => {
+  const dir = path.join(QA_REPORTS, project, folder);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => f.endsWith('.html') && safeName(f) && !f.startsWith('.')).map((f) => {
+    const file = path.join(dir, f), st = statSync(file), meta = readMeta(file);
+    const remote = !!meta['remote-only'];
+    return { file: f, path: file, title: meta.title ? htmlText(meta.title) : f, size: remote ? 0 : st.size,
+      mtime: meta.updated ? Date.parse(meta.updated) : st.mtimeMs, day: !!meta.updated,
+      href: remote ? null : `/${encodeURIComponent(project)}/${folder === 'reports' ? '' : 'artifacts/'}${encodeURIComponent(f)}`,
+      // a downloaded Claude artifact: its claude.ai link; Docs, Slides and Design open only there
+      url: meta.source, live: !!meta.live, guessed: meta['project-from'] === 'content',
+      issues: (meta.issues || '').split(/\s+/).filter(Boolean) };
+  }).sort((a, b) => b.mtime - a.mtime);
+};
 const qaReports = () => (existsSync(QA_REPORTS) ? readdirSync(QA_REPORTS) : [])
   .filter((p) => safeName(p) && !p.startsWith('.'))
-  .flatMap((project) => {
-    const dir = path.join(QA_REPORTS, project, 'reports');
-    if (!existsSync(dir)) return [];
-    const rows = readdirSync(dir).filter((f) => f.endsWith('.html') && safeName(f) && !f.startsWith('.')).map((f) => {
-      const file = path.join(dir, f), st = statSync(file);
-      // the <title> is in the first few KB; a report can be MBs of embedded screenshots
-      const buf = Buffer.alloc(8192), fd = openSync(file, 'r');
-      const n = readSync(fd, buf, 0, buf.length, 0);
-      closeSync(fd);
-      const title = buf.toString('utf8', 0, n).match(/<title>([^<]*)<\/title>/i)?.[1];
-      return { file: f, path: file, title: title ? htmlText(title) : f, mtime: st.mtimeMs, size: st.size };
-    }).sort((a, b) => b.mtime - a.mtime);
-    return rows.length ? [{ project, rows }] : [];
-  })
-  .sort((a, b) => b.rows[0].mtime - a.rows[0].mtime);
+  .map((project) => ({ project, rows: qaPages(project, 'reports'), arts: qaPages(project, 'artifacts') }))
+  .filter((g) => g.rows.length || g.arts.length)
+  .sort((a, b) => (a.project === OTHER) - (b.project === OTHER)
+    || Math.max(...[...b.rows, ...b.arts].map((r) => r.mtime)) - Math.max(...[...a.rows, ...a.arts].map((r) => r.mtime)));
+// HTML pages Claude wrote to a session scratchpad and never published. macOS empties
+// /private/tmp now and then, so these can disappear.
+const DRAFT_SKIP = new Set(['node_modules', 'artifact-files', '.git']);
+const draftFile = (rel) => {
+  try {
+    // checked after .. and symlinks are resolved: only <project>/<session>/scratchpad/…/*.html
+    const root = realpathSync(CLAUDE_TMP), f = realpathSync(path.resolve(root, decodeURIComponent(rel)));
+    return /^[^/]+\/[^/]+\/scratchpad\/.+\.html$/.test(path.relative(root, f)) ? f : null;
+  } catch { return null; }
+};
+const draftRows = () => {
+  if (!CLAUDE_TMP || !existsSync(CLAUDE_TMP)) return [];
+  const walk = (dir, depth) => readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
+    if (d.name.startsWith('.') || DRAFT_SKIP.has(d.name)) return [];
+    const p = path.join(dir, d.name);
+    if (d.isDirectory()) return depth < 4 ? walk(p, depth + 1) : [];
+    return d.name.endsWith('.html') ? [p] : [];
+  });
+  const rows = [];
+  for (const proj of readdirSync(CLAUDE_TMP, { withFileTypes: true })) for (const sess of proj.isDirectory() ? readdirSync(path.join(CLAUDE_TMP, proj.name)) : []) {
+    const sp = path.join(CLAUDE_TMP, proj.name, sess, 'scratchpad');
+    if (!existsSync(sp)) continue;
+    for (const f of walk(sp, 0)) {
+      const st = statSync(f), rel = path.relative(CLAUDE_TMP, f);
+      const text = st.size < 4194304 ? readFileSync(f, 'utf8') : '';
+      const title = text.match(/<title>([^<]*)<\/title>/i)?.[1];
+      rows.push({ title: title ? htmlText(title) : path.basename(f), file: `${proj.name.replace(/^-Users-[^-]+-(Workspace-)?/, '')} · ${path.relative(sp, f)}`,
+        path: f, size: st.size, mtime: st.mtimeMs, href: `/drafts/${rel.split(path.sep).map(encodeURIComponent).join('/')}`,
+        download: path.basename(f), issues: findIssues(text) });
+    }
+  }
+  return rows.sort((a, b) => b.mtime - a.mtime);
+};
 const qaListPage = () => {
   const when = (ms) => new Date(ms).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const day = (ms) => new Date(ms).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   const size = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB');
-  const groups = qaReports();
-  const body = groups.length ? groups.map(({ project, rows }) => `<section><h2>${escH(project)} <span>${rows.length}</span></h2>
-<table><thead><tr><th>Report</th><th>Updated</th><th>Size</th><th><span class="sr">Actions</span></th></tr></thead><tbody>
-${rows.map((r) => {
-  const href = `/${encodeURIComponent(project)}/${encodeURIComponent(r.file)}`;
-  return `<tr><td><a href="${href}" target="_blank" rel="noopener">${escH(r.title)}</a><div class="file">${escH(r.file)}</div></td><td>${when(r.mtime)}</td><td>${size(r.size)}</td>
-<td><div class="act"><a class="btn" href="${href}" download="${escH(r.file)}" aria-label="Download ${escH(r.file)}">Download</a><button class="btn" type="button" data-path="${escH(r.path)}" aria-label="Copy the path of ${escH(r.file)}">Copy path</button></div></td></tr>`;
-}).join('\n')}
-</tbody></table></section>`).join('\n')
-    : `<p class="dim">No reports yet. The browser-usability-test skill writes them to ${escH(QA_REPORTS)}/&lt;project&gt;/reports/.</p>`;
+  // "https://github.com/o/r/issues/435" → "r#435"
+  const issueLabel = (i) => { const m = i.match(/github\.com\/[^/]+\/([^/]+)\/(?:issues|pull)\/(\d+)/); return m ? `${m[1]}#${m[2]}` : i; };
+  const issueChip = (i) => (/^https?:/.test(i) ? `<a class="tk" href="${escH(i)}" target="_blank" rel="noopener">${escH(issueLabel(i))}</a>` : `<span class="tk">${escH(i)}</span>`);
+  const row = (r) => {
+    const search = [r.title, r.file, r.project, ...r.issues.map(issueLabel)].join(' ').toLowerCase();
+    const open = r.href ? `<a href="${r.href}" target="_blank" rel="noopener">${escH(r.title)}</a>`
+      : `<a href="${escH(r.url)}" target="_blank" rel="noopener">${escH(r.title)} ↗</a>`;
+    const sub = [...r.issues.map(issueChip), r.file && `<span>${escH(r.file)}</span>`,
+      r.url && r.href && `<a class="tk" href="${escH(r.url)}" target="_blank" rel="noopener">claude.ai ↗</a>`,
+      r.live && '<span class="warn">saved data and comments work only on claude.ai</span>',
+      !r.href && '<span>Docs, Slides or Design: opens on claude.ai only</span>',
+      r.guessed && '<span>project guessed from the page text</span>'].filter(Boolean).join(' ');
+    const dl = r.download || r.file;
+    return `<tr data-search="${escH(search)}"><td>${open}<div class="file">${sub}</div></td><td>${r.day ? day(r.mtime) : when(r.mtime)}</td><td>${r.size ? size(r.size) : ''}</td>
+<td><div class="act">${r.href ? `<a class="btn" href="${r.href}" download="${escH(dl)}" aria-label="Download ${escH(dl)}">Download</a><button class="btn" type="button" data-path="${escH(r.path)}" aria-label="Copy the path of ${escH(dl)}">Copy path</button>` : `<button class="btn" type="button" data-path="${escH(r.url)}" aria-label="Copy the link of ${escH(r.title)}">Copy link</button>`}</div></td></tr>`;
+  };
+  const section = (name, rows, note = '') => `<section><h2>${escH(name)} <span>${rows.length}</span></h2>${note}
+<table><thead><tr><th>Page</th><th>Updated</th><th>Size</th><th><span class="sr">Actions</span></th></tr></thead><tbody>
+${rows.map(row).join('\n')}
+</tbody></table></section>`;
+  const groups = qaReports(), drafts = draftRows();
+  const artNote = `<p class="dim">Pages as single files, images included, in ${escH(QA_REPORTS)}/&lt;project&gt;/artifacts/. Claude artifacts downloaded from claude.ai link back there.</p>`;
+  const reports = groups.map(({ project, rows, arts }) => [
+    rows.length && section(project, rows),
+    arts.length && section(project === OTHER ? 'Other artifacts' : `${project} · artifacts`, arts.map((r) => ({ ...r, project })), artNote),
+  ].filter(Boolean).join('\n')).join('\n')
+    || `<p class="dim">No reports yet. The browser-usability-test skill writes them to ${escH(QA_REPORTS)}/&lt;project&gt;/reports/.</p>`;
+  const body = `${reports}
+${drafts.length ? section('Unpublished drafts', drafts, `<p class="dim">HTML that Claude wrote to a session scratchpad in ${escH(CLAUDE_TMP)}. macOS empties that folder now and then. Download gives one file with the images inside; Copy path gives the raw file.</p>`) : ''}
+<p class="dim" id="none" hidden>Nothing matches.</p>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>QA reports</title><link rel="icon" href="data:image/svg+xml,${encodeURIComponent(QA_ICON)}"><style>
 :root { --bg:#f4f5f8; --panel:#fff; --line:#d9dde6; --fg:#1d2433; --dim:#5f6b81; --link:#1d4ed8; color-scheme:light; }
@@ -4388,13 +4451,27 @@ td:nth-child(n+2) { white-space:nowrap; } a { color:var(--link); text-decoration
 .act { display:flex; gap:6px; justify-content:flex-end; }
 .btn { font:inherit; font-size:12.5px; font-weight:400; color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:4px 10px; cursor:pointer; white-space:nowrap; }
 .btn:hover { border-color:var(--link); text-decoration:none; } .btn:focus-visible, a:focus-visible { outline:2px solid var(--link); outline-offset:2px; }
+.tk { font:12px ui-monospace, Menlo, monospace; margin-right:8px; } .warn { color:#d08770; }
+.search { width:100%; box-sizing:border-box; font:inherit; padding:8px 12px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--fg); margin:14px 0 0; }
 .sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
 @media (max-width:600px) { th:nth-child(3), td:nth-child(3) { display:none; } .act { flex-direction:column; } th, td { padding:9px 8px; } td:nth-child(2) { white-space:normal; } }
 </style></head><body><main><h1>QA reports</h1>
 <p class="dim">Report pages of the browser-usability-test skill, newest first. Saved in ${escH(QA_REPORTS)}.</p>
+<input class="search" type="search" placeholder="Search by ticket number or title, e.g. 435" aria-label="Search by ticket number or title" autofocus>
 ${body}
 <p class="dim">Download saves the file to your Downloads folder, ready to drag into a chat or an issue. Copy path copies where it is saved, for a file picker (⌘⇧G) or Finder (Go → Go to Folder).</p></main>
 <script>
+const q = document.querySelector('.search');
+q.addEventListener('input', () => {
+  const words = q.value.toLowerCase().replace(/#/g, ' ').split(/\\s+/).filter(Boolean);
+  let any = false;
+  document.querySelectorAll('section').forEach((s) => {
+    let n = 0;
+    s.querySelectorAll('tbody tr').forEach((tr) => { const hit = words.every((w) => tr.dataset.search.includes(w)); tr.hidden = !hit; n += hit; });
+    s.hidden = !n; any ||= n > 0;
+  });
+  document.getElementById('none').hidden = any || !words.length;
+});
 document.querySelectorAll('[data-path]').forEach((b) => b.addEventListener('click', async () => {
   const label = b.textContent;
   try { await navigator.clipboard.writeText(b.dataset.path); b.textContent = 'Copied'; }
@@ -4415,6 +4492,15 @@ const reportServer = http.createServer((req, res) => {
   if (pathname === '/' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     return res.end(qaListPage());
+  }
+  const art = pathname.match(/^\/([A-Za-z0-9_-][A-Za-z0-9._-]*)\/artifacts\/([A-Za-z0-9_-][A-Za-z0-9._-]*\.html)$/);
+  const draft = pathname.startsWith('/drafts/') && draftFile(pathname.slice(8));
+  if (req.method === 'GET' && (art || draft)) {
+    const f = art ? path.join(QA_REPORTS, art[1], 'artifacts', art[2]) : draft;
+    if (!existsSync(f)) { res.writeHead(404); return res.end('page not found'); }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    // a draft's images sit next to it: packed in, so a download is one file
+    return res.end(art ? readFileSync(f) : inlineHtml(readFileSync(f, 'utf8'), path.dirname(f), { page: f }));
   }
   const m = pathname
     .match(/^\/([A-Za-z0-9_-][A-Za-z0-9._-]*)\/([A-Za-z0-9_-][A-Za-z0-9._-]*\.html)$/);
