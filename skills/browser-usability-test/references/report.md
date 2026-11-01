@@ -7,7 +7,7 @@ Use this structure. Plain words, concrete examples (real values, real ids).
 
 **TLDR:** <2–3 plain sentences: does it work, the worst problem, what to do first.>
 
-**Page to share:** [<date>-<route>-findings.html](file://<absolute path that compare.mjs printed>)
+**Report page:** [<date>-<route>-report.html](file://<absolute path that compare.mjs printed>) — updated after every change
 
 **Tested:** <one line per plan section: what you actually ran — states, widths, themes, number of AI questions, etc.>
 **Not tested:** <anything skipped and why>
@@ -50,5 +50,5 @@ Compared with: <sibling 1 (file:line)>, <sibling 2 (file:line)> — or "not test
 1. <fix> — <small & safe | needs design decision | backend>
 2. ...
 
-Want me to apply the small, safe ones (#…)? After the fixes I'll retake the finding screenshots and give you one before/after HTML file to share.
+Want me to apply the small, safe ones (#…)? After any change — mine or yours — I retake the finding screenshots and update the same report page with before and after.
 ````
