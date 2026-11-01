@@ -3328,7 +3328,7 @@ function drawFilesView(p) {
     node.files.push(f);
   }
   const under = (node) => [...node.files, ...Object.values(node.dirs).flatMap(under)];
-  let tree = '';
+  let tree;
   const walk = (node, prefix, depth) => {
     for (let name of Object.keys(node.dirs).sort()) {
       let d = node.dirs[name];
@@ -3355,7 +3355,8 @@ function drawFilesView(p) {
         '<span class="fst ' + f.st + '">' + f.st + '</span></div>';
     }
   };
-  walk(root, '', 0);
+  const treeHtml = () => { tree = ''; walk(root, '', 0); return tree; };
+  treeHtml();
   const nSeen = files.filter((f) => isViewed(p, f)).length;
   // VS Code's diff view (Monaco) when it loads; our own table is the fallback (offline, binary)
   const mono = !monacoFailed && !cur.binary && cur.hunks.length > 0 && !(cur.full === null && cur.fullErr);
@@ -3421,10 +3422,10 @@ function drawFilesView(p) {
   }
   byId('ptree').scrollTop = treeTop;
   // keyboard: ↑/↓ move, Enter opens a file or folds a folder, Space marks it viewed
-  const rows = [...v.querySelectorAll('.pf')];
-  const back = focusKey && rows.find((r) => (r.dataset.file || r.dataset.dir) === focusKey);
+  const back = focusKey && [...v.querySelectorAll('.pf')].find((r) => (r.dataset.file || r.dataset.dir) === focusKey);
   if (back) back.focus({ preventScroll: true });
   byId('ptree').addEventListener('keydown', (e) => {
+    const rows = [...byId('ptree').querySelectorAll('.pf')];
     const i = rows.indexOf(document.activeElement);
     if (i < 0) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -3440,10 +3441,6 @@ function drawFilesView(p) {
       e.preventDefault(); rows[i].querySelector('.flag').click();
     }
   });
-  v.querySelectorAll('[data-file]').forEach((el) => el.addEventListener('click', (e) => {
-    if (e.target.matches('input')) return;
-    prFile[p.key] = el.dataset.file; drawFilesView(p);
-  }));
   const markSeen = (list, on) => {
     const m = prViewed[p.pr.url] = prViewed[p.pr.url] || {}, r = prRecheck[p.pr.url] = prRecheck[p.pr.url] || {};
     for (const f of list) { if (on) { m[f.path] = f.hash; delete r[f.path]; } else delete m[f.path]; }
@@ -3471,24 +3468,37 @@ function drawFilesView(p) {
     });
     if (byId('rseen')) byId('rseen').textContent = marksText(p, files);
   };
-  v.querySelectorAll('[data-flag]').forEach((el) => el.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const f = files.find((x) => x.path === el.dataset.flag);
-    if (f) markRecheck(f, !isRecheck(p, f));
-  }));
-  v.querySelectorAll('[data-seen]').forEach((el) => el.addEventListener('change', () =>
-    markSeen(files.filter((x) => x.path === el.dataset.seen), el.checked)));
-  v.querySelectorAll('[data-seendir]').forEach((el) => {
-    el.indeterminate = !!el.dataset.some;
-    el.addEventListener('change', () =>
-      markSeen(files.filter((x) => x.path.startsWith(el.dataset.seendir + '/')), el.checked));
-  });
-  v.querySelectorAll('[data-dir]').forEach((el) => el.addEventListener('click', (e) => {
-    if (e.target.matches('input')) return;
-    const d = el.dataset.dir;
-    closed.has(d) ? closed.delete(d) : closed.add(d);
-    drawFilesView(p);
-  }));
+  // scope is the whole view on a full paint, only the tree when a folder folds
+  const bindRows = (scope) => {
+    scope.querySelectorAll('[data-file]').forEach((el) => el.addEventListener('click', (e) => {
+      if (e.target.matches('input')) return;
+      prFile[p.key] = el.dataset.file; drawFilesView(p);
+    }));
+    scope.querySelectorAll('[data-flag]').forEach((el) => el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const f = files.find((x) => x.path === el.dataset.flag);
+      if (f) markRecheck(f, !isRecheck(p, f));
+    }));
+    scope.querySelectorAll('[data-seen]').forEach((el) => el.addEventListener('change', () =>
+      markSeen(files.filter((x) => x.path === el.dataset.seen), el.checked)));
+    scope.querySelectorAll('[data-seendir]').forEach((el) => {
+      el.indeterminate = !!el.dataset.some;
+      el.addEventListener('change', () =>
+        markSeen(files.filter((x) => x.path.startsWith(el.dataset.seendir + '/')), el.checked));
+    });
+    // folding a folder repaints only the tree: the open diff stays as it is
+    scope.querySelectorAll('[data-dir]').forEach((el) => el.addEventListener('click', (e) => {
+      if (e.target.matches('input')) return;
+      const d = el.dataset.dir, pt = byId('ptree'), top = pt.scrollTop;
+      closed.has(d) ? closed.delete(d) : closed.add(d);
+      pt.innerHTML = treeHtml();
+      bindRows(pt);
+      pt.scrollTop = top;
+      const row = [...pt.querySelectorAll('[data-dir]')].find((r) => r.dataset.dir === d);
+      if (row) row.focus({ preventScroll: true });
+    }));
+  };
+  bindRows(v);
   v.querySelectorAll('[data-split]').forEach((el) => el.addEventListener('click', () => {
     diffSplit = el.dataset.split === '1';
     try { localStorage.setItem('dash-diff-split', diffSplit ? '1' : '0'); } catch {}
