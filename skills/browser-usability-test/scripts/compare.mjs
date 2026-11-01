@@ -37,6 +37,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { dirname, extname, join } from "node:path";
 import { BEFORE_AFTER_FILE, PROJECT } from "./lib.mjs";
 import { STORE } from "./profile.mjs";
+import { publish } from "./publish.mjs";
 
 const input = process.argv[2];
 if (!input) throw new Error("Usage: node compare.mjs <items.json> [--out=<file.html>]");
@@ -145,6 +146,8 @@ ${items
 
 // Questions for the reader. Answers are collected into one text block they copy
 // and send back; the "Short" line is the "1A, 2B" form Claude can act on.
+// 📊 as the tab icon, inline so a downloaded or shared copy has it too
+const QA_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="32" y="50" font-size="52" text-anchor="middle">📊</text></svg>`;
 const LETTERS = "ABCDEFGHIJ";
 // A string literal safe inside <script> (a title may contain "</script>").
 const jsString = (v) => JSON.stringify(v).replace(/</g, "\\u003c");
@@ -298,6 +301,7 @@ const html = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
+<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(QA_ICON)}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -497,4 +501,8 @@ const mb = statSync(out).size / 1024 / 1024;
 for (const w of warnings) console.error(`!! ${w}`);
 if (mb > 15)
   console.error(`!! ${mb.toFixed(1)} MB — too big for most email; take element shots (locator) instead of full pages.`);
-console.log(JSON.stringify({ out, updated, sizeMb: Number(mb.toFixed(2)), warnings }, null, 2));
+// The link for the chat report (http, so the VS Code chat can open it).
+const { url } = await publish(out);
+if (!url)
+  console.error(`!! No report link: the plans dashboard's report server (localhost:4898) isn't running, or the file is outside the reports folder. Open it with \`open ${out}\` (macOS) or \`xdg-open ${out}\` (Linux) and give the path.`);
+console.log(JSON.stringify({ out, url, updated, sizeMb: Number(mb.toFixed(2)), warnings }, null, 2));

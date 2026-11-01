@@ -36,6 +36,7 @@ Optional env: `QA_PHASE` (`after` when retaking finding shots after a fix), `QA_
 | `scripts/smoke.mjs <path>` | Opens a page signed in; prints headings, buttons, axe violations, console/network problems, light/dark screenshots, sideways-scroll check at 390/1100/1440/2555 px |
 | `scripts/api.mjs <METHOD> <path> [body]` | Calls the API as the test account and prints the response; `SQL "<select>"` runs a read-only query |
 | `scripts/compare.mjs <items.json>` | The test run's report as one self-contained HTML file (screenshots embedded) in `~/.claude/browser-usability-test/projects/<project>/reports/<date>-<route>-report.html`: written as soon as the findings are known, rewritten after every change; fixed findings show before and after |
+| `scripts/publish.mjs <report.html>` | The report's link for the chat: `http://localhost:4898/<project>/<file>.html`, served read-only by the plans dashboard (the VS Code chat opens only http(s) links). `compare.mjs` calls it. All reports, newest first: `http://localhost:4898/`. Another port: set `QA_REPORTS_PORT` for both the dashboard and Claude. Without the dashboard there is no link; Claude opens the file with `open` (macOS) or `xdg-open` (Linux) |
 | `scripts/lib.mjs` | Helpers below — import it from your own run scripts |
 
 ## `lib.mjs` helpers

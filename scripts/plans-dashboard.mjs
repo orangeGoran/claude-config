@@ -26,7 +26,7 @@
 import http from 'node:http';
 import {
   readFileSync, readdirSync, existsSync, openSync, mkdirSync, unlinkSync,
-  writeFileSync, renameSync, statSync, closeSync,
+  writeFileSync, renameSync, statSync, closeSync, readSync,
 } from 'node:fs';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import path from 'node:path';
@@ -37,6 +37,9 @@ const VERSION = '1.0.0';
 const HOME = os.homedir();
 const REG_FILE = path.join(HOME, '.claude', 'pipeline-projects.json');
 const CENTRAL = path.join(HOME, '.claude', 'pipeline-dashboard');
+// report pages written by the browser-usability-test skill, one folder per project
+const QA_REPORTS = process.env.QA_HOME || path.join(HOME, '.claude', 'browser-usability-test', 'projects');
+const QA_PORT = +(process.env.QA_REPORTS_PORT || 4898);
 const PORT = +(process.env.DASH_PORT || 4899);
 const NO_SUMMARY = !!process.env.DASH_NO_SUMMARY;
 const SUMMARY_MODEL = process.env.DASH_SUMMARY_MODEL || 'haiku';
@@ -68,6 +71,10 @@ Environment
   DASH_SUMMARY_MODEL=<m>
                       model the claude CLI uses for summaries (default haiku),
                       e.g. sonnet or claude-opus-5-5
+  QA_REPORTS_PORT=<n> port for the browser-usability-test report pages
+                      (default 4898, http://localhost:<n>/<project>/<file>.html)
+  QA_HOME=<dir>       where those reports live (default
+                      ~/.claude/browser-usability-test/projects)
 
 Files
   ${REG_FILE}
@@ -1079,10 +1086,19 @@ const taskLines = (body) => {
   });
   return out;
 };
+// After an action the PR list is read again before the answer goes back, so the next poll
+// already has the new state. The old list stays meanwhile: deleting it left every plan of the
+// repo without its PR for a few seconds, and an open PR tab jumped to the plan and back.
 const prAction = async (proj, b) => {
+  const r = await runPrAction(proj, b);
+  const c = prLists[proj.root];
+  if (c && c.loading) await c.loading;   // a read that started before the action is stale
+  await refreshPrList(proj);
+  return r;
+};
+const runPrAction = async (proj, b) => {
   const n = String(b.number);
   if (!/^\d{1,7}$/.test(n)) return { ok: false, output: 'Bad PR number.' };
-  delete prLists[proj.root];   // the list chip should change on the next poll, not in a minute
   if (b.action === 'ready') return gh(proj, ['pr', 'ready', n]);
   if (b.action === 'draft') return gh(proj, ['pr', 'ready', n, '--undo']);
   if (b.action === 'close')
@@ -1628,7 +1644,8 @@ const PAGE = /* html */ `<!doctype html>
   .btns { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
   button { background:var(--btn); color:var(--fg); border:1px solid var(--line); border-radius:8px;
            padding:7px 13px; cursor:pointer; font-size:calc(13px * var(--fs)); }
-  button:hover { border-color:var(--accent); }
+  button:hover, .hdlink:hover { border-color:var(--accent); }
+  .hdlink { color:var(--fg); text-decoration:none; border:1px solid var(--line); border-radius:8px; padding:7px 13px; font-size:calc(13px * var(--fs)); }
   button.primary { background:var(--accent); border-color:var(--accent); color:var(--accentfg); font-weight:600; }
   button.danger:hover { border-color:var(--bad); color:var(--bad); }
   .planview { margin-top:18px; border-top:1px solid var(--line); padding-top:14px; }
@@ -1935,6 +1952,13 @@ const PAGE = /* html */ `<!doctype html>
   .askrow { display:flex; align-items:center; gap:8px; margin-top:6px; font-size:calc(12.5px * var(--fs)); flex-wrap:wrap; }
   .rbar kbd { font:calc(10px * var(--fs)) ui-monospace,monospace; border:1px solid var(--line); border-radius:4px; padding:0 4px; margin-left:4px; color:var(--dim); }
   #ract { align-items:center; }
+  /* busy: a thin moving bar along the top while the page waits for GitHub or the server */
+  body.busy::before { content:''; position:fixed; top:0; left:0; right:0; height:3px; z-index:50; pointer-events:none;
+    background:linear-gradient(90deg, transparent, var(--accent), transparent) no-repeat; background-size:40% 100%;
+    animation:busybar 1.1s linear infinite; }
+  @keyframes busybar { from { background-position:-60% 0; } to { background-position:160% 0; } }
+  @media (prefers-reduced-motion: reduce) { body.busy::before { animation:none; background:var(--accent); opacity:.6; } }
+  .prsum { margin:0 0 14px; max-width:calc(1000px * var(--fs)); }
   .merr { border:1px solid var(--bad); color:var(--bad); background:color-mix(in srgb, var(--bad) 10%, transparent);
           border-radius:10px; padding:10px 13px; margin:0 0 12px; white-space:pre-wrap; }
   .merr b { color:var(--fg); }
@@ -1967,6 +1991,7 @@ const PAGE = /* html */ `<!doctype html>
   <span class="dim" id="clock"></span>
   <span class="hdwarn" id="connmsg" style="display:none"></span>
   <span class="dim" style="margin-left:auto">auto-refresh 5s · summaries generate in background</span>
+  <a class="hdlink" href="http://localhost:${QA_PORT}/" target="_blank" rel="noopener" title="report pages of the browser-usability-test skill">QA reports ↗</a>
   <button id="guidebtn" title="how it works, add a repo, start a run">Guide</button>
   <button id="settingsbtn" title="projects & settings">⚙ Settings</button>
   <button id="alertBtn" aria-pressed="false" title="Sound and notification when a run stops or the agent answers">🔕</button>
@@ -2793,10 +2818,12 @@ async function renderPrTab(p, tab, force) {
     return;
   }
   lastPrDraw = sig;
+  // ⟳ on the tab already open: keep it on screen while GitHub answers, instead of a blank "loading"
+  const pv = byId('prview'), again = force && pv && pv.dataset.of === p.key + tab;
   // only Files changed needs the whole window; the Pull request tab keeps the normal layout
   const review = tab === 'files';
   document.body.classList.toggle('review', review);
-  byId('detail').innerHTML = (review ? \`
+  if (!again) byId('detail').innerHTML = (review ? \`
     <div class="rbar"><button id="rback" title="back to the plan and the plan list (Esc)">‹ Plan <kbd>Esc</kbd></button>
       <span class="rname" title="\${escA(p.client + ' / ' + p.project + ' / ' + p.file)}">\${esc(p.slug)}</span>
       \${prTabs(p, tab)}<span class="seen" id="rseen"></span><span style="flex:1"></span>
@@ -2804,16 +2831,22 @@ async function renderPrTab(p, tab, force) {
     <div class="crumb">\${esc(p.client)} / 📁 \${esc(p.project)}</div>
     <h2 class="fname">\${p.file}</h2>
     <div class="subtitle">\${inline(p.title)}</div>
-    <div class="prtabsrow">\${prTabs(p, tab)}<span class="btns" id="ract"></span></div>\`) + \`
-    <div id="prview" class="dim" style="padding:16px 24px">loading PR #\${p.pr.number}…</div>\`;
-  if (review) byId('rback').addEventListener('click', () => { prTab[p.key] = 'plan'; renderDetail(false); });
-  bindPrTabs(p);
+    <div class="prtabsrow">\${prTabs(p, tab)}<span class="btns" id="ract"></span></div>
+    \${p.summary ? '<div class="summary prsum">💡 ' + esc(p.summary) + '</div>' : ''}\`) + \`
+    <div id="prview" class="dim" style="padding:16px 24px" data-of="\${escA(p.key + tab)}">loading PR #\${p.pr.number}…</div>\`;
+  if (!again) {
+    if (review) byId('rback').addEventListener('click', () => { prTab[p.key] = 'plan'; renderDetail(false); });
+    bindPrTabs(p);
+  }
   const d = prData[p.key];
-  if (force || !d || d.from !== JSON.stringify(p.pr)) await loadPr(p);
-  if (lastPrDraw !== sig) return;   // another plan or tab was opened meanwhile
-  drawBarAction(p, tab);
-  if (tab === 'pr') drawPr(p);
-  else await drawFiles(p, force);
+  busy(true);
+  try {
+    if (force || !d || d.from !== JSON.stringify(p.pr)) await loadPr(p);
+    if (lastPrDraw !== sig) return;   // another plan or tab was opened meanwhile
+    drawBarAction(p, tab);
+    if (tab === 'pr') drawPr(p);
+    else await drawFiles(p, force);
+  } finally { busy(false); }
 }
 // the one next step, always on the right of the bar: Ready for review, then Merge
 function drawBarAction(p, tab) {
@@ -2827,13 +2860,14 @@ function drawBarAction(p, tab) {
   rf.textContent = '⟳'; rf.className = 'rfbtn'; rf.title = 'Reload the PR from GitHub, for example after a push';
   rf.setAttribute('aria-label', 'Reload the PR from GitHub');
   rf.addEventListener('click', async () => {
-    rf.disabled = true; rf.textContent = '⟳ …';
+    rf.disabled = true; rf.textContent = '⟳ …'; busy(true);
     await fetch('/api/pr-refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project: p.project, slug: p.slug }) }).catch(() => {});
     while (ticking) await new Promise((r) => setTimeout(r, 100));
     const before = lastPrDraw;
     await refresh();   // a new head commit redraws the tab from here already
-    if (lastPrDraw === before) { lastPrDraw = null; renderDetail(true); }
+    if (lastPrDraw === before) { lastPrDraw = null; await renderDetail(true); }
+    busy(false);
   });
   R.appendChild(rf);
   if (d.state !== 'OPEN') return;
@@ -2854,7 +2888,17 @@ function drawBarAction(p, tab) {
 }
 // what GitHub said when it refused, shown in the PR tab until the next action
 const prErr = {};
+// a PR never goes away (closed ones stay listed), so a poll without it is a gap in the list,
+// not news: the plan keeps the last PR it had instead of falling back to the plan tab
+const knownPr = {};
+// a thin bar under the header while the page waits for GitHub or the server
+let busyN = 0;
+const busy = (on) => { busyN = Math.max(0, busyN + (on ? 1 : -1)); document.body.classList.toggle('busy', busyN > 0); };
+const LABEL_BUSY = { ready: 'Marking ready…', draft: 'Back to draft…', close: 'Closing…', merge: 'Merging…', task: 'Saving…' };
 async function prAct(p, data) {
+  busy(true);
+  const label = LABEL_BUSY[data.action];
+  document.querySelectorAll('#ract button:not(.rfbtn)').forEach((b) => { b.disabled = true; if (label) b.textContent = label; });
   let r;
   try {
     r = await (await fetch('/api/pr-action', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2866,6 +2910,7 @@ async function prAct(p, data) {
   await loadPr(p);
   drawBarAction(p, prTab[p.key]);
   if (byId('prbody')) drawPr(p);
+  busy(false);
   refresh();
 }
 async function closePr(p) {
@@ -4232,10 +4277,11 @@ async function refreshOnce() {
     }
     state = next;
     plans = state.flatMap((proj) => proj.plans.map((p) => ({
-      ...p, project: proj.name, client: proj.client,
+      ...p, pr: p.pr || knownPr[proj.name + '/' + p.slug] || null, project: proj.name, client: proj.client,
       hasPipeline: proj.hasPipeline, modes: proj.modes, launchers: proj.launchers, issuesUrl: proj.issuesUrl,
       prError: proj.prError,
     })));
+    for (const p of plans) if (p.pr) knownPr[p.key] = p.pr;
     // don't clobber the pane (and steal focus) while the user is typing in it
     const typing = byId('detail').contains(document.activeElement)
       && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
@@ -4271,6 +4317,100 @@ if (new URLSearchParams(location.search).get('tour')) {
 }
 if (new URLSearchParams(location.search).get('guide')) openGuide(+new URLSearchParams(location.search).get('guide') - 1 || 0);
 </script>`;
+
+// Report pages of the browser-usability-test skill, read-only, so a chat link can open
+// them: http://localhost:4898/<project>/<file>.html, and the list of all of them at /. A separate port is a separate
+// origin: a report runs its own scripts, and the dashboard's crossSiteReason refuses
+// its calls, while localStorage and the clipboard (localhost is secure) still work.
+const htmlText = (s) => s.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+// 📊 as the tab icon of the list and the reports (reports written before they had one ask /favicon.ico)
+const QA_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="32" y="50" font-size="52" text-anchor="middle">📊</text></svg>`;
+const escH = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// every report page, grouped by project, the project with the newest report first
+const qaReports = () => (existsSync(QA_REPORTS) ? readdirSync(QA_REPORTS) : [])
+  .filter((p) => safeName(p) && !p.startsWith('.'))
+  .flatMap((project) => {
+    const dir = path.join(QA_REPORTS, project, 'reports');
+    if (!existsSync(dir)) return [];
+    const rows = readdirSync(dir).filter((f) => f.endsWith('.html') && safeName(f) && !f.startsWith('.')).map((f) => {
+      const file = path.join(dir, f), st = statSync(file);
+      // the <title> is in the first few KB; a report can be MBs of embedded screenshots
+      const buf = Buffer.alloc(8192), fd = openSync(file, 'r');
+      const n = readSync(fd, buf, 0, buf.length, 0);
+      closeSync(fd);
+      const title = buf.toString('utf8', 0, n).match(/<title>([^<]*)<\/title>/i)?.[1];
+      return { file: f, path: file, title: title ? htmlText(title) : f, mtime: st.mtimeMs, size: st.size };
+    }).sort((a, b) => b.mtime - a.mtime);
+    return rows.length ? [{ project, rows }] : [];
+  })
+  .sort((a, b) => b.rows[0].mtime - a.rows[0].mtime);
+const qaListPage = () => {
+  const when = (ms) => new Date(ms).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const size = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB');
+  const groups = qaReports();
+  const body = groups.length ? groups.map(({ project, rows }) => `<section><h2>${escH(project)} <span>${rows.length}</span></h2>
+<table><thead><tr><th>Report</th><th>Updated</th><th>Size</th><th><span class="sr">Actions</span></th></tr></thead><tbody>
+${rows.map((r) => {
+  const href = `/${encodeURIComponent(project)}/${encodeURIComponent(r.file)}`;
+  return `<tr><td><a href="${href}" target="_blank" rel="noopener">${escH(r.title)}</a><div class="file">${escH(r.file)}</div></td><td>${when(r.mtime)}</td><td>${size(r.size)}</td>
+<td><div class="act"><a class="btn" href="${href}" download="${escH(r.file)}" aria-label="Download ${escH(r.file)}">Download</a><button class="btn" type="button" data-path="${escH(r.path)}" aria-label="Copy the path of ${escH(r.file)}">Copy path</button></div></td></tr>`;
+}).join('\n')}
+</tbody></table></section>`).join('\n')
+    : `<p class="dim">No reports yet. The browser-usability-test skill writes them to ${escH(QA_REPORTS)}/&lt;project&gt;/reports/.</p>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QA reports</title><link rel="icon" href="data:image/svg+xml,${encodeURIComponent(QA_ICON)}"><style>
+:root { --bg:#f4f5f8; --panel:#fff; --line:#d9dde6; --fg:#1d2433; --dim:#5f6b81; --link:#1d4ed8; color-scheme:light; }
+@media (prefers-color-scheme: dark) { :root { --bg:#292e39; --panel:#2e3440; --line:#434c5e; --fg:#eceff4; --dim:#a3abbd; --link:#88c0d0; color-scheme:dark; } }
+body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+main { max-width:1100px; margin:0 auto; padding:28px 16px 64px; }
+h1 { font-size:20px; margin:0 0 4px; } .dim, h2 span, .file, th { color:var(--dim); }
+h2 { font-size:16px; margin:28px 0 8px; } h2 span { font-weight:400; font-size:13px; }
+table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+th, td { text-align:left; vertical-align:top; padding:9px 12px; border-bottom:1px solid var(--line); }
+th { font-size:12px; font-weight:500; } tr:last-child td { border-bottom:0; }
+td:nth-child(n+2) { white-space:nowrap; } a { color:var(--link); text-decoration:none; font-weight:500; } a:hover { text-decoration:underline; }
+.file { font:12px ui-monospace, Menlo, monospace; overflow-wrap:anywhere; }
+.act { display:flex; gap:6px; justify-content:flex-end; }
+.btn { font:inherit; font-size:12.5px; font-weight:400; color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:4px 10px; cursor:pointer; white-space:nowrap; }
+.btn:hover { border-color:var(--link); text-decoration:none; } .btn:focus-visible, a:focus-visible { outline:2px solid var(--link); outline-offset:2px; }
+.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+@media (max-width:600px) { th:nth-child(3), td:nth-child(3) { display:none; } .act { flex-direction:column; } th, td { padding:9px 8px; } td:nth-child(2) { white-space:normal; } }
+</style></head><body><main><h1>QA reports</h1>
+<p class="dim">Report pages of the browser-usability-test skill, newest first. Saved in ${escH(QA_REPORTS)}.</p>
+${body}
+<p class="dim">Download saves the file to your Downloads folder, ready to drag into a chat or an issue. Copy path copies where it is saved, for a file picker (⌘⇧G) or Finder (Go → Go to Folder).</p></main>
+<script>
+document.querySelectorAll('[data-path]').forEach((b) => b.addEventListener('click', async () => {
+  const label = b.textContent;
+  try { await navigator.clipboard.writeText(b.dataset.path); b.textContent = 'Copied'; }
+  catch { window.prompt('Copy the path:', b.dataset.path); }
+  setTimeout(() => { b.textContent = label; }, 1500);
+}));
+</script></body></html>`;
+};
+const reportServer = http.createServer((req, res) => {
+  const host = (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
+  // a rebound public name must not read the reports (they hold test data)
+  if (!['localhost', '127.0.0.1'].includes(host)) { res.writeHead(403); return res.end('local access only'); }
+  const pathname = new URL(req.url, 'http://x').pathname;
+  if (pathname === '/favicon.ico' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-cache' });
+    return res.end(QA_ICON);
+  }
+  if (pathname === '/' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(qaListPage());
+  }
+  const m = pathname
+    .match(/^\/([A-Za-z0-9_-][A-Za-z0-9._-]*)\/([A-Za-z0-9_-][A-Za-z0-9._-]*\.html)$/);
+  const f = m && path.join(QA_REPORTS, m[1], 'reports', m[2]);
+  if (req.method !== 'GET' || !f || !existsSync(f)) { res.writeHead(404); return res.end('report not found'); }
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(readFileSync(f));
+});
+reportServer.on('error', (e) => console.error(`QA reports server on port ${QA_PORT}: ${e.code || e}`));
+reportServer.listen(QA_PORT, '127.0.0.1');
 
 server.on('error', (e) => {
   if (e.code === 'EADDRINUSE')

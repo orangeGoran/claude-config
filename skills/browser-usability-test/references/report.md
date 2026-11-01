@@ -7,7 +7,7 @@ Use this structure. Plain words, concrete examples (real values, real ids).
 
 **TLDR:** <2–3 plain sentences: does it work, the worst problem, what to do first.>
 
-**Report page:** [<date>-<route>-report.html](file://<absolute path that compare.mjs printed>) — updated after every change
+**Report page:** [<date>-<route>-report.html](<url that compare.mjs printed>) — updated after every change
 
 **Tested:** <one line per plan section: what you actually ran — states, widths, themes, number of AI questions, etc.>
 **Not tested:** <anything skipped and why>
@@ -25,7 +25,7 @@ Use this structure. Plain words, concrete examples (real values, real ids).
 
 Severity: **High** = wrong data, data leak, blocks the task. **Medium** = confusing or broken secondary flow. **Low** = polish.
 
-Evidence: [Open evidence folder](file://<absolute QA_DIR path>/) — <file names of the screenshots / JSON for the key findings>
+Evidence: [<file name>](<absolute path>) · [<file name>](<absolute path>) — the screenshots / JSON for the key findings, in `<absolute QA_DIR path>`
 
 ### Consistency with similar features
 

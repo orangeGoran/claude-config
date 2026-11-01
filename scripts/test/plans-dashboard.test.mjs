@@ -21,7 +21,7 @@ const freePort = () => new Promise((resolve, reject) => {
   s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
 });
 
-let tmp, home, repo, plansDir, port, server, ghDir;
+let tmp, home, repo, plansDir, port, qaPort, server, ghDir;
 
 // a stand-in for the gh CLI: answers from files in ghDir and logs every call, so no
 // test ever talks to GitHub
@@ -54,6 +54,7 @@ out({ type: 'result', subtype: 'success', is_error: false, session_id: id, total
 const start = async () => {
   const child = spawn(process.execPath, [SCRIPT], {
     env: { ...process.env, HOME: home, DASH_PORT: String(port), DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1',
+           QA_REPORTS_PORT: String(qaPort), QA_HOME: '',
            PATH: path.join(ghDir, 'bin') + ':' + process.env.PATH, FAKE_GH_DIR: ghDir },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -102,6 +103,7 @@ before(async () => {
     projects: [{ name: 'demo', client: 'Test', root: repo, plansDir, launchers: [] }],
   }));
   port = await freePort();
+  qaPort = await freePort();
   server = await start();
 });
 
@@ -504,6 +506,9 @@ test("shows the PR on the plan's auto/<slug> branch and acts on it through gh", 
   const act = (b) => post('/api/pr-action', { project: 'demo', slug: 'demo-plan', number: 7, ...b });
   const calls = () => readFileSync(path.join(ghDir, 'calls.log'), 'utf8');
   assert.deepEqual(await act({ action: 'ready' }), { ok: true });
+  // the list is read again before the answer: the plan never shows without its PR in between
+  assert.equal((await onlyPlan()).pr?.number, 7, 'the PR stays on the plan right after an action');
+  assert.match(calls().split('\n').slice(-3).join('\n'), /^pr list /m, 'the action re-reads the PR list');
   assert.deepEqual(await act({ action: 'close', deleteBranch: true }), { ok: true });
   assert.match(calls(), /^pr ready 7$/m);
   assert.match(calls(), /^pr close 7 --delete-branch$/m);
@@ -561,4 +566,30 @@ test('merge runs gh pr merge on the reviewed commit, deletes the remote branch, 
 
   assert.equal((await act({ action: 'merge', method: 'octopus', head })).ok, false);
   assert.equal((await act({ action: 'merge', method: 'merge', head: 'HEAD' })).ok, false);
+});
+
+test('serves browser-usability-test reports read-only on their own port, with a list', async () => {
+  const dir = path.join(home, '.claude', 'browser-usability-test', 'projects', 'solver');
+  mkdirSync(path.join(dir, 'reports'), { recursive: true });
+  writeFileSync(path.join(dir, 'reports', '2026-11-01-cases-report.html'), '<!doctype html><title>D4 &#34;Confirmed by&#34; works</title><p>report</p>');
+  writeFileSync(path.join(dir, 'accounts.json'), '{"secret":true}');
+  const qa = (p) => fetch(`http://127.0.0.1:${qaPort}${p}`);
+
+  const list = await (await qa('/')).text();
+  assert.match(list, /href="\/solver\/2026-11-01-cases-report\.html"[^>]*>D4 &quot;Confirmed by&quot; works</, 'the list links each report by its title');
+  assert.match(list, /href="\/solver\/2026-11-01-cases-report\.html" download="2026-11-01-cases-report\.html"/, 'each report has a Download button');
+  assert.ok(list.includes(`data-path="${path.join(dir, 'reports', '2026-11-01-cases-report.html')}"`), 'each report has Copy path with its full path');
+  const icon = await qa('/favicon.ico');
+  assert.equal(icon.headers.get('content-type'), 'image/svg+xml', 'older reports without an icon of their own get one');
+  const page = await qa('/solver/2026-11-01-cases-report.html');
+  assert.equal(page.status, 200);
+  assert.equal(page.headers.get('cache-control'), 'no-store', 'an updated report shows at once');
+  for (const p of ['/solver/accounts.json', '/solver/reports/2026-11-01-cases-report.html', '/solver/..%2Faccounts.json', '/.x/a.html', '/solver/nope.html'])
+    assert.equal((await qa(p)).status, 404, p);
+  // fetch drops a Host header, so this one goes through http.request
+  const rebound = await new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port: qaPort, path: '/', headers: { Host: 'evil.example' } },
+    (r) => { r.resume(); resolve(r.statusCode); }).on('error', reject));
+  assert.equal(rebound, 403, 'a rebound public name is refused');
+  assert.equal((await get('/solver/2026-11-01-cases-report.html')).status, 404, 'the dashboard port does not serve reports');
+  assert.match(await (await get('/')).text(), new RegExp(`href="http://localhost:${qaPort}/"`), 'the header links the list');
 });
