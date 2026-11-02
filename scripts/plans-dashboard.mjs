@@ -4419,7 +4419,7 @@ const qaListPage = () => {
       r.guessed && '<span>project guessed from the page text</span>'].filter(Boolean).join(' ');
     const dl = r.download || r.file;
     return `<tr data-search="${escH(search)}"><td>${open}<div class="file">${sub}</div></td><td>${r.day ? day(r.mtime) : when(r.mtime)}</td><td>${r.size ? size(r.size) : ''}</td>
-<td><div class="act">${r.href ? `<a class="btn" href="${r.href}" download="${escH(dl)}" aria-label="Download ${escH(dl)}">Download</a><button class="btn" type="button" data-path="${escH(r.path)}" aria-label="Copy the path of ${escH(dl)}">Copy path</button>` : `<button class="btn" type="button" data-path="${escH(r.url)}" aria-label="Copy the link of ${escH(r.title)}">Copy link</button>`}</div></td></tr>`;
+<td><div class="act">${r.href ? `<a class="btn" href="${r.href}?download" download="${escH(dl)}" aria-label="Download ${escH(dl)}">Download</a><button class="btn" type="button" data-path="${escH(r.path)}" aria-label="Copy the path of ${escH(dl)}">Copy path</button>` : `<button class="btn" type="button" data-path="${escH(r.url)}" aria-label="Copy the link of ${escH(r.title)}">Copy link</button>`}</div></td></tr>`;
   };
   const section = (name, rows, note = '') => `<section><h2>${escH(name)} <span>${rows.length}</span></h2>${note}
 <table><thead><tr><th>Page</th><th>Updated</th><th>Size</th><th><span class="sr">Actions</span></th></tr></thead><tbody>
@@ -4480,6 +4480,18 @@ document.querySelectorAll('[data-path]').forEach((b) => b.addEventListener('clic
 }));
 </script></body></html>`;
 };
+// a Download button at the top right of every page served here; ?download gives the file as saved, without the button
+const DL_BUTTON = `<style>#qa-dl{all:initial;position:fixed;top:10px;right:10px;z-index:2147483647;font:500 12.5px system-ui,-apple-system,sans-serif;color:#eceff4;background:rgba(46,52,64,.88);border:1px solid #4c566a;border-radius:6px;padding:5px 11px;cursor:pointer;opacity:.75}
+#qa-dl:hover,#qa-dl:focus-visible{opacity:1;outline:2px solid #88c0d0;outline-offset:2px}@media print{#qa-dl{display:none}}</style>
+<a id="qa-dl" href="?download" download title="Download this page as one HTML file">⬇ Download</a>`;
+const sendPage = (req, res, html, name) => {
+  const dl = new URL(req.url, 'http://x').searchParams.has('download');
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
+    ...(dl && { 'Content-Disposition': `attachment; filename="${name.replace(/[^A-Za-z0-9._-]/g, '_')}"` }) });
+  if (dl) return res.end(html);
+  const s = String(html), at = s.lastIndexOf('</body>');
+  res.end(at < 0 ? s + DL_BUTTON : s.slice(0, at) + DL_BUTTON + s.slice(at));
+};
 const reportServer = http.createServer((req, res) => {
   const host = (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
   // a rebound public name must not read the reports (they hold test data)
@@ -4498,16 +4510,14 @@ const reportServer = http.createServer((req, res) => {
   if (req.method === 'GET' && (art || draft)) {
     const f = art ? path.join(QA_REPORTS, art[1], 'artifacts', art[2]) : draft;
     if (!existsSync(f)) { res.writeHead(404); return res.end('page not found'); }
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     // a draft's images sit next to it: packed in, so a download is one file
-    return res.end(art ? readFileSync(f) : inlineHtml(readFileSync(f, 'utf8'), path.dirname(f), { page: f }));
+    return sendPage(req, res, art ? readFileSync(f) : inlineHtml(readFileSync(f, 'utf8'), path.dirname(f), { page: f }), path.basename(f));
   }
   const m = pathname
     .match(/^\/([A-Za-z0-9_-][A-Za-z0-9._-]*)\/([A-Za-z0-9_-][A-Za-z0-9._-]*\.html)$/);
   const f = m && path.join(QA_REPORTS, m[1], 'reports', m[2]);
   if (req.method !== 'GET' || !f || !existsSync(f)) { res.writeHead(404); return res.end('report not found'); }
-  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-  res.end(readFileSync(f));
+  sendPage(req, res, readFileSync(f), m[2]);
 });
 reportServer.on('error', (e) => console.error(`QA reports server on port ${QA_PORT}: ${e.code || e}`));
 reportServer.listen(QA_PORT, '127.0.0.1');
