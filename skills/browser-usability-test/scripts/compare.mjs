@@ -12,7 +12,7 @@
 //     "summary": "…",                                        // TLDR: does it work now, what is still open
 //     "before": "HEAD 89dd94d", "after": "working tree",     // optional, what each side was taken from
 //     "old": "main 1a2b3c4",                                 // feature/redesign runs: the code without the change
-//     "changes": [{ "title": "Causes and validation on one page", "note": "…",  // feature/redesign runs: old vs new
+//     "changes": [{ "id": "D4", "title": "Causes and validation on one page", "note": "…",  // feature/redesign runs: old vs new; "id" optional
 //                   "shots": ["d4-page", { "name": "d4-header", "caption": "Header", "oldCaption": "…", "newCaption": "…" }] }],  // changeShot names
 //     "dirs": ["<other account's QA_DIR>"],                  // optional
 //     "items": [{ "id": "1", "problem": "…", "severity": "Medium", "fix": "…",
@@ -30,10 +30,13 @@
 //     "notTested": ["Safari", "…"],                          // optional
 //     "questions": [{ "question": "Is the wrapped filter bar OK on a phone?",   // optional; the reader answers
 //                     "finding": "1",                         // shown inside that finding; without it, at the end
+//                     "change": "D4",                         // or under that change's pictures (its "id", title or 1-based number)
 //                     "why": "…",                             // optional context
 //                     "type": "radio" | "checkbox" | "text",  // default radio
 //                     "options": [{ "label": "Yes, keep it", "detail": "…", "recommended": true }],
 //                     "other": true }],                       // optional free-text "Other" option
+//     "changeTags": { "old": "Today", "new": "Proposal" },   // optional, labels of the two sides (default Original / Current)
+//     "changesLead": "…",                                    // optional, replaces the lead line of "What changed"
 //     "copyBlocks": [{ "title": "Missing from backend", "lead": "…", "text": "…" }]           // optional, with a Copy button
 //   }
 // "before" is the version tested. "reviewEachFix" asks "Should I apply this fix?" on an open
@@ -93,7 +96,7 @@ function stateDiff(b, a) {
 }
 
 // Reader-facing names: a ticket's change is "Original / Current", a finding's fix is "Bug / Fixed".
-const TAG = { before: "Bug", after: "Fixed", ref: "Standard", old: "Original", new: "Current" };
+const TAG = { before: "Bug", after: "Fixed", ref: "Standard", old: spec.changeTags?.old ?? "Original", new: spec.changeTags?.new ?? "Current" };
 
 function figure(kind, file, caption, alt, rec) {
   const state = rec ? `<span class="state">${esc(describe(rec))}</span>` : "";
@@ -141,11 +144,13 @@ ${figure("new", rec.new?.file, newCaption ?? caption ?? name, `${change.title}: 
 </div>${diff.length ? `<p class="warn">Not taken in the same state: ${esc(diff.join(", "))}</p>` : ""}`;
 }
 
-const changes = (spec.changes ?? []).length
+// Rendered after the question helpers exist and before the findings, so the questions
+// under each change are numbered in page order.
+const renderChanges = () => (spec.changes ?? []).length
   ? `<section aria-labelledby="changes">
 <span class="eyebrow">The change</span>
 <h2 id="changes">What changed</h2>
-<p class="lead">Original: the page before the ticket${spec.old ? ` (${esc(spec.old)})` : ""}. Current: the page with all its changes${spec.after ?? spec.before ? ` (${esc(spec.after ?? spec.before)})` : ""}. Same width, theme and account on both sides.</p>
+<p class="lead">${spec.changesLead ? esc(spec.changesLead) : `Original: the page before the ticket${spec.old ? ` (${esc(spec.old)})` : ""}. Current: the page with all its changes${spec.after ?? spec.before ? ` (${esc(spec.after ?? spec.before)})` : ""}. Same width, theme and account on both sides.`}</p>
 </section>
 ${spec.changes
   .map(
@@ -153,6 +158,7 @@ ${spec.changes
 <h2 id="ch${n}">${esc(c.title)}</h2>
 ${c.note ? `<p class="note">${esc(c.note)}</p>` : ""}
 ${(c.shots ?? []).map((s) => changePair(c, s)).join("\n")}
+${forChange(c, n).map(question).join("\n")}
 </section>`,
   )
   .join("\n")}`
@@ -210,7 +216,16 @@ const forFinding = (item) => [
   ...(spec.reviewEachFix || item.review ? [{ ...REVIEW(item), finding: item.id }] : []),
   ...asked.filter((q) => sameId(q.finding, item.id)),
 ];
-const general = asked.filter((q) => !items.some((i) => sameId(q.finding, i.id)));
+const isChange = (q, c, n) =>
+  q.change != null && (sameId(q.change, c.id) || sameId(q.change, c.title) || sameId(q.change, n + 1));
+const changeKey = (c, n) => c.id ?? String(n + 1);
+const forChange = (c, n) =>
+  asked.filter((q) => isChange(q, c, n)).map((q) => ({ ...q, finding: changeKey(c, n) }));
+const general = asked.filter(
+  (q) =>
+    !items.some((i) => sameId(q.finding, i.id)) &&
+    !(spec.changes ?? []).some((c, n) => isChange(q, c, n)),
+);
 let askedCount = 0;
 const question = (q) => {
   const type = q.type ?? "radio";
@@ -237,6 +252,7 @@ ${options}
 ${type === "text" ? "" : `<input type="text" class="qnote" placeholder="Comment (optional)" aria-label="Comment for question ${esc(q.id)}">`}
 </fieldset>`;
 };
+const changes = renderChanges();
 const findings = items.map((item) => {
   const text =
     item.beforeText || item.afterText
@@ -280,7 +296,7 @@ const questions = inline || general.length
   ? `<section aria-labelledby="questions">
 <span class="eyebrow">Your answers</span>
 <h2 id="questions">${general.length ? "Questions" : "Send your answers"}</h2>
-<p class="lead">${inline ? `${inline === 1 ? "One question is" : `${inline} questions are`} next to the findings above. ` : ""}Answer in this page, then press <strong>Copy answers</strong> and send the text back. Answers stay in this browser until you send them.</p>
+<p class="lead">${inline ? `${inline === 1 ? "One question is" : `${inline} questions are`} next to the pictures above. ` : ""}Answer in this page, then press <strong>Copy answers</strong> and send the text back. Answers stay in this browser until you send them.</p>
 ${general.map(question).join("\n")}
 <label class="who">Your name <input type="text" id="who" autocomplete="name"></label>
 <button class="copy" type="button" data-target="answers">Copy answers</button>
