@@ -1816,6 +1816,13 @@ const server = http.createServer(async (req, res) => {
         if (!proj) return json(res, 400, { error: 'bad project' });
         return json(res, 200, saveLaunchers(proj.name, Array.isArray(b.launchers) ? b.launchers : []));
       }
+      // 📥 Pull on a project header: the same fast-forward pull, on the branch the main checkout is on
+      if (url.pathname === '/api/pull') {
+        if (!proj) return json(res, 400, { error: 'bad project' });
+        const br = await gitIn(proj.root, ['rev-parse', '--abbrev-ref', 'HEAD']);
+        const note = await pullRoot(proj, br.out);
+        return json(res, 200, { ok: !note.startsWith('Not pulled'), output: note });
+      }
       if (!proj || !safeName(b.slug)) return json(res, 400, { error: 'bad request' });
       if (url.pathname === '/api/launch-generic')
         return json(res, 200, launchGeneric(proj, b.slug, +b.launcher || 0));
@@ -2739,7 +2746,9 @@ function renderList() {
       return '<div class="phead" data-toggle="' + esc(pr) + '"><span class="chev">' +
         (closed ? '▸' : '▾') + '</span>📁 ' + esc(pr) +
         (hasLanes ? '<button class="pbtn" data-suggest="' + esc(pr) +
-          '" title="suggest a parallel launch batch">🧭 Suggest</button>' : '') + runBadges +
+          '" title="suggest a parallel launch batch">🧭 Suggest</button>' : '') +
+        '<button class="pbtn" data-pull="' + esc(pr) + '" title="git pull --ff-only in ' + escA(sp.root) +
+          ' (the branch it is on, from its remote)">📥 Pull</button>' + runBadges +
         (sp.setupLevel === 'red' ? '<span class="chip bad x" data-guide="' + escA(sp.root) +
           '" title="something required is missing — open the guide">needs setup</span>' : '') +
         '<span class="cnt">' + items.length + ' plan' + (items.length === 1 ? '' : 's') +
@@ -2757,6 +2766,13 @@ function renderList() {
     }));
   byId('side').querySelectorAll('[data-suggest]').forEach((el) =>
     el.addEventListener('click', (e) => { e.stopPropagation(); openSuggest(el.dataset.suggest); }));
+  byId('side').querySelectorAll('[data-pull]').forEach((el) =>
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      el.disabled = true; el.textContent = '📥 Pulling…';
+      await post('/api/pull', { project: el.dataset.pull }, true);
+      el.disabled = false; el.textContent = '📥 Pull';
+    }));
   const allProjNames = [...new Set(plans.map((p) => p.project))];
   byId('collapseAll').textContent =
     allProjNames.length && allProjNames.every((n) => collapsedProjects.has(n))

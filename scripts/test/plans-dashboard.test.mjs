@@ -651,6 +651,17 @@ test('merge runs gh pr merge on the reviewed commit, deletes the remote branch, 
 
   assert.equal((await act({ action: 'merge', method: 'octopus', head })).ok, false);
   assert.equal((await act({ action: 'merge', method: 'merge', head: 'HEAD' })).ok, false);
+
+  // 📥 Pull on the project header pulls the branch the checkout is on, without a merge
+  git(repo, 'checkout', '-q', 'main');
+  writeFileSync(path.join(other, 'later.txt'), 'y');
+  git(other, 'add', '-A'); git(other, 'commit', '-qm', 'later'); git(other, 'push', '-q');
+  const pulled = await post('/api/pull', { project: 'demo' });
+  assert.equal(pulled.ok, true, JSON.stringify(pulled));
+  assert.match(pulled.output, /^Pulled main in /);
+  assert.ok(existsSync(path.join(repo, 'later.txt')), 'the main checkout was pulled');
+  assert.match((await post('/api/pull', { project: 'demo' })).output, /already up to date/);
+  assert.equal((await post('/api/pull', { project: 'nope' })).error, 'bad project');
 });
 
 test('serves browser-usability-test reports read-only on their own port, with a list', async () => {
