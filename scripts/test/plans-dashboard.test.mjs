@@ -6,7 +6,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import http from 'node:http';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -37,18 +37,64 @@ else if (a[1] === 'edit') fs.writeFileSync(body, fs.readFileSync(0));
 else if (a[0] === 'api') process.stdout.write('whole file\\n');
 `;
 
-// stands in for `claude -p --resume`: echoes the question, refuses `git merge` until allowed
+// stands in for `claude -p` in stream-json mode: answers the protocol's first question, then
+// each message, writes its own transcript, and asks permission before `git merge`
 const FAKE_CLAUDE = `#!/usr/bin/env node
 const fs = require('fs'), path = require('path');
-const a = process.argv.slice(2), q = fs.readFileSync(0, 'utf8');
-fs.appendFileSync(path.join(process.env.FAKE_GH_DIR, 'claude-calls.log'), a.join(' ') + ' <<< ' + q + '\\n');
-const id = a.includes('--fork-session') ? 'ses-copy' : a[a.indexOf('--resume') + 1];
-const denied = /merge/.test(q) && !a.includes('Bash(git merge main)')
-  ? [{ tool_name: 'Bash', tool_use_id: 't1', tool_input: { command: 'git fetch && git merge main' } }] : [];
+const a = process.argv.slice(2);
+const note = (l) => fs.appendFileSync(path.join(process.env.FAKE_GH_DIR, 'claude-calls.log'), l + '\\n');
+note(a.join(' '));
+const r = a.indexOf('--resume');
+const id = r < 0 ? 'ses-probe' : a.includes('--fork-session') ? 'ses-copy' : a[r + 1];
+const dir = path.join(process.env.HOME, '.claude', 'projects', process.cwd().replace(/[^a-zA-Z0-9]/g, '-'));
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
-out({ type: 'system', subtype: 'init', session_id: id });
-out({ type: 'assistant', session_id: id, message: { content: [{ type: 'text', text: 'answer: ' + q }] } });
-out({ type: 'result', subtype: 'success', is_error: false, session_id: id, total_cost_usd: 0.01, permission_denials: denied });
+const log = (o) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(path.join(dir, id + '.jsonl'), JSON.stringify(o) + '\\n'); };
+let q = '';
+const answer = (text) => {
+  out({ type: 'stream_event', session_id: id, parent_tool_use_id: null, event: { type: 'message_start' } });
+  out({ type: 'stream_event', session_id: id, parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } });
+  log({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } });
+  out({ type: 'assistant', session_id: id, parent_tool_use_id: null, message: { content: [{ type: 'text', text }] } });
+  out({ type: 'result', subtype: 'success', is_error: false, session_id: id, total_cost_usd: 0.01 });
+};
+const handle = (j) => {
+  if (j.type === 'control_request' && j.request.subtype === 'initialize')
+    return out({ type: 'control_response', response: { subtype: 'success', request_id: j.request_id, response: {
+      commands: [{ name: 'code-review', description: 'Review the diff', argumentHint: '[level]' }],
+      models: [{ value: 'default', displayName: 'Default' }, { value: 'haiku', displayName: 'Haiku' }] } } });
+  if (j.type === 'control_request') {
+    note('control ' + j.request.subtype + ' ' + (j.request.mode || j.request.model || ''));
+    return out({ type: 'control_response', response: { subtype: 'success', request_id: j.request_id, response: {} } });
+  }
+  if (j.type === 'control_response') {
+    const res = j.response.response, ok = res.behavior === 'allow';
+    note('answer ' + res.behavior + ' ' + JSON.stringify(res.updatedPermissions || null));
+    log({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: ok ? 'merged' : 'refused', is_error: !ok }] } });
+    return answer('answer: ' + q + (ok ? ' (merged)' : ' (not merged)'));
+  }
+  if (j.type === 'user') {
+    const c = j.message.content;
+    q = c[c.length - 1].text;
+    out({ type: 'system', subtype: 'init', session_id: id });
+    log({ type: 'user', message: { role: 'user', content: c }, timestamp: new Date().toISOString() });
+    if (/edit/.test(q))
+      return out({ type: 'control_request', request_id: 'perm-2', request: { subtype: 'can_use_tool', tool_name: 'Edit',
+        input: { file_path: process.cwd() + '/a.txt', old_string: 'a', new_string: 'b' }, description: 'a.txt',
+        permission_suggestions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] } });
+    if (!/merge/.test(q)) return answer('answer: ' + q);
+    log({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'git merge main' } }] } });
+    out({ type: 'control_request', request_id: 'perm-1', request: { subtype: 'can_use_tool', tool_name: 'Bash',
+      input: { command: 'git merge main' }, permission_suggestions: [{ type: 'addRules',
+        rules: [{ toolName: 'Bash', ruleContent: 'git merge main' }], behavior: 'allow', destination: 'localSettings' }] } });
+  }
+};
+let buf = '';
+process.stdin.on('data', (d) => {
+  buf += d;
+  let i;
+  while ((i = buf.indexOf('\\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); if (l.trim()) handle(JSON.parse(l)); }
+});
+process.stdin.on('end', () => process.exit(0));
 `;
 
 const start = async () => {
@@ -83,7 +129,8 @@ const state = async () => (await get('/api/state')).json();
 const onlyPlan = async () => (await state())[0].plans[0];
 
 before(async () => {
-  tmp = mkdtempSync(path.join(os.tmpdir(), 'plans-dash-test-'));
+  // the real path (/private/var on macOS): the fake claude names its transcript folder after its cwd
+  tmp = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'plans-dash-test-')));
   home = path.join(tmp, 'home');
   repo = path.join(tmp, 'repo');
   plansDir = path.join(repo, '.plans');
@@ -213,44 +260,82 @@ test("counts only the plan's own sessions, not every session in the repo", async
   assert.deepEqual(p.sessions.map((x) => x.id), ['ses-mine'], 'the unrelated session is not attributed to this plan');
 });
 
-test("the Ask tab resumes the plan's session, offers to allow a refused call, and can ask in a copy", async () => {
-  const ask = async (data) => {
-    assert.deepEqual(await post('/api/ask', { project: 'demo', slug: 'demo-plan', ...data }), { ok: true });
-    let st;
+test("the chat continues the plan's session live: history, permission prompts, selected lines, fork", async () => {
+  const q = 'project=demo&slug=demo-plan', who = { project: 'demo', slug: 'demo-plan' };
+  const chat = async () => (await get('/api/chat?' + q)).json();
+  const history = async () => (await get('/api/chat/history?' + q)).json();
+  const until = async (fn, what) => {
     const deadline = Date.now() + 10000;
-    do { await sleep(100); st = await (await get('/api/ask?project=demo&slug=demo-plan')).json(); }
-    while (st.running && Date.now() < deadline);
-    return st;
+    while (Date.now() < deadline) { const v = await fn(); if (v) return v; await sleep(100); }
+    assert.fail('timed out waiting for ' + what);
   };
   const calls = () => readFileSync(path.join(ghDir, 'claude-calls.log'), 'utf8').trim().split('\n');
+  const spawns = () => calls().filter((l) => l.startsWith('-p ') && l.includes('--resume'));
+  const send = (data) => post('/api/chat/send', { ...who, ...data });
 
-  let st = await ask({ text: 'why the service?' });
-  assert.deepEqual(st.current, { id: 'ses-mine', base: 'ses-mine', copy: false, allowed: [] });
-  assert.deepEqual(st.items.filter((i) => i.who !== 'end').map((i) => i.who + ':' + i.text),
-    ['you:why the service?', 'agent:answer: why the service?']);
-  assert.match(calls().at(-1), /^-p --resume ses-mine --permission-mode acceptEdits/);
-  assert.doesNotMatch(calls().at(-1), /--fork-session/);
+  // the / menu and the model picker come from the protocol's first answer
+  const meta = await (await get('/api/chat/meta?' + q)).json();
+  assert.deepEqual(meta.commands, [{ name: 'code-review', description: 'Review the diff', hint: '[level]' }]);
+  assert.deepEqual(meta.models.map((m) => m.value), ['default', 'haiku']);
+  const ev = await get('/api/chat/events?' + q);
+  const reader = ev.body.getReader();
+  assert.match(new TextDecoder().decode((await reader.read()).value), /^event: state\ndata: \{"live":false/);
+  await reader.cancel();
 
-  st = await ask({ text: 'merge main please' });
-  assert.deepEqual(st.denied, [{ tool: 'Bash', what: 'git fetch && git merge main',
-    rules: ['Bash(git fetch && git merge main)', 'Bash(git fetch)', 'Bash(git merge main)'] }]);
-  // only rules the agent was just refused are passed on
-  st = await ask({ text: 'merge main again', allow: [...st.denied[0].rules, 'Bash(rm -rf /)'] });
-  assert.deepEqual(st.denied, []);
-  assert.match(calls().at(-1), /Bash\(git merge main\)/);
-  assert.doesNotMatch(calls().at(-1), /rm -rf/);
-  assert.deepEqual(st.items.filter((i) => i.who === 'you').at(-1).allowed,
-    ['Bash(git fetch && git merge main)', 'Bash(git fetch)', 'Bash(git merge main)']);
+  assert.deepEqual(await send({ text: 'why the service?',
+    selection: { file: 'src/a.ts', side: 'new', start: 3, end: 4, text: 'x\ny' } }), { ok: true });
+  let h = await until(async () => { const r = await history(); return r.items.some((i) => i.k === 'agent') && r; }, 'the answer');
+  assert.equal(h.session, 'ses-mine');
+  assert.deepEqual(h.items.map((i) => i.k + ':' + i.text), ['you:why the service?', 'agent:answer: why the service?']);
+  assert.deepEqual(h.items[0].sel, ['a.ts:3-4']);
+  assert.match(readFileSync(path.join(home, '.claude', 'projects', repo.replace(/[^a-zA-Z0-9]/g, '-'), 'ses-mine.jsonl'), 'utf8'),
+    /<ide_selection>The user selected the lines 3 to 4 from [^:]*\/src\/a\.ts:\\nx\\ny/);
+  assert.equal(spawns().length, 1);
+  assert.match(spawns()[0], /--setting-sources user,project,local --permission-prompt-tool stdio --permission-mode default --resume ses-mine$/);
 
-  st = await ask({ text: 'new topic', fresh: true, copy: true });
-  assert.match(calls().at(-1), /--resume ses-mine --fork-session/);
-  assert.deepEqual(st.current, { id: 'ses-copy', base: 'ses-mine', copy: true, allowed: [] });
-  assert.equal(st.items.filter((i) => i.who === 'you').at(-1).fresh, true);
-  await ask({ text: 'and then?' });
-  assert.match(calls().at(-1), /--resume ses-copy --permission-mode/);
-  assert.doesNotMatch(calls().at(-1), /--fork-session/);
+  // the same claude answers the next message, and asks before the merge
+  await until(async () => !(await chat()).busy, 'the end of the turn');
+  assert.equal((await chat()).live, true, 'the session stays open between messages');
+  assert.deepEqual(await send({ text: 'merge main please', mode: 'acceptEdits' }), { ok: true });
+  let st = await until(async () => { const s = await chat(); return s.waits.length && s; }, 'the permission card');
+  assert.deepEqual(st.waits.map((w) => [w.tool, w.what, w.always]), [['Bash', 'git merge main', true]]);
+  assert.equal((await onlyPlan()).chatWaits, 1);
+  assert.deepEqual(await post('/api/chat/answer', { ...who, id: st.waits[0].id, allow: true, always: true }), { ok: true });
+  h = await until(async () => { const r = await history(); return r.items.some((i) => i.text === 'answer: merge main please (merged)') && r; }, 'the merge');
+  assert.deepEqual(h.items.filter((i) => i.k === 'tool').map((i) => [i.name, i.sum, i.done, i.out]), [['Bash', 'git merge main', true, 'merged']]);
+  assert.equal(spawns().length, 1, 'one claude for the whole chat');
+  assert.ok(calls().includes('control set_permission_mode acceptEdits'));
+  // "for this chat" keeps the rule in the session, never in the repo's settings
+  assert.ok(calls().some((l) => l.startsWith('answer allow') && l.includes('"destination":"session"')));
+  assert.equal((await post('/api/chat/answer', { ...who, id: 'perm-1', allow: true })).ok, false);
+
+  // an edit can be allowed for the whole chat: the session switches to acceptEdits
+  await until(async () => !(await chat()).busy, 'the end of the turn');
+  assert.deepEqual(await send({ text: 'edit a.txt', mode: 'default' }), { ok: true });
+  st = await until(async () => { const s = await chat(); return s.waits.length && s; }, 'the edit card');
+  assert.deepEqual(st.waits.map((w) => [w.tool, w.edits, w.always]), [['Edit', true, false]]);
+  assert.deepEqual(await post('/api/chat/answer', { ...who, id: st.waits[0].id, allow: true, edits: true }), { ok: true });
+  assert.equal((await chat()).mode, 'acceptEdits');
+  await until(async () => calls().some((l) => l === 'answer allow [{"type":"setMode","mode":"acceptEdits","destination":"session"}]'), 'the setMode answer');
+
+  // Fork: the next message goes on in a copy, which is not one of the plan's sessions
+  await until(async () => !(await chat()).busy, 'the end of the turn');
+  assert.deepEqual(await post('/api/chat/fork', who), { ok: true });
+  assert.equal((await chat()).live, false);
+  assert.deepEqual(await send({ text: 'and in a copy?' }), { ok: true });
+  h = await until(async () => { const r = await history(); return r.session === 'ses-copy' && r.items.some((i) => i.text === 'answer: and in a copy?') && r; }, 'the copy');
+  assert.match(spawns().at(-1), /--resume ses-mine --fork-session$/);
+  st = await chat();
+  assert.deepEqual([st.current, st.fork], [{ id: 'ses-copy', base: 'ses-mine', copy: true }, false]);
+  assert.deepEqual((await onlyPlan()).sessions.map((s) => s.id), ['ses-mine']);
+
+  // New chat: back to the run's latest session
+  await until(async () => !(await chat()).busy, 'the end of the turn');
+  assert.deepEqual(await post('/api/chat/new', who), { ok: true });
+  st = await chat();
+  assert.deepEqual([st.live, st.session], [false, 'ses-mine']);
   assert.equal((await onlyPlan()).asked, true);
-  assert.equal((await post('/api/ask', { project: 'demo', slug: 'demo-plan', text: '  ' })).ok, false);
+  assert.equal((await send({ text: '  ' })).ok, false);
 });
 
 test('archives a plan and puts it back', async () => {

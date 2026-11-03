@@ -16,7 +16,7 @@ A single-file, dependency-free Node server that lists the `*.md` plan files of e
 | Try it without installing | `node scripts/plans-dashboard.mjs` → http://127.0.0.1:4899 |
 | Add a project | follow [Add a project to the dashboard](add-project.md) |
 | Run it at login on https://plans.test | `scripts/setup-macos.sh` — see [Install](#install-it-to-run-at-login-macos) |
-| **Apply my code changes to plans.test** | `launchctl kickstart -k gui/$(id -u)/com.plans-dashboard` — see [After editing](#after-editing-the-dashboard-code) |
+| **Apply my code changes to plans.test** | `npm run restart` in this repo — see [After editing](#after-editing-the-dashboard-code) |
 | Read the logs | `~/.claude/pipeline-dashboard/server.log` |
 | Run the tests | `node --test 'scripts/test/*.test.mjs'` |
 | Uninstall | see [Uninstall](#uninstall) |
@@ -53,8 +53,10 @@ Re-run it only to change the domain or port, or after switching Node versions wi
 >
 > ```bash
 > # Restart the dashboard so it loads your changes
-> launchctl kickstart -k gui/$(id -u)/com.plans-dashboard
+> npm run restart
 > ```
+>
+> It waits while a chat agent is answering or waiting for your permission, because a restart ends the chat (`--now` restarts anyway), then restarts the service (`launchctl kickstart -k gui/$(id -u)/com.plans-dashboard`) and checks that the server is back.
 
 Then hard-refresh the page (Cmd+Shift+R). Nothing needs committing; the agent runs the working tree as it is. Plan runs already in progress keep going through the restart. If the page does not come back, the reason (usually a syntax error) is in `~/.claude/pipeline-dashboard/server.log`.
 
@@ -141,11 +143,11 @@ Generic run state (pid, exit code, log) lives under `~/.claude/pipeline-dashboar
 
 ## Alerts
 
-**🔔** in the header turns on a short sound when a run stops (needs you, failed or finished) or the Ask agent finishes an answer. When the dashboard tab is not in front, a desktop notification comes too; clicking it opens that plan. The browser asks once for permission to show notifications. The setting is remembered in this browser, and alerts need the dashboard open in a tab (a background tab can be up to a minute late).
+**🔔** in the header turns on a short sound when a run stops (needs you, failed or finished) the chat agent finishes an answer, or the chat agent asks for permission. When the dashboard tab is not in front, a desktop notification comes too; clicking it opens that plan. The browser asks once for permission to show notifications. The setting is remembered in this browser, and alerts need the dashboard open in a tab (a background tab can be up to a minute late).
 
 ## Pull requests
 
-When a plan's branch `auto/<slug>` has a PR on GitHub, the plan shows a `PR #n` chip, and its panel gets two more tabs. The plan tab itself opens on the summary and the buttons; status, tags and session history are under **⋯ more**, and the plan text is under **Show the full plan**. **Open PR** opens the Pull request tab.
+When a plan's branch `auto/<slug>` has a PR on GitHub, the plan shows a `PR #n` chip, and its panel gets two more tabs. The [chat](#chat-with-the-agent) opens beside both. The plan tab itself opens on the summary and the buttons; status, tags and session history are under **⋯ more**, and the plan text is under **Show the full plan**. **Open PR** opens the Pull request tab.
 
 The PR's state, **↗ GitHub** and the next step (**Ready for review** for a draft, **Merge…** after that) sit at the right end of the tab row; the plan tab has **↗ GitHub** next to **Open PR**. **Files changed** opens in review mode: the plan list and the page header are hidden, and one bar holds **‹ Plan** (or Esc), the plan name, the tabs and that next step. The address bar keeps the open plan, tab and file, so a reload reopens them and Back goes to the previous plan or tab.
 
@@ -154,14 +156,19 @@ The PR's state, **↗ GitHub** and the next step (**Ready for review** for a dra
 
 Everything goes through the `gh` CLI, so it must be installed and logged in. The guide's first step shows a **GitHub CLI** row with the fix when it is not, and a plan in a GitHub repo says why its PRs are not shown. The dashboard checks the list of PRs at most once a minute per project; **⟳** in the PR bar reads the PR, its checks and its diff again right away (for example after a push). PRs on other branches (for example, a PR that you opened by hand) are not shown.
 
-## Ask the agent
+## Chat with the agent
 
-A plan with a session has an **Ask** tab, a chat with the Claude session that ran the plan. The dashboard resumes the plan's latest session (`claude -p --resume <id>`) in the plan's own folder (its worktree, or the repo root for a generic project), so the agent has its whole history: the plan, the files it read and what it decided. Ask why it did something, or tell it to do something, for example "merge develop into this branch". Follow-up messages continue the same chat. **New chat** starts again from the latest run session. The tab is locked while a run or another chat works in that folder. Done plans keep their sessions and their Ask tab.
+**💬 Chat** (next to the tabs) opens a chat panel on the right of Files changed and the plan. It works like the Claude Code panel in VS Code. The panel talks to the Claude session that ran the plan, in the plan's own folder (its worktree, or the repo root for a generic project), so the agent has its whole history: the plan, the files it read and what it decided. Ask why it did something, or tell it to do something, for example "merge develop into this branch". The panel stays open when you change files or tabs. Drag its left edge to resize it (double-click puts it back). This browser remembers whether it is open and how wide it is.
 
-- **Ask in a copy of the session**: the first message of a new chat makes a copy (`--fork-session`), and the chat continues in the copy, so the session the run wrote keeps only what the run did. The choice is remembered in this browser. Without it, your messages are added to the run's session.
-- **Permissions**: the agent may edit files in that folder (`acceptEdits`) and run what the repo's `.claude/settings.json` and `settings.local.json` allow. A headless session cannot ask, so a command outside that list is refused and shown under the chat. **Allow for this chat and ask again** allows exactly those commands (each part of `a && b` on its own) until the next new chat.
+- **History**: the panel shows the session's transcript: the run first, then the chat. Each tool call is one line (for example `Edit src/x.ts`); click it to see its input and result. Older messages load when you scroll up.
+- **Live session**: the first message starts one `claude -p` that stays open (`--input-format stream-json`, the protocol the VS Code extension uses). The answer appears word by word. **Stop** ends the turn. A message sent while the agent works is queued. After 15 minutes without a message the session closes; the next message opens it again. Starting a run in that plan closes the chat first. A chat cannot start while a run works in that folder.
+- **Permissions**: when the agent needs permission, a card shows the command or file with **Allow**, **Allow for this chat** (that rule, for this session only; nothing is written to the repo's settings) and **Deny**. An edit card offers **Allow all edits in this chat** instead: the session switches to Edit automatically until it closes. To tell the agent what to do instead, type it in the box and click **Deny**. In Plan mode, the agent's plan appears in a card to approve. The mode picker sets what the agent may do without asking: **Ask before edits**, **Edit automatically**, **Plan mode** or **Auto** (Shift+Tab in the box switches). It applies right away, also during an answer.
+- **Selected lines**: lines you select in the diff (either side) or text you select in the plan show as a chip above the box and go with the next message, in the same form the VS Code extension sends them. ✕ leaves them out.
+- **/ and @**: `/` lists the skills and commands the session has in that folder; `@` lists the PR's changed files. ↑/↓ choose, Enter or Tab inserts.
+- **Model**: the model picker lists the models your account has; it applies to the open session right away.
+- **Fork**: the next message continues in a copy of the session (`--fork-session`). The session the run wrote then keeps only what the run did. **New chat** (shown while the chat is in a copy) starts again from the run's latest session.
 
-The chat is kept in `~/.claude/pipeline-dashboard/logs/<project>/<slug>.ask.log`, and the current chat's session in `state/<project>/ask/<slug>.json`.
+The current chat's session is kept in `~/.claude/pipeline-dashboard/state/<project>/ask/<slug>.json`.
 
 ## AI session history
 

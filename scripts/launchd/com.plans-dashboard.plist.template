@@ -10,7 +10,7 @@
 
   Deliberately not run under node’s watch flag: it restarts the server on every
   edit to the script, which kills in-flight requests and leaves the browser showing
-  an empty dashboard. Restart by hand after editing (launchctl kickstart -k).
+  an empty dashboard. Restart by hand after editing: npm run restart (launchctl kickstart -k).
 
   __NODE__    absolute path to the node binary   (command -v node)
   __SCRIPT__  absolute path to plans-dashboard.mjs

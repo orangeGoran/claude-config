@@ -334,8 +334,8 @@ const chatActiveIn = (wtPath) => {
 const pipelineLive = (proj, slug) =>
   new Promise((resolve) => {
     execFile('pgrep', ['-f', `skill-auto-pipeline ${slug}.md`], (err) =>
-      // the Ask tab's own claude runs there too, and asking is not running the plan
-      resolve(!err || (!askRuns.has(proj.name + '/' + slug) && chatActiveIn(path.join(proj.worktrees, slug)))));
+      // the chat panel's own claude runs there too, and chatting is not running the plan
+      resolve(!err || (!chats.has(proj.name + '/' + slug) && chatActiveIn(path.join(proj.worktrees, slug)))));
   });
 
 // generic flavor: runs tracked by this dashboard in <stateDir>/runs.json
@@ -453,8 +453,9 @@ const listPlans = async (proj) => {
         status: meta[slug]?.status || null,
         tags: meta[slug]?.tags || [],
         ...planSessions(proj, slug),
-        asked: existsSync(askLogFile(proj, slug)),
-        asking: askRuns.has(proj.name + '/' + slug),
+        asked: existsSync(chatFile(proj, slug)),
+        chatting: !!chats.get(key)?.busy,
+        chatWaits: chats.get(key)?.waits.size || 0,
         pr: prs['auto/' + slug] || null,
       };
     }),
@@ -467,15 +468,17 @@ const listPlans = async (proj) => {
     .map((slug) => {
       let title = slug;
       try { title = planTitle(readFileSync(path.join(proj.doneDir, slug + '.md'), 'utf8')) || slug; } catch {}
+      const key = proj.name + '/' + slug;
       return {
-        slug, file: slug + '.md', key: proj.name + '/' + slug, title,
+        slug, file: slug + '.md', key, title,
         summary: summaries[slug] || null, summarizing: false,
         validations: validationRounds(proj, slug),
         run: null, live: false, worktree: false, archived: true,
         status: meta[slug]?.status || null, tags: meta[slug]?.tags || [],
         ...planSessions(proj, slug),
-        asked: existsSync(askLogFile(proj, slug)),
-        asking: askRuns.has(proj.name + '/' + slug),
+        asked: existsSync(chatFile(proj, slug)),
+        chatting: !!chats.get(key)?.busy,
+        chatWaits: chats.get(key)?.waits.size || 0,
         pr: prs['auto/' + slug] || null,
       };
     });
@@ -576,7 +579,7 @@ const runLauncher = (proj, args, slugs) => {
   const fd = dashLog(proj);
   const from = statSync(logFile).size;
   const keys = slugs.map((s) => proj.name + '/' + s);
-  for (const k of keys) launches.set(k, { state: 'starting', at: Date.now() });
+  for (const k of keys) { chatEnd(k); launches.set(k, { state: 'starting', at: Date.now() }); }
   const child = spawn('bash', [proj.launcherScript, ...args], {
     cwd: proj.root, env: ENV, detached: true, stdio: ['ignore', fd, fd],
   });
@@ -614,6 +617,7 @@ const launchGeneric = (proj, slug, launcherIdx) => {
   if (!l || !l.cmd) return { ok: false, output: 'No launcher configured for this project yet.' };
   const existing = genericRunInfo(proj, slug);
   if (existing.live) return { ok: false, output: 'A run for this plan is already live.' };
+  chatEnd(proj.name + '/' + slug);
   const planPath = path.join(proj.plansDir, slug + '.md');
   const cmd = l.cmd
     .replaceAll('{plan}', planPath)
@@ -1143,28 +1147,33 @@ const runPrAction = async (proj, b) => {
   return { ok: false, output: 'Unknown action.' };
 };
 
-// ---------- ask: talk to a plan's Claude session from the browser ----------
-// The Ask tab resumes the plan's latest run session (`claude -p --resume`) in the
-// plan's own folder: claude finds a transcript by its cwd. With "ask in a copy" the
-// first question forks it (--fork-session) and the chat goes on in the copy, so the
-// run's own transcript keeps only what the run did. A headless session cannot ask for
-// permission: a refused call comes back in the result's permission_denials, and the
-// tab offers to allow exactly that call for the rest of the chat and ask again.
-const askRuns = new Map();   // plan key -> the claude answering now
-const askFile = (proj, slug) => path.join(proj.stateDir, 'ask', slug + '.json');
-const askLogFile = (proj, slug) => path.join(proj.logsDir, slug + '.ask.log');
-const loadAsk = (proj, slug) => {
-  try { return JSON.parse(readFileSync(askFile(proj, slug), 'utf8')); } catch { return {}; }
+// ---------- chat: talk to a plan's Claude session from the browser ----------
+// The chat panel (beside Files changed and the plan) keeps one `claude -p` per plan open and
+// talks to it in stream-json both ways, the protocol the VS Code extension uses: messages and
+// Stop go in, the answer streams out word by word, and a call that needs permission comes to
+// the page as Allow / Deny (--permission-prompt-tool stdio). It resumes the plan's latest run
+// session in the plan's own folder (claude finds a transcript by its cwd); Fork goes on in a
+// copy (--fork-session), so the run's transcript keeps only what the run did. The history the
+// panel shows is that session's transcript: the run and the chat in one list. A chat with no
+// message for CHAT_IDLE_MS stops; the next message resumes the same session.
+const CHAT_IDLE_MS = 15 * 60 * 1000;
+const CHAT_MODES = ['default', 'acceptEdits', 'plan', 'auto'];
+const chats = new Map();         // plan key -> the open claude
+const chatClients = new Map();   // plan key -> the pages listening (server-sent events)
+const chatNotes = new Map();     // plan key -> how the last claude ended, when it failed
+const chatFile = (proj, slug) => path.join(proj.stateDir, 'ask', slug + '.json');
+const loadChat = (proj, slug) => {
+  try { return JSON.parse(readFileSync(chatFile(proj, slug), 'utf8')); } catch { return {}; }
 };
-const saveAsk = (proj, slug, a) => {
-  mkdirSync(path.dirname(askFile(proj, slug)), { recursive: true });
-  writeFileSync(askFile(proj, slug), JSON.stringify(a, null, 2));
+const saveChat = (proj, slug, a) => {
+  mkdirSync(path.dirname(chatFile(proj, slug)), { recursive: true });
+  writeFileSync(chatFile(proj, slug), JSON.stringify(a, null, 2));
 };
-// the sessions a plan's runs made; the Ask tab's copies are its own and not listed
+// the sessions a plan's runs made; the chat's copies are its own and not listed
 const planSessions = (proj, slug) => {
   const wtPath = proj.hasPipeline ? path.join(proj.worktrees, slug) : proj.root;
   const transcriptDir = transcriptDirFor(wtPath);
-  const copies = new Set(loadAsk(proj, slug).copies || []);
+  const copies = new Set(loadChat(proj, slug).copies || []);
   const sessions = sessionsIn(transcriptDir, proj.hasPipeline ? null : sessionIdsInLog(proj, slug))
     .filter((s) => !copies.has(s.id));
   return { wtPath, transcriptDir, sessions };
@@ -1180,125 +1189,443 @@ const repoAllowRules = (dirs) => {
       } catch {}
   return [...rules];
 };
-// one refused call -> the rules that allow just that call. claude checks each part of
-// `a && b` on its own, so a shell command gets a rule per part.
-const rulesFor = (d) => {
-  const i = d.tool_input || {};
-  if (d.tool_name === 'Bash') {
-    const cmd = String(i.command || '').trim();
-    return [...new Set([cmd, ...cmd.split(/\s*(?:&&|\|\||;|\|)\s*/)].filter(Boolean))].map((c) => 'Bash(' + c + ')');
-  }
-  if (typeof i.file_path === 'string' && i.file_path.startsWith('/')) return [d.tool_name + '(/' + i.file_path + ')'];
-  return [d.tool_name];
+const planPathOf = (proj, slug) => {
+  const f = path.join(proj.plansDir, slug + '.md');
+  return existsSync(f) ? f : path.join(proj.doneDir, slug + '.md');
 };
-const askStart = async (proj, slug, b) => {
-  const key = proj.name + '/' + slug;
-  const q = String(b.text || '').trim().slice(0, 20000);
-  if (!q) return { ok: false, output: 'Type a question first.' };
-  if (askRuns.has(key)) return { ok: false, output: 'The agent is still answering.' };
-  const { wtPath, sessions } = planSessions(proj, slug);
-  if (!existsSync(wtPath)) return { ok: false, output: 'The folder ' + tilde(wtPath) + ' is gone, so the session cannot run there.' };
-  if (existsSync(path.join(proj.plansDir, slug + '.md'))
-    && (proj.hasPipeline ? await pipelineLive(proj, slug) : genericRunInfo(proj, slug).live))
-    return { ok: false, output: 'A run or chat is working in this plan right now. Ask when it has stopped.' };
-  const a = loadAsk(proj, slug);
-  if (b.fresh) a.current = null;
-  // allow: only what the agent was refused last time
-  const offered = new Set((a.denied || []).flatMap(rulesFor));
-  const allow = (Array.isArray(b.allow) ? b.allow : []).filter((r) => offered.has(r));
-  const fresh = !a.current;
-  let resume;
-  if (a.current) {
-    resume = ['--resume', a.current.id];
-    a.current.allowed = [...new Set([...(a.current.allowed || []), ...allow])];
-  } else {
-    const base = sessions[sessions.length - 1];
-    if (!base) return { ok: false, output: 'This plan has no Claude session to ask yet.' };
-    resume = ['--resume', base.id, ...(b.copy ? ['--fork-session'] : [])];
-    a.current = { id: base.id, base: base.id, copy: !!b.copy, allowed: [] };
-  }
-  a.denied = [];
-  saveAsk(proj, slug, a);
-  const rules = [...new Set([...repoAllowRules([wtPath, proj.root]), ...a.current.allowed])];
-  mkdirSync(proj.logsDir, { recursive: true });
-  const logF = askLogFile(proj, slug);
-  writeFileSync(logF, JSON.stringify({ type: 'ask', text: q, at: new Date().toISOString(), fresh,
-    copy: a.current.copy, session: a.current.base, allowed: allow.length ? allow : undefined }) + '\n', { flag: 'a' });
-  const fd = openSync(logF, 'a');
-  // the question goes in on stdin: --allowedTools takes every word after it
-  const child = spawn('claude', ['-p', ...resume, '--permission-mode', 'acceptEdits',
-    '--verbose', '--output-format', 'stream-json', ...(rules.length ? ['--allowedTools', ...rules] : [])],
-  { cwd: wtPath, env: ENV, stdio: ['pipe', fd, fd] });
-  closeSync(fd);
-  askRuns.set(key, child);
-  child.stdin.on('error', () => {});
-  child.stdin.end(q);
-  const done = (code) => {
-    if (askRuns.get(key) !== child) return;
-    askRuns.delete(key);
-    let result = null;
-    try {
-      const lines = readFileSync(logF, 'utf8').split('\n');
-      for (let i = lines.length - 1; i >= 0 && !lines[i].includes('"type":"ask"'); i--)
-        if (lines[i].includes('"type":"result"')) { try { result = JSON.parse(lines[i]); } catch {} break; }
-    } catch {}
-    const s = loadAsk(proj, slug);
-    if (result && s.current) {
-      if (s.current.copy && result.session_id && result.session_id !== s.current.base)
-        s.copies = [...new Set([...(s.copies || []), result.session_id])];
-      if (result.session_id) s.current.id = result.session_id;
-      s.denied = result.permission_denials || [];
+
+// --- the history: a transcript read as the panel shows it ---
+// The transcript is append-only JSONL, a few MB after a long run, so each look reads only
+// what was added since the last one. A tool call is one item; its result joins it later.
+const transcripts = new Map();   // file -> { size, rest, items, tools }
+const clip = (s, n) => (s = String(s ?? ''), s.length > n ? s.slice(0, n) + '\n… (' + (s.length - n) + ' more characters)' : s);
+const toolSummary = (name, i, cwd) => {
+  const rel = (f) => (cwd && String(f).startsWith(cwd + '/') ? String(f).slice(cwd.length + 1) : String(f));
+  const v = i.command || (i.file_path && rel(i.file_path)) || (i.notebook_path && rel(i.notebook_path))
+    || i.pattern || i.url || i.query || i.skill || i.description || i.prompt || '';
+  return String(v).replace(/\s+/g, ' ').slice(0, 240);
+};
+const toolInput = (name, i) => {
+  if (name === 'Bash') return clip(i.command, 3000);
+  if (name === 'Edit') return clip((i.old_string || '').split('\n').map((l) => '- ' + l).join('\n') + '\n' +
+    (i.new_string || '').split('\n').map((l) => '+ ' + l).join('\n'), 3000);
+  if (name === 'Write') return clip(i.content, 3000);
+  if (name === 'Read') return '';
+  const rest = { ...i };
+  delete rest.file_path; delete rest.description;
+  return Object.keys(rest).length ? clip(JSON.stringify(rest, null, 2), 3000) : '';
+};
+const resultText = (c) => typeof c === 'string' ? c
+  : Array.isArray(c) ? c.map((x) => x.type === 'text' ? x.text : x.type === 'image' ? '[image]' : '').join('\n') : '';
+// <ide_selection> is the VS Code extension's way to send selected lines; the chat sends the same
+const SEL_RE = /^<ide_selection>The user selected (?:the lines (\d+) to (\d+)|this text) (?:from|in) (?:the version before this pull request of )?(.*?):\n/;
+const selLabel = (t, cwd) => {
+  const m = SEL_RE.exec(t);
+  if (!m) return null;
+  const f = m[3].startsWith(cwd + '/') ? m[3].slice(cwd.length + 1) : m[3];
+  const name = f.slice(f.lastIndexOf('/') + 1) || 'selected text';
+  return name + (m[1] ? ':' + m[1] + (m[2] !== m[1] ? '-' + m[2] : '') : '') + (t.includes('before this pull request') ? ' (before)' : '');
+};
+const tagText = (s, tag) => ((s.match(new RegExp('<' + tag + '>([\\s\\S]*?)</' + tag + '>')) || [])[1] || '').trim();
+const userItems = (t, j, cwd) => {
+  const c = j.message?.content;
+  const blocks = typeof c === 'string' ? [{ type: 'text', text: c }] : Array.isArray(c) ? c : [];
+  const you = [], sel = [];
+  for (const b of blocks) {
+    if (b.type === 'tool_result') {
+      const it = t.tools.get(b.tool_use_id);
+      if (it) { it.out = clip(resultText(b.content), 4000); it.err = !!b.is_error; it.done = true; }
+      continue;
     }
-    saveAsk(proj, slug, s);
-    writeFileSync(logF, JSON.stringify({ type: 'ask-end', code, at: new Date().toISOString() }) + '\n', { flag: 'a' });
+    if (b.type === 'image') { you.push('[image]'); continue; }
+    if (b.type !== 'text' || !b.text) continue;
+    const s = b.text;
+    if (s.startsWith('<ide_selection>')) { const l = selLabel(s, cwd); if (l) sel.push(l); continue; }
+    if (s.startsWith('<ide_opened_file>') || s.includes('<local-command-caveat>')) continue;
+    if (j.isCompactSummary) { t.items.push({ k: 'note', text: 'The earlier conversation was compacted', body: clip(s, 6000) }); continue; }
+    if (j.isMeta) {
+      const m = /^Base directory for this skill: (.*)/.exec(s);
+      if (m) t.items.push({ k: 'note', text: 'Skill loaded: ' + m[1].slice(m[1].lastIndexOf('/') + 1), body: clip(s, 6000) });
+      continue;
+    }
+    if (s.includes('<command-name>')) {
+      you.push(tagText(s, 'command-name') + (tagText(s, 'command-args') ? ' ' + tagText(s, 'command-args') : ''));
+      continue;
+    }
+    if (s.includes('<local-command-stdout>')) {
+      const out = tagText(s, 'local-command-stdout');
+      if (out) t.items.push({ k: 'note', text: 'Command output', body: clip(out, 6000) });
+      continue;
+    }
+    if (s.startsWith('<task-notification>')) {
+      t.items.push({ k: 'note', text: 'Background task: ' + (tagText(s, 'summary') || tagText(s, 'status') || 'finished'), body: clip(s, 4000) });
+      continue;
+    }
+    if (/^\[Request interrupted by user/.test(s)) { t.items.push({ k: 'note', text: 'Stopped' }); continue; }
+    you.push(s);
+  }
+  if (you.length || sel.length) t.items.push({ k: 'you', text: you.join('\n\n'), sel, at: j.timestamp });
+};
+const assistantItems = (t, j, cwd) => {
+  for (const b of j.message?.content || []) {
+    if (b.type === 'text' && b.text?.trim()) t.items.push({ k: 'agent', text: b.text.trim() });
+    else if (b.type === 'thinking' && b.thinking?.trim()) t.items.push({ k: 'think', text: clip(b.thinking.trim(), 6000) });
+    else if (b.type === 'tool_use') {
+      const i = b.input || {};
+      const it = { k: 'tool', name: b.name, sum: toolSummary(b.name, i, cwd), input: toolInput(b.name, i), done: false };
+      t.tools.set(b.id, it);
+      t.items.push(it);
+    }
+  }
+};
+const readTranscript = (file, cwd) => {
+  let st;
+  try { st = statSync(file); } catch { return { items: [] }; }
+  let t = transcripts.get(file);
+  if (!t || st.size < t.size) transcripts.set(file, t = { size: 0, rest: '', items: [], tools: new Map() });
+  if (st.size > t.size) {
+    const fd = openSync(file, 'r');
+    const buf = Buffer.alloc(st.size - t.size);
+    readSync(fd, buf, 0, buf.length, t.size);
+    closeSync(fd);
+    t.size = st.size;
+    const lines = (t.rest + buf.toString('utf8')).split('\n');
+    t.rest = lines.pop();
+    for (const line of lines) {
+      // most lines are request copies and attachments; only messages are worth parsing
+      if (!line.includes('"type":"user"') && !line.includes('"type":"assistant"')) continue;
+      let j;
+      try { j = JSON.parse(line); } catch { continue; }
+      if (j.isSidechain) continue;
+      if (j.type === 'user') userItems(t, j, cwd);
+      else if (j.type === 'assistant') assistantItems(t, j, cwd);
+    }
+  }
+  return t;
+};
+// the transcript the panel shows: the live chat's, the chat's last, or the run's latest
+const chatTranscript = (proj, slug) => {
+  const { wtPath, transcriptDir, sessions } = planSessions(proj, slug);
+  const a = loadChat(proj, slug), ch = chats.get(proj.name + '/' + slug);
+  const ids = [ch && ch.session, a.current && a.current.id, a.current && a.current.base, (sessions.at(-1) || {}).id];
+  for (const id of ids.filter(Boolean)) {
+    const file = path.join(transcriptDir, id + '.jsonl');
+    if (existsSync(file)) return { id, file, wtPath };
+  }
+  return null;
+};
+// a page of items: the last `limit`, the `limit` before index `before`, or all from index `from`
+const chatHistory = (proj, slug, q) => {
+  const tr = chatTranscript(proj, slug);
+  if (!tr) return { session: null, total: 0, first: 0, items: [] };
+  const all = readTranscript(tr.file, tr.wtPath).items;
+  const limit = Math.min(500, Math.max(1, +q.limit || 150));
+  let lo, hi = all.length;
+  if (q.from != null && q.from !== '') lo = Math.max(0, Math.min(all.length, +q.from || 0));
+  else if (q.before != null && q.before !== '') { hi = Math.max(0, Math.min(all.length, +q.before || 0)); lo = Math.max(0, hi - limit); }
+  else lo = Math.max(0, hi - limit);
+  return { session: tr.id, total: all.length, first: lo, items: all.slice(lo, hi).map((it, n) => ({ ...it, i: lo + n })) };
+};
+
+// --- the live session ---
+const chatSend = (ch, o) => { try { ch.child.stdin.write(JSON.stringify(o) + '\n'); } catch {} };
+const chatControl = (ch, request) => new Promise((resolve) => {
+  const id = 'dash-' + Math.random().toString(36).slice(2);
+  ch.pending.set(id, resolve);
+  chatSend(ch, { type: 'control_request', request_id: id, request });
+  setTimeout(() => { if (ch.pending.delete(id)) resolve(null); }, 20000);
+});
+const chatEmit = (key, event, data) => {
+  for (const res of chatClients.get(key) || []) res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n');
+};
+const chatEmitState = (proj, slug) => {
+  const key = proj.name + '/' + slug;
+  if ((chatClients.get(key) || new Set()).size) chatEmit(key, 'state', chatState(proj, slug));
+};
+// the transcript is written around the time stdout says so: look a little later, and again
+const chatHistorySoon = (ch) => {
+  clearTimeout(ch.histTimer);
+  ch.histTimer = setTimeout(() => chatEmit(ch.key, 'history', {}), 250);
+};
+const chatIdle = (ch) => {
+  clearTimeout(ch.idleTimer);
+  ch.idleTimer = setTimeout(() => {
+    if (ch.busy || ch.waits.size) return chatIdle(ch);
+    ch.child.kill('SIGTERM');
+  }, CHAT_IDLE_MS);
+};
+// the commands, skills and models a session in that folder offers: from the open chat, or a
+// claude started only to answer the first question of the protocol (no message is sent)
+const chatMetaCache = new Map();   // cwd -> { at, commands, models }
+const metaOf = (r) => r && r.subtype === 'success' && r.response ? {
+  at: Date.now(),
+  commands: (r.response.commands || []).map((c) => ({ name: c.name, description: String(c.description || '').slice(0, 300), hint: c.argumentHint || '' })),
+  models: (r.response.models || []).map((m) => ({ value: m.value, name: m.displayName || m.value, description: m.description || '' })),
+} : null;
+const chatMeta = async (proj, slug) => {
+  const { wtPath } = planSessions(proj, slug);
+  const hit = chatMetaCache.get(wtPath);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return { ok: true, ...hit };
+  if (!existsSync(wtPath)) return { ok: false, commands: [], models: [] };
+  const child = spawn('claude', ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
+    '--permission-prompt-tool', 'stdio'], { cwd: wtPath, env: ENV, stdio: ['pipe', 'pipe', 'ignore'] });
+  const probe = { child, pending: new Map() };
+  const r = await new Promise((resolve) => {
+    let buf = '';
+    child.on('error', () => resolve(null));
+    child.on('exit', () => resolve(null));
+    child.stdout.on('data', (d) => {
+      buf += d;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        try { const j = JSON.parse(line); if (j.type === 'control_response') resolve(j.response); } catch {}
+      }
+    });
+    child.stdin.on('error', () => {});
+    chatControl(probe, { subtype: 'initialize' }).then(resolve);
+  });
+  child.kill('SIGTERM');
+  const m = metaOf(r);
+  if (!m) return { ok: false, commands: [], models: [] };
+  chatMetaCache.set(wtPath, m);
+  return { ok: true, ...m };
+};
+const chatOnLine = (ch, j) => {
+  const { proj, slug } = ch;
+  if (j.session_id && j.session_id !== ch.session && !j.parent_tool_use_id) {
+    ch.session = j.session_id;
+    const a = loadChat(proj, slug);
+    if (ch.fork && a.current && j.session_id !== a.current.id) {
+      a.copies = [...new Set([...(a.copies || []), j.session_id])];
+      a.current = { id: j.session_id, base: a.current.base, copy: true };
+      a.fork = false;
+      ch.fork = false;
+    } else if (a.current) a.current.id = j.session_id;
+    saveChat(proj, slug, a);
+    chatEmitState(proj, slug);
+  }
+  if (j.type === 'stream_event') {
+    if (j.parent_tool_use_id) return;   // a subagent's words: its tool line says enough
+    const e = j.event || {};
+    if (e.type === 'message_start') { ch.partial = ''; chatEmit(ch.key, 'delta', { reset: true }); }
+    else if (e.type === 'content_block_delta' && e.delta?.type === 'text_delta') {
+      ch.partial += e.delta.text;
+      chatEmit(ch.key, 'delta', { text: e.delta.text });
+    }
+  } else if (j.type === 'control_request' && j.request?.subtype === 'can_use_tool') {
+    ch.waits.set(j.request_id, j.request);
+    chatEmitState(proj, slug);
+  } else if (j.type === 'control_cancel_request') {
+    ch.waits.delete(j.request_id);
+    chatEmitState(proj, slug);
+  } else if (j.type === 'control_response') {
+    const f = ch.pending.get(j.response?.request_id);
+    if (f) { ch.pending.delete(j.response.request_id); f(j.response); }
+  } else if (j.type === 'assistant' || j.type === 'user') {
+    if (!j.parent_tool_use_id) { ch.partial = ''; chatEmit(ch.key, 'delta', { reset: true }); }
+    chatHistorySoon(ch);
+  } else if (j.type === 'result') {
+    ch.queued = Math.max(0, ch.queued - 1);
+    ch.busy = ch.queued > 0;
+    if (!ch.busy) { ch.partial = ''; ch.waits.clear(); }
+    ch.last = { ok: !j.is_error && j.subtype === 'success', subtype: j.subtype, cost: j.total_cost_usd };
+    chatEmitState(proj, slug);
+    chatHistorySoon(ch);
+    setTimeout(() => chatEmit(ch.key, 'history', {}), 1200);
+    chatIdle(ch);
+  }
+};
+const chatStart = (proj, slug, b) => {
+  const key = proj.name + '/' + slug;
+  const { wtPath, sessions } = planSessions(proj, slug);
+  const a = loadChat(proj, slug);
+  const id = a.current ? a.current.id : (sessions.at(-1) || {}).id;
+  if (!id) return { error: 'This plan has no Claude session to continue yet.' };
+  if (!a.current) a.current = { id, base: id, copy: false };
+  const fork = !!a.fork;
+  saveChat(proj, slug, a);
+  const mode = CHAT_MODES.includes(b.mode) ? b.mode : 'default';
+  const model = /^[A-Za-z0-9.[\]-]{1,60}$/.test(b.model || '') && b.model !== 'default' ? b.model : '';
+  const rules = repoAllowRules([wtPath, proj.root]);
+  // the flags the VS Code extension starts its sessions with; --allowedTools takes every word
+  // after it, so it comes last
+  const child = spawn('claude', ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
+    '--include-partial-messages', '--setting-sources', 'user,project,local', '--permission-prompt-tool', 'stdio', '--permission-mode', mode,
+    ...(model ? ['--model', model] : []), '--resume', id, ...(fork ? ['--fork-session'] : []),
+    ...(rules.length ? ['--allowedTools', ...rules] : [])],
+  { cwd: wtPath, env: ENV, stdio: ['pipe', 'pipe', 'pipe'] });
+  const ch = { key, proj, slug, child, session: fork ? null : id, fork, mode, model: model || 'default', busy: false,
+    queued: 0, partial: '', waits: new Map(), pending: new Map(), err: '', last: null };
+  chats.set(key, ch);
+  chatNotes.delete(key);
+  child.stdin.on('error', () => {});
+  let buf = '';
+  child.stdout.on('data', (d) => {
+    buf += d;
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i); buf = buf.slice(i + 1);
+      let j;
+      try { j = JSON.parse(line); } catch { continue; }
+      chatOnLine(ch, j);
+    }
+  });
+  child.stderr.on('data', (d) => { ch.err = (ch.err + d).slice(-2000); });
+  const done = (code) => {
+    if (chats.get(key) !== ch) return;
+    chats.delete(key);
+    clearTimeout(ch.idleTimer);
+    for (const f of ch.pending.values()) f(null);
+    if (code && ch.busy) chatNotes.set(key, (ch.err.trim() || 'claude stopped (exit ' + code + ')').slice(-600));
+    chatEmitState(proj, slug);
+    chatEmit(key, 'history', {});
   };
   child.on('exit', done);
-  child.on('error', (e) => {
-    writeFileSync(logF, 'Could not start claude: ' + e.message + '\n', { flag: 'a' });
-    done(-1);
+  child.on('error', (e) => { ch.err = 'Could not start claude: ' + e.message; ch.busy = true; done(-1); });
+  chatControl(ch, { subtype: 'initialize' }).then((r) => {
+    const m = metaOf(r);
+    if (m) chatMetaCache.set(wtPath, m);
   });
-  return { ok: true };
+  chatIdle(ch);
+  return ch;
 };
-const askStop = (proj, slug) => {
-  const c = askRuns.get(proj.name + '/' + slug);
-  if (c) c.kill('SIGINT');
-  return { ok: true };
-};
-// the chat as the tab shows it: questions, answer text, one line per tool call, outcomes
-const askState = (proj, slug) => {
-  const items = [];
-  let raw = '';
-  try { raw = readFileSync(askLogFile(proj, slug), 'utf8'); } catch {}
-  for (const line of raw.split('\n').slice(-4000)) {
-    if (!line.trim()) continue;
-    let j;
-    try { j = JSON.parse(line); } catch { items.push({ who: 'err', text: line.slice(0, 500) }); continue; }
-    if (j.type === 'ask') items.push({ who: 'you', text: j.text, at: j.at, allowed: j.allowed,
-      fresh: j.fresh, copy: j.copy, session: j.session });
-    else if (j.type === 'assistant')
-      for (const c of j.message?.content || []) {
-        if (c.type === 'text' && c.text?.trim()) items.push({ who: 'agent', text: c.text.trim() });
-        if (c.type === 'tool_use') {
-          const i = c.input || {};
-          const arg = i.command || i.file_path || i.path || i.pattern || i.url || i.description || '';
-          items.push({ who: 'tool', text: c.name + '  ' + String(arg).replace(/\s+/g, ' ').slice(0, 200) });
-        }
-      }
-    else if (j.type === 'result')
-      items.push({ who: 'end', ok: !j.is_error && j.subtype === 'success', subtype: j.subtype,
-        cost: j.total_cost_usd, blocked: (j.permission_denials || []).length });
-    else if (j.type === 'ask-end' && items.length && items[items.length - 1].who !== 'end')
-      items.push({ who: 'end', ok: j.code === 0, subtype: j.code === 0 ? 'success' : 'stopped (exit ' + j.code + ')' });
+// a message from the page; it starts the session when none is open
+const chatMessage = async (proj, slug, b) => {
+  const key = proj.name + '/' + slug;
+  const q = String(b.text || '').trim().slice(0, 20000);
+  if (!q) return { ok: false, output: 'Type a message first.' };
+  const { wtPath } = planSessions(proj, slug);
+  let ch = chats.get(key);
+  if (!ch) {
+    if (!existsSync(wtPath)) return { ok: false, output: 'The folder ' + tilde(wtPath) + ' is gone, so the session cannot run there.' };
+    if (existsSync(path.join(proj.plansDir, slug + '.md'))
+      && (proj.hasPipeline ? await pipelineLive(proj, slug) : genericRunInfo(proj, slug).live))
+      return { ok: false, output: 'A run or another chat is working in this plan right now. Send it when that has stopped.' };
+    ch = chatStart(proj, slug, b);
+    if (ch.error) return { ok: false, output: ch.error };
+  } else {
+    // the mode and the model change in the open session, as the extension's pickers do
+    if (CHAT_MODES.includes(b.mode) && b.mode !== ch.mode) {
+      ch.mode = b.mode;
+      chatControl(ch, { subtype: 'set_permission_mode', mode: b.mode });
+    }
+    const model = /^[A-Za-z0-9.[\]-]{1,60}$/.test(b.model || '') ? b.model : 'default';
+    if (model !== ch.model) { ch.model = model; chatControl(ch, { subtype: 'set_model', model }); }
   }
-  const a = loadAsk(proj, slug);
-  const running = askRuns.has(proj.name + '/' + slug);
+  const content = [];
+  const sel = selectionTag(proj, slug, wtPath, b.selection);
+  if (sel) content.push({ type: 'text', text: sel });
+  content.push({ type: 'text', text: q });
+  chatSend(ch, { type: 'user', session_id: '', parent_tool_use_id: null, message: { role: 'user', content } });
+  ch.queued++;
+  ch.busy = true;
+  ch.partial = '';
+  chatIdle(ch);
+  chatEmitState(proj, slug);
+  return { ok: true };
+};
+// lines picked in the diff or the plan, in the words the VS Code extension uses for them
+const selectionTag = (proj, slug, wtPath, s) => {
+  if (!s || typeof s.text !== 'string' || !s.text.trim()) return '';
+  const file = String(s.file || '');
+  if (file && (file.startsWith('/') || file.split('/').some((x) => x === '..'))) return '';
+  const abs = s.side === 'plan' ? planPathOf(proj, slug) : file ? path.join(wtPath, file) : '';
+  const where = !abs ? 'the dashboard' : s.side === 'old' ? 'the version before this pull request of ' + abs : abs;
+  const lines = +s.start > 0 && +s.end >= +s.start ? 'the lines ' + +s.start + ' to ' + +s.end + ' from ' : 'this text ' + (abs ? 'from ' : 'in ');
+  return '<ide_selection>The user selected ' + lines + where + ':\n' + s.text.slice(0, 20000) +
+    '\n\nThis may or may not be related to the current task.</ide_selection>';
+};
+const chatAnswer = (proj, slug, b) => {
+  const ch = chats.get(proj.name + '/' + slug), req = ch && ch.waits.get(b.id);
+  if (!req) return { ok: false, output: 'The agent no longer waits for this answer.' };
+  ch.waits.delete(b.id);
+  // "for this chat": the rules claude suggested, kept for this session only
+  const rules = (req.permission_suggestions || []).filter((s) => s.type === 'addRules')
+    .map((s) => ({ ...s, destination: 'session' }));
+  // "all edits": the session switches to acceptEdits, as the extension's "allow all edits" does
+  const edits = b.edits && (req.permission_suggestions || []).some((s) => s.type === 'setMode' && s.mode === 'acceptEdits');
+  if (edits) ch.mode = 'acceptEdits';
+  const response = b.allow
+    ? { behavior: 'allow', updatedInput: req.input || {}, ...(edits ? { updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] }
+      : b.always && rules.length ? { updatedPermissions: rules } : {}) }
+    : { behavior: 'deny', message: String(b.message || 'The user said no. Wait for their next message.').slice(0, 2000) };
+  chatSend(ch, { type: 'control_response', response: { subtype: 'success', request_id: b.id, response } });
+  chatEmitState(proj, slug);
+  return { ok: true };
+};
+const chatStop = (proj, slug) => {
+  const ch = chats.get(proj.name + '/' + slug);
+  if (!ch) return { ok: true };
+  for (const id of ch.waits.keys())
+    chatSend(ch, { type: 'control_response', response: { subtype: 'success', request_id: id,
+      response: { behavior: 'deny', message: 'The user stopped this.', interrupt: true } } });
+  ch.waits.clear();
+  chatControl(ch, { subtype: 'interrupt' });
+  // a turn that does not end on the interrupt ends with the process
+  setTimeout(() => { if (chats.get(ch.key) === ch && ch.busy) ch.child.kill('SIGTERM'); }, 8000);
+  return { ok: true };
+};
+// a run is starting in this folder: the chat gives way (its transcript stays)
+const chatEnd = (key) => { const ch = chats.get(key); if (ch) ch.child.kill('SIGTERM'); };
+// Fork: the next message goes on in a copy of this session. New chat: the next message
+// starts again from the run's latest session. Both close the open claude.
+const chatRestart = (proj, slug, fork) => {
+  const key = proj.name + '/' + slug, ch = chats.get(key);
+  if (ch && ch.busy) return { ok: false, output: 'The agent is still working. Stop it or wait for the answer first.' };
+  if (ch) { chats.delete(key); ch.child.kill('SIGTERM'); }
+  const a = loadChat(proj, slug);
+  if (fork) a.fork = true;
+  else { a.current = null; a.fork = false; }
+  saveChat(proj, slug, a);
+  chatNotes.delete(key);
+  chatEmitState(proj, slug);
+  chatEmit(key, 'history', {});
+  return { ok: true };
+};
+const chatSetMode = (proj, slug, b) => {
+  const ch = chats.get(proj.name + '/' + slug);
+  if (!ch) return { ok: true };   // the next message starts the session with them
+  if (CHAT_MODES.includes(b.mode) && b.mode !== ch.mode) {
+    ch.mode = b.mode;
+    chatControl(ch, { subtype: 'set_permission_mode', mode: b.mode });
+  }
+  const model = /^[A-Za-z0-9.[\]-]{1,60}$/.test(b.model || '') ? b.model : 'default';
+  if (model !== ch.model) { ch.model = model; chatControl(ch, { subtype: 'set_model', model }); }
+  chatEmitState(proj, slug);
+  return { ok: true };
+};
+// what the panel shows around the history: who it talks to, what it waits for
+const waitView = (id, r) => {
+  const i = r.input || {};
   return {
-    running, items, current: a.current || null,
-    denied: running ? [] : (a.denied || []).map((d) => ({
-      tool: d.tool_name, what: String(d.tool_input?.command || d.tool_input?.file_path || d.tool_input?.url || ''),
-      rules: rulesFor(d),
-    })),
+    id, tool: r.display_name || r.tool_name, description: r.description || i.description || '',
+    what: clip(i.command || i.file_path || i.url || i.pattern || i.skill || '', 2000),
+    detail: r.tool_name === 'ExitPlanMode' ? clip(i.plan, 20000) : r.tool_name === 'Bash' || r.tool_name === 'Read' ? '' : toolInput(r.tool_name, i),
+    plan: r.tool_name === 'ExitPlanMode',
+    always: (r.permission_suggestions || []).some((s) => s.type === 'addRules'),
+    edits: (r.permission_suggestions || []).some((s) => s.type === 'setMode' && s.mode === 'acceptEdits'),
   };
+};
+const chatState = (proj, slug) => {
+  const key = proj.name + '/' + slug, ch = chats.get(key), a = loadChat(proj, slug);
+  const latest = (planSessions(proj, slug).sessions.at(-1) || {}).id || null;
+  return {
+    live: !!ch, busy: !!(ch && ch.busy), mode: ch ? ch.mode : null, model: ch ? ch.model : null,
+    session: ch && ch.session ? ch.session : a.current ? a.current.id : latest,
+    current: a.current || null, latest, fork: !!a.fork,
+    waits: ch ? [...ch.waits].map(([id, r]) => waitView(id, r)) : [],
+    partial: ch ? ch.partial : '', last: ch ? ch.last : null, error: chatNotes.get(key) || '',
+  };
+};
+const chatEvents = (req, res, proj, slug) => {
+  const key = proj.name + '/' + slug;
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+  if (!chatClients.has(key)) chatClients.set(key, new Set());
+  chatClients.get(key).add(res);
+  res.write('event: state\ndata: ' + JSON.stringify(chatState(proj, slug)) + '\n\n');
+  const ping = setInterval(() => res.write(': ping\n\n'), 25000);
+  req.on('close', () => { clearInterval(ping); chatClients.get(key)?.delete(res); });
 };
 
 // ---------- http ----------
@@ -1432,10 +1759,14 @@ const server = http.createServer(async (req, res) => {
       const f = path.join(proj.autoRunsDir, slug + '.md');
       return text(res, existsSync(f) ? readFileSync(f, 'utf8') : '(no report yet)');
     }
-    if (url.pathname === '/api/ask' && req.method === 'GET') {
+    if (url.pathname.startsWith('/api/chat') && req.method === 'GET') {
       const proj = getProj();
       if (!proj || !safeName(slug)) return json(res, 400, { error: 'bad request' });
-      return json(res, 200, askState(proj, slug));
+      if (url.pathname === '/api/chat') return json(res, 200, chatState(proj, slug));
+      if (url.pathname === '/api/chat/history') return json(res, 200, chatHistory(proj, slug,
+        Object.fromEntries(['from', 'before', 'limit'].map((k) => [k, url.searchParams.get(k)]))));
+      if (url.pathname === '/api/chat/meta') return json(res, 200, await chatMeta(proj, slug));
+      if (url.pathname === '/api/chat/events') return chatEvents(req, res, proj, slug);
     }
     if (url.pathname === '/api/pr' || url.pathname === '/api/pr-diff') {
       const proj = getProj();
@@ -1511,8 +1842,12 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === '/api/archive') return json(res, 200, await archivePlan(proj, b.slug));
       if (url.pathname === '/api/unarchive') return json(res, 200, unarchivePlan(proj, b.slug));
       if (url.pathname === '/api/vscode') return json(res, 200, { ok: true, target: openInVsCode(proj, b.slug) });
-      if (url.pathname === '/api/ask') return json(res, 200, await askStart(proj, b.slug, b));
-      if (url.pathname === '/api/ask-stop') return json(res, 200, askStop(proj, b.slug));
+      if (url.pathname === '/api/chat/send') return json(res, 200, await chatMessage(proj, b.slug, b));
+      if (url.pathname === '/api/chat/answer') return json(res, 200, chatAnswer(proj, b.slug, b));
+      if (url.pathname === '/api/chat/stop') return json(res, 200, chatStop(proj, b.slug));
+      if (url.pathname === '/api/chat/mode') return json(res, 200, chatSetMode(proj, b.slug, b));
+      if (url.pathname === '/api/chat/fork') return json(res, 200, chatRestart(proj, b.slug, true));
+      if (url.pathname === '/api/chat/new') return json(res, 200, chatRestart(proj, b.slug, false));
       // ⟳ in the PR bar: read the PR list now, not at the next minute (a push changes the head)
       if (url.pathname === '/api/pr-refresh') { await refreshPrList(proj); return json(res, 200, { ok: true }); }
       if (url.pathname === '/api/pr-action') {
@@ -1939,24 +2274,71 @@ const PAGE = /* html */ `<!doctype html>
   .mergednote { border:1px solid var(--merge); border-radius:10px; padding:10px 14px; margin-bottom:16px; }
   .mergednote b { color:var(--merge); }
   .mergednote div { color:var(--dim); font-size:calc(12.5px * var(--fs)); }
-  .askwho { margin-left:auto; font-size:calc(12px * var(--fs)); }
-  #askview { display:flex; flex-direction:column; gap:10px; max-width:calc(900px * var(--fs)); }
-  .asklog { max-height:calc(100vh - 360px); min-height:120px; overflow:auto; display:flex; flex-direction:column; gap:8px; padding-right:4px; }
-  .amsg { padding:9px 13px; border-radius:10px; line-height:1.55; }
-  .amsg.you { align-self:flex-end; max-width:80%; background:color-mix(in srgb, var(--accent) 16%, var(--card)); white-space:pre-wrap; }
+  /* chat panel: right of the page, beside the diff or the plan, its width dragged and remembered */
+  #chat { flex:0 0 auto; width:calc(460px * var(--fs)); min-width:320px; max-width:70vw; padding:0; overflow:hidden;
+          display:flex; flex-direction:column; background:var(--panel); border-left:1px solid var(--line); }
+  #chat[hidden], .csplit[hidden] { display:none; }
+  .csplit { width:9px; margin:0 -4px; cursor:col-resize; flex-shrink:0; position:relative; z-index:4; }
+  .csplit:hover, .csplit:focus-visible, body.dragging .csplit.on { background:color-mix(in srgb, var(--accent) 45%, transparent); outline:none; }
+  .chatbtn { margin-left:auto; } .chatbtn.on { border-color:var(--accent); color:var(--accent); }
+  .chatbtn .n { background:var(--warn); color:var(--accentfg); }
+  .chead { display:flex; align-items:center; gap:8px; padding:7px 12px; border-bottom:1px solid var(--line); flex-shrink:0; }
+  .chead button { padding:3px 9px; font-size:calc(12px * var(--fs)); }
+  .cwho { font:calc(11.5px * var(--fs)) ui-monospace,monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .clog { flex:1; min-height:0; overflow:auto; padding:10px 12px; display:flex; flex-direction:column; gap:8px; }
+  #citems, #clive { display:flex; flex-direction:column; gap:8px; }
+  .cmore { text-align:center; font-size:calc(11px * var(--fs)); }
+  .cyou { display:flex; flex-direction:column; align-items:flex-end; gap:2px; }
+  .ctime { font-size:calc(10.5px * var(--fs)); color:var(--dim); }
+  .amsg { padding:8px 12px; border-radius:10px; line-height:1.55; overflow-wrap:anywhere; }
+  .amsg.you { max-width:92%; background:color-mix(in srgb, var(--accent) 16%, var(--card)); white-space:pre-wrap; }
   .amsg.agent { background:var(--card); border:1px solid var(--line); }
+  .amsg.agent.live { white-space:pre-wrap; }
   .amsg.agent > :first-child { margin-top:0; } .amsg.agent > :last-child { margin-bottom:0; }
-  .aallow { font-size:calc(11px * var(--fs)); margin-top:4px; white-space:normal; }
-  .atool { font:calc(11.5px * var(--fs)) ui-monospace,monospace; color:var(--dim); padding:0 4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ctool pre, .cnote pre, .cwait pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+  /* code in an answer keeps its lines (diagrams, tables) and scrolls sideways, as in VS Code */
+  .amsg.agent pre { white-space:pre; overflow-x:auto; }
+  /* Copy: on each code block, and for the whole answer; shown on hover or keyboard focus */
+  .amsg.agent, .cpre { position:relative; }
+  .ccopy { position:absolute; top:6px; right:6px; padding:2px 8px; font-size:calc(11.5px * var(--fs)); opacity:0; z-index:1; }
+  .cmsg { top:auto; bottom:6px; }
+  .amsg.agent:hover > .cmsg, .cpre:hover > .ccopy, .ccopy:focus-visible { opacity:1; }
+  @media (hover: none) { .ccopy { opacity:.8; } }
+  .ctool, .cnote { font:calc(11.5px * var(--fs)) ui-monospace,monospace; color:var(--dim); padding:0 4px; }
+  .ctool summary, details.cnote summary { cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ctool summary b { color:var(--fg); font-weight:600; }
+  .ctool.err summary b { color:var(--bad); }
+  .ctool pre, .cnote pre { background:var(--codebg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; margin:4px 0;
+                           max-height:320px; overflow:auto; color:var(--logfg); }
+  .ctool pre.out { border-style:dashed; }
+  .cnote .mdc { font-family:-apple-system,"Segoe UI",sans-serif; padding:4px 8px; }
   .aend { font-size:calc(11px * var(--fs)); color:var(--dim); padding:0 4px; }
-  .aend.bad { color:var(--bad); }
-  .anew { text-align:center; font-size:calc(11px * var(--fs)); color:var(--dim); border-top:1px dashed var(--line); padding-top:6px; margin-top:6px; }
+  .aend.bad { color:var(--bad); white-space:pre-wrap; }
+  .cwork::after { content:''; display:inline-block; width:6px; height:6px; margin-left:6px; border-radius:50%; background:var(--accent);
+                  animation:cpulse 1s ease-in-out infinite; }
+  @keyframes cpulse { 50% { opacity:.2; } }
+  @media (prefers-reduced-motion: reduce) { .cwork::after { animation:none; } }
   .askempty { padding:14px 4px; line-height:1.6; }
-  .askdeny { border:1px solid var(--warn); border-radius:10px; padding:10px 13px; display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
-  .askdeny code { font:calc(12px * var(--fs)) ui-monospace,monospace; word-break:break-all; }
-  .askbox { border:1px solid var(--line); border-radius:10px; background:var(--card); padding:8px; }
-  .askbox textarea { width:100%; resize:vertical; background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:inherit; }
-  .askrow { display:flex; align-items:center; gap:8px; margin-top:6px; font-size:calc(12.5px * var(--fs)); flex-wrap:wrap; }
+  #cwaits { padding:0 12px; flex-shrink:0; max-height:45vh; overflow:auto; }
+  .cwait { border:1px solid var(--warn); border-radius:10px; padding:9px 12px; margin:8px 0 0; display:flex; flex-direction:column; gap:6px; }
+  .cwait code { font:calc(12px * var(--fs)) ui-monospace,monospace; word-break:break-all; }
+  .cwait pre { font:calc(11.5px * var(--fs)) ui-monospace,monospace; background:var(--codebg); border-radius:6px; padding:6px 8px; margin:0; max-height:200px; overflow:auto; }
+  .cplan { max-height:40vh; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:6px 10px; }
+  .cbox { position:relative; border-top:1px solid var(--line); padding:8px 10px 10px; flex-shrink:0; }
+  .cbox textarea { width:100%; resize:vertical; min-height:60px; background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:inherit; }
+  .crow { display:flex; align-items:center; gap:8px; margin-top:6px; font-size:calc(12.5px * var(--fs)); flex-wrap:wrap; }
+  .crow select { background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:7px; padding:3px 6px; max-width:48%; }
+  .cchip { display:inline-flex; align-items:center; gap:4px; font:calc(11.5px * var(--fs)) ui-monospace,monospace; border:1px solid var(--line);
+           border-radius:6px; padding:1px 6px; margin:0 4px 4px 0; background:var(--card); white-space:normal; }
+  .cchip.csel { display:flex; margin:0 0 6px; } .cchip.csel b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  .cchip.csel .dim { margin-left:auto; white-space:nowrap; }
+  .cchip button { border:0; background:none; padding:0 2px; color:var(--dim); cursor:pointer; }
+  .cmenu { position:absolute; left:10px; right:10px; bottom:100%; max-height:300px; overflow:auto; background:var(--panel);
+           border:1px solid var(--line); border-radius:8px; box-shadow:0 -6px 20px rgba(0,0,0,.25); z-index:5; }
+  .cmi { padding:5px 10px; cursor:pointer; font-size:calc(12.5px * var(--fs)); }
+  .cmi b { font-family:ui-monospace,monospace; font-weight:600; }
+  .cmi .dim { font-size:calc(11.5px * var(--fs)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cmi.on, .cmi:hover { background:var(--sel); }
   .rbar kbd { font:calc(10px * var(--fs)) ui-monospace,monospace; border:1px solid var(--line); border-radius:4px; padding:0 4px; margin-left:4px; color:var(--dim); }
   #ract { align-items:center; }
   /* busy: a thin moving bar along the top while the page waits for GitHub or the server */
@@ -2019,6 +2401,9 @@ const PAGE = /* html */ `<!doctype html>
     </div>
   </aside>
   <section id="detail"><span class="dim">Select a plan on the left.</span></section>
+  <div class="csplit" id="csplit" role="separator" aria-orientation="vertical" tabindex="0" hidden
+    aria-label="Divider between the page and the chat" title="Drag to resize the chat. Double-click: default width."></div>
+  <section id="chat" hidden aria-label="Chat with the agent"></section>
 </div>
 <div id="logpane">
   <header><h1 id="logtitle"></h1><span style="margin-left:auto"></span>
@@ -2143,7 +2528,8 @@ function inline(s) {
 // breaks: a single newline is a line break, as GitHub shows PR and issue text
 function md(src, breaks) {
   const fences = [];
-  const fenceRe = new RegExp(BT + BT + BT + '[^\\n]*\\n([\\s\\S]*?)' + BT + BT + BT, 'g');
+  // four backslashes: this page is a template literal, and the regex needs \\s, not s
+  const fenceRe = new RegExp(BT + BT + BT + '[^\\\\n]*\\\\n([\\\\s\\\\S]*?)' + BT + BT + BT, 'g');
   src = src.replace(fenceRe, (m, code) => {
     fences.push('<pre><code>' + esc(code) + '</code></pre>');
     return '\\u0001' + (fences.length - 1) + '\\u0001';
@@ -2434,8 +2820,10 @@ async function renderDetail(loadPlan) {
   if (!p) return renderEmptyDetail();
   CUR_ISSUES = p.issuesUrl || '';
   let tab = prTab[p.key] || 'plan';
-  if (tab === 'ask' ? !hasAsk(p) : tab !== 'plan' && !p.pr) tab = 'plan';
-  if (tab === 'ask') return renderAskTab(p, loadPlan);
+  // the Ask tab is now the chat panel: an old ?tab=ask link opens it beside the diff
+  if (tab === 'ask') { prTab[p.key] = tab = p.pr ? 'files' : 'plan'; if (!chatOn) toggleChat(true); }
+  if (tab !== 'plan' && !p.pr) tab = 'plan';
+  syncChat(p);
   if (tab !== 'plan') return renderPrTab(p, tab, loadPlan);
   lastPrDraw = null;
   const launcherModes = !p.hasPipeline && !p.archived
@@ -2670,141 +3058,381 @@ let diffSplit = true, diffFull = true;
 try { diffSplit = localStorage.getItem('dash-diff-split') !== '0'; } catch {}
 try { diffFull = localStorage.getItem('dash-diff-full') !== '0'; } catch {}
 
-const prTabs = (p, tab) => !p.pr && !hasAsk(p) ? '' : '<div class="prtabs">' + [
+const prTabs = (p, tab) => !p.pr && !hasChat(p) ? '' : '<div class="prtabs">' + [
   ['plan', 'Plan'],
-  hasAsk(p) && ['ask', 'Ask'],
   p.pr && ['pr', 'Pull request <span class="n">#' + p.pr.number + '</span>'],
   p.pr && ['files', 'Files changed' + ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
     prData[p.key] && prData[p.key].changedFiles != null ? prData[p.key].changedFiles : p.pr.changedFiles)],
 ].filter(Boolean).map(([id, label]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '">' + label + '</button>').join('') +
-  '</div>';
+  chatBtn(p) + '</div>';
 function bindPrTabs(p) {
   byId('detail').querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => {
     prTab[p.key] = el.dataset.tab; lastPrDraw = null; renderDetail(false);
   }));
+  byId('detail').querySelectorAll('[data-chat]').forEach((el) => el.addEventListener('click', () => toggleChat()));
 }
-// --- Ask tab: talk to the Claude session that ran the plan (the server resumes it) ---
-const hasAsk = (p) => !!((p.sessions && p.sessions.length) || p.asked);
-let askCopy = false;   // "ask in a copy": remembered for every new chat
-try { askCopy = localStorage.getItem('dash-ask-copy') === '1'; } catch {}
-const askDraft = {}, askFresh = new Set(), askSeen = {};
-async function renderAskTab(p, force) {
-  const sig = p.key + 'ask';
-  if (!force && lastPrDraw === sig && byId('askview')) return;
-  lastPrDraw = sig;
-  document.body.classList.remove('review');
-  byId('detail').innerHTML =
-    '<div class="crumb">' + esc(p.client) + ' / 📁 ' + esc(p.project) + '</div>' +
-    '<h2 class="fname">' + p.file + '</h2><div class="subtitle">' + inline(p.title) + '</div>' +
-    '<div class="prtabsrow">' + prTabs(p, 'ask') + '<span class="dim askwho" id="askwho"></span></div>' +
-    '<div id="askview">' +
-      '<div class="asklog" id="asklog" aria-live="polite"></div>' +
-      '<div id="askdeny"></div>' +
-      '<div class="askbox">' +
-        '<textarea id="askin" rows="3" aria-label="Message for the agent" placeholder="Ask what it did and why, or tell it what to do next. Enter sends, Shift+Enter starts a new line."></textarea>' +
-        '<div class="askrow">' +
-          '<label title="The first question of a new chat makes a copy of the session and the chat goes on in the copy. The session the run wrote keeps only what the run did."><input type="checkbox" id="askcopy"' + (askCopy ? ' checked' : '') + '> Ask in a copy of the session</label>' +
-          '<span style="flex:1"></span>' +
-          '<button id="asknew" title="The next message starts again from the run’s latest session">New chat</button>' +
-          '<button id="askstop" hidden>Stop</button>' +
-          '<button id="askgo" class="primary">Send</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
-  bindPrTabs(p);
-  const inp = byId('askin');
-  inp.value = askDraft[p.key] || '';
-  inp.addEventListener('input', () => { askDraft[p.key] = inp.value; });
-  inp.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); askSend(p); }
+// --- Chat panel: the Claude session that ran the plan, beside Files changed and the plan ---
+// Like the VS Code extension's panel: the whole session (the run, then the chat) scrolls above
+// the box, the answer streams in, an Allow / Deny card comes up when the agent needs a
+// permission, / lists the session's skills and commands, @ the PR's files, and lines selected
+// in the diff or the plan go with the next message. The panel lives outside #detail, so
+// opening another file or tab does not touch it.
+const hasChat = (p) => !!(p && ((p.sessions && p.sessions.length) || p.asked));
+const CHAT_MODES = [['default', 'Ask before edits'], ['acceptEdits', 'Edit automatically'], ['plan', 'Plan mode'], ['auto', 'Auto']];
+let chatOn = false, chatW = 0, chatMode = 'default', chatModel = '';
+try {
+  chatOn = localStorage.getItem('dash-chat-open') === '1';
+  chatW = +localStorage.getItem('dash-chat-w') || 0;
+  chatMode = localStorage.getItem('dash-chat-mode') || 'default';
+  chatModel = localStorage.getItem('dash-chat-model') || '';
+} catch {}
+let ch = null;        // the chat on screen: { p, key, items, first, total, session, st, es }
+let chatSel = null;   // the lines that go with the next message
+const chatDraft = {}, chatMetas = {};   // plan key -> unsent text; project -> commands and models
+const chatBtn = (p) => hasChat(p) ? '<button class="chatbtn' + (chatOn ? ' on' : '') + '" data-chat="1" aria-pressed="' + chatOn +
+  '" title="Chat with the agent that ran this plan">💬 Chat' + (p.chatWaits ? ' <span class="n">!</span>' : '') + '</button>' : '';
+function toggleChat(on) {
+  chatOn = on == null ? !chatOn : on;
+  try { localStorage.setItem('dash-chat-open', chatOn ? '1' : '0'); } catch {}
+  document.querySelectorAll('[data-chat]').forEach((b) => { b.classList.toggle('on', chatOn); b.setAttribute('aria-pressed', String(chatOn)); });
+  syncChat(find(selected));
+  if (chatOn && byId('cin')) byId('cin').focus();
+}
+function setChatWidth(px, save) {
+  const C = byId('chat');
+  C.style.width = px ? Math.round(Math.max(320, Math.min(px, window.innerWidth * 0.7))) + 'px' : '';
+  chatW = px ? C.offsetWidth : 0;
+  if (save) try { chatW ? localStorage.setItem('dash-chat-w', chatW) : localStorage.removeItem('dash-chat-w'); } catch {}
+}
+// shown for the open plan when the panel is on and the plan has a session to talk to
+function syncChat(p) {
+  const show = chatOn && hasChat(p);
+  byId('chat').hidden = byId('csplit').hidden = !show;
+  if (!show) { if (ch) { ch.es.close(); ch = null; } return; }
+  if (ch && ch.key === p.key) { ch.p = p; return; }
+  chatBind(p);
+}
+function chatBind(p) {
+  if (ch) ch.es.close();
+  const c = ch = { p, key: p.key, items: {}, first: 0, total: 0, session: null, st: {}, open: new Set() };
+  const C = byId('chat');
+  if (chatW) C.style.width = chatW + 'px';
+  C.innerHTML =
+    '<div class="chead"><b>Chat</b><span class="dim cwho" id="cwho"></span><span style="flex:1"></span>' +
+      '<button id="cfork" title="The next message goes on in a copy of this session. The session so far stays as it is.">Fork</button>' +
+      '<button id="cnew" hidden title="The next message starts again from the run’s latest session">New chat</button>' +
+      '<button id="cclose" title="Close the chat" aria-label="Close the chat">✕</button></div>' +
+    '<div class="clog" id="clog" aria-live="polite"><div class="dim cmore" id="cmore"></div><div id="citems"></div>' +
+      '<div id="clive"></div></div>' +
+    '<div id="cwaits"></div>' +
+    '<div class="cbox"><div id="cmenu" class="cmenu" role="listbox" hidden></div><div id="csel"></div>' +
+      '<textarea id="cin" rows="3" aria-label="Message for the agent" placeholder="Ask or tell the agent what to do. / for skills and commands, @ for a file. Enter sends, Shift+Enter starts a new line."></textarea>' +
+      '<div class="crow"><select id="cmode" aria-label="Permission mode" title="What the agent may do without asking (Shift+Tab switches)">' +
+        CHAT_MODES.map(([v, l]) => '<option value="' + v + '"' + (v === chatMode ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
+        '<select id="cmodel" aria-label="Model"><option value="">Model: default</option></select>' +
+        '<span style="flex:1"></span><button id="cstop" hidden>Stop</button><button id="cgo" class="primary">Send</button></div></div>';
+  const inp = byId('cin');
+  inp.value = chatDraft[p.key] || '';
+  inp.addEventListener('input', () => { chatDraft[c.key] = inp.value; chatMenu(); });
+  inp.addEventListener('click', chatMenu);
+  inp.addEventListener('keydown', chatKey);
+  inp.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== inp) byId('cmenu').hidden = true; }, 150));
+  byId('cgo').addEventListener('click', chatSendMsg);
+  byId('cstop').addEventListener('click', () => post('/api/chat/stop', { project: c.p.project, slug: c.p.slug }));
+  byId('cclose').addEventListener('click', () => toggleChat(false));
+  byId('cfork').addEventListener('click', () => post('/api/chat/fork', { project: c.p.project, slug: c.p.slug }));
+  byId('cnew').addEventListener('click', () => post('/api/chat/new', { project: c.p.project, slug: c.p.slug }));
+  byId('cmode').addEventListener('change', (e) => chatSetMode(e.target.value, chatModel));
+  byId('cmodel').addEventListener('change', (e) => chatSetMode(chatMode, e.target.value));
+  const L = byId('clog');
+  L.addEventListener('click', async (e) => {
+    const b = e.target.closest && e.target.closest('.ccopy');
+    if (!b) return;
+    const it = b.dataset.copymsg != null ? c.items[+b.dataset.copymsg] : null;
+    const ok = await copyText(it ? it.text : b.parentElement.querySelector('pre').textContent);
+    b.textContent = ok ? 'Copied' : 'Copy failed';
+    setTimeout(() => { b.textContent = 'Copy'; }, 1400);
   });
-  byId('askgo').addEventListener('click', () => askSend(p));
-  byId('askstop').addEventListener('click', () => post('/api/ask-stop', { project: p.project, slug: p.slug }));
-  byId('askcopy').addEventListener('change', (e) => {
-    askCopy = e.target.checked;
-    try { localStorage.setItem('dash-ask-copy', askCopy ? '1' : '0'); } catch {}
-    drawAskWho(p);
+  L.addEventListener('scroll', () => { if (L.scrollTop < 150) chatLoad('old'); }, { passive: true });
+  // a tool line keeps its open state when the list repaints
+  L.addEventListener('toggle', (e) => {
+    const i = e.target.dataset && e.target.dataset.i;
+    if (i != null) e.target.open ? c.open.add(+i) : c.open.delete(+i);
+  }, true);
+  paintSel();
+  chatLoad('init');
+  chatMetaLoad(p);
+  c.es = new EventSource('/api/chat/events?project=' + encodeURIComponent(p.project) + '&slug=' + encodeURIComponent(p.slug));
+  c.es.addEventListener('state', (e) => { if (ch === c) chatState(JSON.parse(e.data)); });
+  c.es.addEventListener('history', () => { if (ch === c) chatLoad('new'); });
+  c.es.addEventListener('delta', (e) => {
+    if (ch !== c) return;
+    const d = JSON.parse(e.data);
+    c.st.partial = d.reset ? '' : (c.st.partial || '') + d.text;
+    paintLive();
   });
-  byId('asknew').addEventListener('click', () => { askFresh.add(p.key); drawAskWho(p); inp.focus(); });
-  askSeen[p.key] = null;
-  await drawAsk(p);
-  if (lastPrDraw === sig) inp.focus();
 }
-async function askSend(p, text, allow) {
-  const inp = byId('askin');
-  const q = (text || inp.value).trim();
-  if (!q) return;
-  const r = await post('/api/ask', { project: p.project, slug: p.slug, text: q, allow,
-    copy: askCopy, fresh: askFresh.has(p.key) });
-  if (!r.ok) return;
-  askFresh.delete(p.key);
-  if (!text) { inp.value = ''; delete askDraft[p.key]; }
-  drawAsk(p);
+async function chatMetaLoad(p) {
+  let m = chatMetas[p.project];
+  if (!m) {
+    m = await fetch('/api/chat/meta?project=' + encodeURIComponent(p.project) + '&slug=' + encodeURIComponent(p.slug))
+      .then((r) => r.json()).catch(() => null);
+    if (m && m.ok) chatMetas[p.project] = m;
+  }
+  const S = byId('cmodel');
+  if (!m || !S || !ch || ch.p.project !== p.project) return;
+  S.innerHTML = (m.models.length ? m.models : [{ value: '', name: 'Model: default' }]).map((x) =>
+    '<option value="' + escA(x.value === 'default' ? '' : x.value) + '" title="' + escA(x.description || '') + '">' + esc(x.name) + '</option>').join('');
+  S.value = chatModel;
+  if (S.value !== chatModel) S.value = '';
 }
-let askLast = {};   // plan key -> the last /api/ask answer
-function drawAskWho(p) {
-  const el = byId('askwho');
-  if (!el) return;
-  const st = askLast[p.key] || {}, cur = st.current;
-  const latest = (p.sessions || []).slice(-1)[0];
+function chatSetMode(mode, model) {
+  chatMode = mode; chatModel = model;
+  try { localStorage.setItem('dash-chat-mode', mode); localStorage.setItem('dash-chat-model', model); } catch {}
+  byId('cmode').value = mode;
+  if (ch) post('/api/chat/mode', { project: ch.p.project, slug: ch.p.slug, mode, model: model || 'default' });
+}
+// 'init': the last page; 'old': the page before the first item shown; 'new': what changed at the end
+async function chatLoad(how) {
+  const c = ch;
+  if (!c || (how === 'old' && (c.loadingOld || c.first <= 0))) return;
+  let q = '';
+  if (how === 'old') { c.loadingOld = true; q = '&before=' + c.first; }
+  if (how === 'new' && c.session) {
+    // from the first tool call still waiting for its result, else from the end
+    let from = c.total;
+    for (let i = Math.max(c.first, c.total - 300); i < c.total; i++)
+      if (c.items[i] && c.items[i].k === 'tool' && !c.items[i].done) { from = i; break; }
+    q = '&from=' + from;
+  }
+  const r = await fetch('/api/chat/history?project=' + encodeURIComponent(c.p.project) + '&slug=' + encodeURIComponent(c.p.slug) + q)
+    .then((x) => x.json()).catch(() => null);
+  if (how === 'old') c.loadingOld = false;
+  if (ch !== c || !r) return;
+  if (how !== 'init' && r.session !== c.session) return chatLoad('init');
+  const L = byId('clog'), box = byId('citems');
+  const atEnd = L.scrollHeight - L.scrollTop - L.clientHeight < 80;
+  const html = (list) => list.map((it) => { c.items[it.i] = it; return chatItemHtml(it, c); }).join('');
+  if (how === 'init') {
+    c.session = r.session; c.items = {}; c.first = r.first; c.total = r.total;
+    box.innerHTML = html(r.items);
+    L.scrollTop = L.scrollHeight;
+  } else if (how === 'old') {
+    const h = L.scrollHeight;
+    c.first = r.first;
+    box.insertAdjacentHTML('afterbegin', html(r.items));
+    L.scrollTop += L.scrollHeight - h;
+  } else {
+    box.querySelector('.askempty')?.remove();
+    [...box.children].forEach((el) => { if (+el.dataset.i >= r.first) el.remove(); });
+    for (let i = r.first; i < c.total; i++) delete c.items[i];
+    box.insertAdjacentHTML('beforeend', html(r.items));
+    c.total = r.total;
+    if (atEnd) L.scrollTop = L.scrollHeight;
+  }
+  box.querySelectorAll('.amsg.agent pre:not([data-cp])').forEach((pre) => {
+    pre.dataset.cp = '1';
+    const w = document.createElement('div');
+    w.className = 'cpre';
+    pre.replaceWith(w);
+    w.append(pre);
+    w.insertAdjacentHTML('beforeend', '<button class="ccopy" data-copycode="1" title="Copy this block">Copy</button>');
+  });
+  byId('cmore').textContent = c.first > 0 ? 'Scroll up for earlier messages' : '';
+  if (!c.total) box.innerHTML = '<div class="dim askempty">No messages in this session yet.</div>';
+  paintLive();
+}
+const chatTime = (at) => at ? new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+function chatItemHtml(it, c) {
+  const open = c.open.has(it.i) ? ' open' : '';
+  if (it.k === 'you') return '<div class="cyou" data-i="' + it.i + '">' + (it.at ? '<div class="ctime">' + esc(chatTime(it.at)) + '</div>' : '') +
+    '<div class="amsg you">' + (it.sel || []).map((s) => '<span class="cchip">⧉ ' + esc(s) + '</span>').join('') +
+    (it.text ? (/^\\/[\\w:-]+/.test(it.text) ? '<code>' + esc(it.text.split(' ')[0]) + '</code> ' + esc(it.text.split(' ').slice(1).join(' ')) : esc(it.text)) : '') + '</div></div>';
+  if (it.k === 'agent') return '<div class="amsg agent mdc" data-i="' + it.i + '">' + md(it.text) +
+    '<button class="ccopy cmsg" data-copymsg="' + it.i + '" title="Copy the whole answer as Markdown">Copy</button></div>';
+  if (it.k === 'think') return '<details class="cnote" data-i="' + it.i + '"' + open + '><summary>Thinking</summary><div class="mdc">' + md(it.text) + '</div></details>';
+  if (it.k === 'tool') return '<details class="ctool' + (it.err ? ' err' : '') + '" data-i="' + it.i + '"' + open + '><summary><b>' + esc(it.name) + '</b> ' +
+    '<span>' + esc(it.sum) + '</span>' + (it.done ? '' : ' <i class="dim">running…</i>') + '</summary>' +
+    (it.input ? '<pre>' + esc(it.input) + '</pre>' : '') + (it.out ? '<pre class="out">' + esc(it.out) + '</pre>' : '') + '</details>';
+  return it.body ? '<details class="cnote" data-i="' + it.i + '"' + open + '><summary>' + esc(it.text) + '</summary><pre>' + esc(it.body) + '</pre></details>'
+    : '<div class="cnote" data-i="' + it.i + '">' + esc(it.text) + '</div>';
+}
+function chatState(st) {
+  const c = ch, was = c.st;
+  c.st = st;
   const short = (id) => String(id || '').slice(0, 8);
-  el.textContent = cur && !askFresh.has(p.key)
-    ? (cur.copy ? 'Chat in a copy of session ' + short(cur.base) : 'Chat in the run’s session ' + short(cur.id))
-    : latest ? 'The next message starts a chat in ' + (askCopy ? 'a copy of ' : '') + 'session ' + short(latest.id)
-    : 'No session to resume';
+  byId('cwho').textContent = (st.live ? '● ' : '') + (st.fork ? 'next message: a copy of ' + short(st.session)
+    : st.current && st.current.copy ? 'copy of ' + short(st.current.base) : 'session ' + short(st.session));
+  byId('cwho').title = st.live ? 'The session is open. It closes after 15 minutes without a message.' : 'The next message opens the session.';
+  byId('cnew').hidden = !(st.current && st.current.id !== st.latest);
+  byId('cfork').disabled = !!st.fork;
+  byId('cgo').textContent = st.busy ? 'Queue' : 'Send';
+  byId('cgo').title = st.busy ? 'The agent reads it when it finishes this step' : '';
+  byId('cstop').hidden = !st.busy;
+  if (st.mode && st.mode !== chatMode) { chatMode = st.mode; byId('cmode').value = st.mode; }
+  if (st.session !== c.session && c.session != null) chatLoad('init');
+  else if (was.busy && !st.busy) chatLoad('new');
+  paintLive();
+  paintWaits(st.waits || []);
+  if (c.p) { const p = find(c.key); if (p) p.chatWaits = (st.waits || []).length; }
 }
-async function drawAsk(p) {
-  const sig = lastPrDraw;
-  let st;
-  try { st = await (await fetch('/api/ask?project=' + p.project + '&slug=' + p.slug)).json(); }
-  catch { st = null; }
-  if (lastPrDraw !== sig || !byId('askview')) return;
-  if (st) {
-    askLast[p.key] = st;
-    const raw = JSON.stringify(st);
-    if (askSeen[p.key] !== raw) {
-      askSeen[p.key] = raw;
-      paintAsk(p, st);
+function paintLive() {
+  const c = ch, st = c.st, V = byId('clive');
+  if (!V) return;
+  const L = byId('clog'), atEnd = L.scrollHeight - L.scrollTop - L.clientHeight < 80;
+  V.innerHTML = (st.partial ? '<div class="amsg agent live">' + esc(st.partial) + '</div>' : '') +
+    (st.busy && !(st.waits || []).length ? '<div class="aend cwork">working…</div>' : '') +
+    (st.error ? '<div class="aend bad">' + esc(st.error) + '</div>' : '') +
+    (!st.busy && st.last && !st.last.ok ? '<div class="aend bad">' + (st.last.subtype === 'error_during_execution' ? 'Stopped'
+      : esc(st.last.subtype || 'Stopped')) + '</div>' : '');
+  if (atEnd) L.scrollTop = L.scrollHeight;
+}
+function paintWaits(waits) {
+  const W = byId('cwaits'), c = ch;
+  const sig = waits.map((w) => w.id).join();
+  if (W.dataset.sig === sig) return;
+  W.dataset.sig = sig;
+  W.innerHTML = waits.map((w) => '<div class="cwait" data-w="' + escA(w.id) + '">' +
+    (w.plan ? '<b>The agent has a plan and asks to start:</b><div class="mdc cplan">' + md(w.detail) + '</div>'
+      : '<b>Allow ' + esc(w.tool) + '?</b>' + (w.description ? '<div class="dim">' + esc(w.description) + '</div>' : '') +
+        (w.what && !(w.description && w.what.endsWith(w.description)) ? '<code>' + esc(w.what) + '</code>' : '') + (w.detail ? '<pre>' + esc(w.detail) + '</pre>' : '')) +
+    '<div class="crow"><button class="primary" data-a="1">' + (w.plan ? 'Approve the plan' : 'Allow') + '</button>' +
+      (w.always && !w.plan ? '<button data-a="2" title="Allow this command for the rest of this chat">Allow for this chat</button>' : '') +
+      (w.edits && !w.plan ? '<button data-a="3" title="The agent edits files in this folder without asking until the chat closes. The mode picker shows Edit automatically.">Allow all edits in this chat</button>' : '') +
+      '<button data-a="0">' + (w.plan ? 'Keep planning' : 'Deny') + '</button>' +
+      '<span class="dim">' + (w.plan ? '' : 'To say what to do instead, type it below and click Deny.') + '</span></div></div>').join('');
+  W.querySelectorAll('[data-a]').forEach((b) => b.addEventListener('click', () => {
+    const id = b.closest('[data-w]').dataset.w, a = +b.dataset.a, inp = byId('cin');
+    const message = a === 0 && inp.value.trim() ? inp.value.trim() : undefined;
+    if (message) { inp.value = ''; delete chatDraft[c.key]; }
+    W.querySelectorAll('button').forEach((x) => (x.disabled = true));
+    post('/api/chat/answer', { project: c.p.project, slug: c.p.slug, id, allow: a > 0, always: a === 2, edits: a === 3, message });
+  }));
+  if (waits.length) byId('clog').scrollTop = byId('clog').scrollHeight;
+}
+async function chatSendMsg() {
+  const c = ch, inp = byId('cin'), text = inp.value.trim();
+  if (!c || !text) return;
+  byId('cmenu').hidden = true;
+  const s = chatSel;
+  const r = await post('/api/chat/send', { project: c.p.project, slug: c.p.slug, text, mode: chatMode, model: chatModel || 'default',
+    selection: s ? { file: s.file, side: s.side, start: s.start, end: s.end, text: s.text } : null });
+  if (!r.ok || ch !== c) return;
+  inp.value = ''; delete chatDraft[c.key];
+  setChatSel(null);
+  c.st.partial = ''; c.st.busy = true; c.st.error = '';
+  paintLive();
+}
+// --- the / and @ menu above the box ---
+let chatMenuItems = [], chatMenuAt = 0, chatMenuPick = 0;
+function chatMenu() {
+  const inp = byId('cin'), M = byId('cmenu');
+  const before = inp.value.slice(0, inp.selectionStart);
+  const meta = chatMetas[ch.p.project] || { commands: [] };
+  let m;
+  chatMenuItems = [];
+  if ((m = /^\\/([^\\s]*)$/.exec(before))) {
+    const f = m[1].toLowerCase();
+    chatMenuItems = meta.commands.filter((x) => x.name.toLowerCase().includes(f))
+      .sort((a, b) => (b.name.toLowerCase().startsWith(f) - a.name.toLowerCase().startsWith(f)))
+      .slice(0, 60).map((x) => ({ ins: '/' + x.name + ' ', label: '/' + x.name, hint: x.hint, desc: x.description }));
+    chatMenuAt = 0;
+  } else if ((m = /(^|\\s)@([^\\s]*)$/.exec(before))) {
+    const f = m[2].toLowerCase(), df = prDiff[ch.key];
+    chatMenuItems = ((df && df.files) || []).map((x) => x.path).filter((x) => x.toLowerCase().includes(f))
+      .slice(0, 60).map((x) => ({ ins: '@' + x + ' ', label: x.slice(x.lastIndexOf('/') + 1), desc: x }));
+    chatMenuAt = before.length - m[2].length - 1;
+  }
+  if (!chatMenuItems.length) { M.hidden = true; return; }
+  chatMenuPick = Math.min(chatMenuPick, chatMenuItems.length - 1);
+  M.innerHTML = chatMenuItems.map((x, n) => '<div class="cmi' + (n === chatMenuPick ? ' on' : '') + '" role="option" data-n="' + n + '">' +
+    '<b>' + esc(x.label) + '</b>' + (x.hint ? ' <span class="dim">' + esc(x.hint) + '</span>' : '') +
+    (x.desc ? '<div class="dim">' + esc(x.desc) + '</div>' : '') + '</div>').join('');
+  M.hidden = false;
+  M.querySelectorAll('[data-n]').forEach((el) => el.addEventListener('mousedown', (e) => { e.preventDefault(); chatMenuUse(+el.dataset.n); }));
+  const on = M.querySelector('.on');
+  if (on) on.scrollIntoView({ block: 'nearest' });
+}
+function chatMenuUse(n) {
+  const inp = byId('cin'), x = chatMenuItems[n];
+  if (!x) return;
+  const pos = inp.selectionStart;
+  inp.value = inp.value.slice(0, chatMenuAt) + x.ins + inp.value.slice(pos).replace(/^\\S*\\s?/, '');
+  const at = chatMenuAt + x.ins.length;
+  inp.setSelectionRange(at, at);
+  chatDraft[ch.key] = inp.value;
+  chatMenuPick = 0;
+  byId('cmenu').hidden = true;
+  inp.focus();
+}
+function chatKey(e) {
+  const M = byId('cmenu');
+  if (!M.hidden && chatMenuItems.length) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      chatMenuPick = (chatMenuPick + (e.key === 'ArrowDown' ? 1 : -1) + chatMenuItems.length) % chatMenuItems.length;
+      return chatMenu();
     }
+    if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') { e.preventDefault(); return chatMenuUse(chatMenuPick); }
+    if (e.key === 'Escape') { e.preventDefault(); M.hidden = true; return; }
   }
-  drawAskWho(p);
-  if (st && st.running) setTimeout(() => { if (lastPrDraw === sig) drawAsk(p); }, 1500);
+  if (e.key === 'Tab' && e.shiftKey) {
+    e.preventDefault();
+    const i = CHAT_MODES.findIndex(([v]) => v === chatMode);
+    return chatSetMode(CHAT_MODES[(i + 1) % CHAT_MODES.length][0], chatModel);
+  }
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); chatSendMsg(); }
 }
-function paintAsk(p, st) {
-  const L = byId('asklog');
-  const atEnd = L.scrollHeight - L.scrollTop - L.clientHeight < 60;
-  const out = [];
-  for (const it of st.items) {
-    if (it.who === 'you') {
-      if (it.fresh) out.push('<div class="anew">New chat in ' + (it.copy ? 'a copy of ' : 'the run’s ') +
-        'session ' + esc(String(it.session || '').slice(0, 8)) + (it.at ? ' · ' + new Date(it.at).toLocaleString() : '') + '</div>');
-      out.push('<div class="amsg you">' + esc(it.text) +
-        (it.allowed ? '<div class="dim aallow">allowed: ' + it.allowed.map(esc).join(', ') + '</div>' : '') + '</div>');
-    } else if (it.who === 'agent') out.push('<div class="amsg agent mdc">' + md(it.text) + '</div>');
-    else if (it.who === 'tool') out.push('<div class="atool">' + esc(it.text) + '</div>');
-    else if (it.who === 'end') out.push('<div class="aend' + (it.ok ? '' : ' bad') + '">' +
-      (it.ok ? '' : esc(it.subtype || 'stopped') + ' · ') +
-      (it.blocked ? it.blocked + ' blocked · ' : '') + (it.cost != null ? '$' + it.cost.toFixed(2) : '') + '</div>');
-    else out.push('<div class="aend bad">' + esc(it.text) + '</div>');
-  }
-  if (st.running) out.push('<div class="aend">working…</div>');
-  L.innerHTML = out.join('') || '<div class="dim askempty">Ask the agent that ran this plan. It remembers the plan, ' +
-    'the files it read and what it decided, so you can ask why it did something. It can also work here, for ' +
-    'example: <i>merge develop into this branch</i>. A command it is not allowed to run shows up below, ' +
-    'and you choose whether to allow it.</div>';
-  if (atEnd || st.running) L.scrollTop = L.scrollHeight;
-  byId('askgo').hidden = st.running;
-  byId('askstop').hidden = !st.running;
-  const D = byId('askdeny');
-  D.innerHTML = '';
-  if (st.denied && st.denied.length) {
-    D.innerHTML = '<div class="askdeny"><b>The agent was not allowed to run:</b>' +
-      st.denied.map((d) => '<div><code>' + esc(d.what || d.tool) + '</code></div>').join('') +
-      '<button id="askallow" class="primary">Allow for this chat and ask again</button></div>';
-    byId('askallow').addEventListener('click', () => askSend(p,
-      'I allowed what was blocked. Please try again.', st.denied.flatMap((d) => d.rules)));
-  }
+// --- selected lines: from VS Code's diff view, the table diff or the plan text ---
+function setChatSel(s) { chatSel = s; paintSel(); }
+function paintSel() {
+  const S = byId('csel');
+  if (!S) return;
+  const s = chatSel;
+  if (!s) { S.innerHTML = ''; return; }
+  const name = s.file ? s.file.slice(s.file.lastIndexOf('/') + 1) : 'selected text';
+  const n = s.start ? s.end - s.start + 1 : s.text.split('\\n').length;
+  S.innerHTML = '<span class="cchip csel" title="Goes with the next message:\\n' + escA(s.text.slice(0, 600)) + '">⧉ <b>' + esc(name) +
+    (s.start ? ':' + s.start + (s.end > s.start ? '-' + s.end : '') : '') + '</b>' + (s.side === 'old' ? ' (before)' : '') +
+    '<span class="dim">' + n + ' line' + (n === 1 ? '' : 's') + ' selected</span>' +
+    '<button id="cselx" aria-label="Do not send the selected lines" title="Do not send the selected lines">✕</button></span>';
+  byId('cselx').addEventListener('click', () => setChatSel(null));
 }
+function chatPickFromEditor(e, side, file, s) {
+  if (s.isEmpty()) { if (chatSel && chatSel.from === 'mono') setChatSel(null); return; }
+  let end = s.endLineNumber;
+  if (s.endColumn === 1 && end > s.startLineNumber) end--;
+  setChatSel({ from: 'mono', file, side, start: s.startLineNumber, end, text: e.getModel().getValueInRange(s) });
+}
+document.addEventListener('mouseup', (e) => {
+  if (!ch || !e.target.closest || !e.target.closest('#detail') || e.target.closest('.monaco-editor')) return;
+  setTimeout(() => {
+    const s = window.getSelection(), t = s ? String(s) : '';
+    if (!t.trim()) { if (chatSel && chatSel.from === 'dom') setChatSel(null); return; }
+    const n = s.anchorNode && (s.anchorNode.nodeType === 1 ? s.anchorNode : s.anchorNode.parentElement);
+    const inPlan = n && n.closest('#planmd'), inDiff = n && n.closest('.pdbody');
+    setChatSel({ from: 'dom', side: inPlan ? 'plan' : inDiff ? 'new' : 'text',
+      file: inPlan ? ch.p.file : inDiff ? prFile[ch.key] || '' : '', text: t.slice(0, 20000) });
+  });
+});
+byId('csplit').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  const bar = e.currentTarget;
+  const move = (ev) => setChatWidth(window.innerWidth - ev.clientX);
+  document.body.classList.add('dragging'); bar.classList.add('on');
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', () => {
+    document.removeEventListener('pointermove', move);
+    document.body.classList.remove('dragging'); bar.classList.remove('on');
+    setChatWidth(chatW, true);
+  }, { once: true });
+});
+byId('csplit').addEventListener('dblclick', () => setChatWidth(0, true));
+byId('csplit').addEventListener('keydown', (e) => {
+  if (!/^Arrow(Left|Right)$/.test(e.key)) return;
+  e.preventDefault();
+  setChatWidth(byId('chat').offsetWidth + (e.key === 'ArrowLeft' ? 40 : -40), true);
+});
 async function loadPr(p) {
   const r = await (await fetch('/api/pr?project=' + p.project + '&number=' + p.pr.number)).json();
   prData[p.key] = r.ok ? { ...r.pr, from: JSON.stringify(p.pr) } : { error: r.output || r.error, from: JSON.stringify(p.pr) };
@@ -3246,6 +3874,9 @@ function mountMonaco(cur, keepTop) {
   });
   ed.setModel({ original: models[0], modified: models[1] });
   monoEd = { dispose: () => ed.dispose(), models, getModifiedEditor: () => ed.getModifiedEditor() };
+  // lines selected on either side go with the next chat message, as in the VS Code extension
+  for (const [e, side] of [[ed.getModifiedEditor(), 'new'], [ed.getOriginalEditor(), 'old']])
+    e.onDidChangeCursorSelection((ev) => chatPickFromEditor(e, side, cur.path, ev.selection));
   // first diff: a new file opens at its first change, a repaint where it was
   const once = ed.onDidUpdateDiff(() => {
     once.dispose();
@@ -3841,6 +4472,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (e.target.closest && e.target.closest('.monaco-editor') && document.querySelector('.monaco-editor .find-widget.visible')) return;
   if (byId('onb').classList.contains('open')) return closeGuide();
+  if (e.target.closest && e.target.closest('#chat')) return;   // Esc in the chat closes only its menu
   // Files changed fills the window; Esc goes back to the plan, as ‹ Plan does
   if (document.body.classList.contains('review') && !byId('logpane').classList.contains('open'))
     return byId('rback')?.click();
@@ -3865,6 +4497,7 @@ const CHECK_SVG = '<svg viewBox="0 0 16 16"><path d="M3 8.5l3.2 3.2L13 4.5" fill
 const mark = (c) => '<span class="mk ' + (c.ok ? 'ok' : c.required ? 'bad' : 'warn') + '">' + (c.ok ? CHECK_SVG : '') + '</span>';
 function renderEmptyDetail() {
   syncUrl();
+  syncChat(null);
   document.body.classList.remove('review');
   byId('detail').innerHTML = state.length ? '<span class="dim">Select a plan on the left.</span>'
     : '<div class="welcome"><h2>Hand off the work. Review the result.</h2><p>Describe a change in a plan ' +
@@ -4188,11 +4821,11 @@ const connMsg = (m) => {
 // than the 5s tick. Without this guard the ticks pile up and their responses can land
 // out of order, repainting the list from a stale payload.
 // --- alerts: a sound, and a desktop notification when this tab is not in front, when a run
-// stops (needs you, failed, finished) or the Ask agent finishes. Off until 🔔 is clicked,
+// stops (needs you, failed, finished), or the chat agent answers or asks for permission. Off until 🔔 is clicked,
 // which is also the click the browser wants before it allows sound and notifications.
 let alertsOn = false, audio = null;
 try { alertsOn = localStorage.getItem('dash-alerts') === '1'; } catch {}
-const wasBusy = {};   // plan key -> 'run' / 'ask' flags at the last state
+const wasBusy = {};   // plan key -> run / chat / waiting flags at the last state
 function paintAlertBtn() {
   const b = byId('alertBtn');
   b.textContent = alertsOn ? '🔔' : '🔕';
@@ -4223,20 +4856,22 @@ function alertUser(title, body, key, tab) {
   const n = new Notification(title, { body, tag: key + title });
   n.onclick = () => {
     window.focus(); n.close();
-    selected = key; if (tab) prTab[key] = tab;
+    selected = key;
+    if (tab === 'chat') { chatOn = false; toggleChat(true); } else if (tab) prTab[key] = tab;
     lastPrDraw = null; renderList(); renderDetail(true);
   };
 }
 function checkAlerts() {
   for (const p of plans) {
-    const run = !!(p.live || starting(p)), ask = !!p.asking, was = wasBusy[p.key];
+    const run = !!(p.live || starting(p)), ask = !!p.chatting, waits = p.chatWaits || 0, was = wasBusy[p.key];
     if (was && was.run && !run) {
       const o = outOf(p);
       alertUser(o === 'failed' ? 'Run failed' : o === 'needs-you' ? 'Run needs you' : 'Run finished',
         p.project + ' / ' + p.file, p.key);
     }
-    if (was && was.ask && !ask) alertUser('The agent answered', p.project + ' / ' + p.file, p.key, 'ask');
-    wasBusy[p.key] = { run, ask };
+    if (was && was.ask && !ask) alertUser('The agent answered', p.project + ' / ' + p.file, p.key, 'chat');
+    if (was && waits > was.waits) alertUser('The agent asks for permission', p.project + ' / ' + p.file, p.key, 'chat');
+    wasBusy[p.key] = { run, ask, waits };
   }
 }
 byId('alertBtn').addEventListener('click', async () => {

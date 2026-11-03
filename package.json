@@ -1,0 +1,9 @@
+{
+  "name": "claude-config",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "restart": "node scripts/restart-dashboard.mjs",
+    "test": "node --test 'scripts/test/*.test.mjs'"
+  }
+}
