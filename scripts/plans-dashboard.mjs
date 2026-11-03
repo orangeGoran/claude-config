@@ -1197,7 +1197,8 @@ const planPathOf = (proj, slug) => {
 // --- the history: a transcript read as the panel shows it ---
 // The transcript is append-only JSONL, a few MB after a long run, so each look reads only
 // what was added since the last one. A tool call is one item; its result joins it later.
-const transcripts = new Map();   // file -> { size, rest, items, tools }
+const transcripts = new Map();   // file -> { size, rest, items, tools }; the 12 last read
+const TRANSCRIPTS_KEPT = 12;
 const clip = (s, n) => (s = String(s ?? ''), s.length > n ? s.slice(0, n) + '\n… (' + (s.length - n) + ' more characters)' : s);
 const toolSummary = (name, i, cwd) => {
   const rel = (f) => (cwd && String(f).startsWith(cwd + '/') ? String(f).slice(cwd.length + 1) : String(f));
@@ -1282,7 +1283,10 @@ const readTranscript = (file, cwd) => {
   let st;
   try { st = statSync(file); } catch { return { items: [] }; }
   let t = transcripts.get(file);
-  if (!t || st.size < t.size) transcripts.set(file, t = { size: 0, rest: '', items: [], tools: new Map() });
+  if (!t || st.size < t.size) t = { size: 0, rest: '', items: [], tools: new Map() };
+  transcripts.delete(file);
+  transcripts.set(file, t);   // last read goes last; the first one is the oldest
+  if (transcripts.size > TRANSCRIPTS_KEPT) transcripts.delete(transcripts.keys().next().value);
   if (st.size > t.size) {
     const fd = openSync(file, 'r');
     const buf = Buffer.alloc(st.size - t.size);
@@ -1347,12 +1351,27 @@ const chatHistorySoon = (ch) => {
   clearTimeout(ch.histTimer);
   ch.histTimer = setTimeout(() => chatEmit(ch.key, 'history', {}), 250);
 };
+// closing marks the chat at once: a message sent before its exit opens a new session
+const chatKill = (ch) => { ch.closing = true; ch.child.kill('SIGTERM'); };
 const chatIdle = (ch) => {
   clearTimeout(ch.idleTimer);
   ch.idleTimer = setTimeout(() => {
     if (ch.busy || ch.waits.size) return chatIdle(ch);
-    ch.child.kill('SIGTERM');
+    chatKill(ch);
   }, CHAT_IDLE_MS);
+};
+// 4, 8: the mode and the model the page asks for. The mode is sent only when it differs from
+// the session's, which claude reports at each turn (it leaves Plan mode on its own), unless the
+// person picked it just now.
+const MODEL_RE = /^[A-Za-z0-9.[\]-]{1,60}$/;
+const chatModel = (m) => (MODEL_RE.test(m || '') ? m : 'default');
+const applyModeModel = (ch, b, picked) => {
+  if (CHAT_MODES.includes(b.mode) && (picked || b.mode !== ch.mode)) {
+    ch.mode = b.mode;
+    chatControl(ch, { subtype: 'set_permission_mode', mode: b.mode });
+  }
+  const model = chatModel(b.model);
+  if (model !== ch.model) { ch.model = model; chatControl(ch, { subtype: 'set_model', model }); }
 };
 // the commands, skills and models a session in that folder offers: from the open chat, or a
 // claude started only to answer the first question of the protocol (no message is sent)
@@ -1362,10 +1381,16 @@ const metaOf = (r) => r && r.subtype === 'success' && r.response ? {
   commands: (r.response.commands || []).map((c) => ({ name: c.name, description: String(c.description || '').slice(0, 300), hint: c.argumentHint || '' })),
   models: (r.response.models || []).map((m) => ({ value: m.value, name: m.displayName || m.value, description: m.description || '' })),
 } : null;
-const chatMeta = async (proj, slug) => {
+const chatMetaLookups = new Map();   // cwd -> the lookup running now, shared by every page asking
+const chatMeta = (proj, slug) => {
   const { wtPath } = planSessions(proj, slug);
   const hit = chatMetaCache.get(wtPath);
-  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return { ok: true, ...hit };
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return Promise.resolve({ ok: true, ...hit });
+  if (!chatMetaLookups.has(wtPath))
+    chatMetaLookups.set(wtPath, chatMetaProbe(wtPath).finally(() => chatMetaLookups.delete(wtPath)));
+  return chatMetaLookups.get(wtPath);
+};
+const chatMetaProbe = async (wtPath) => {
   if (!existsSync(wtPath)) return { ok: false, commands: [], models: [] };
   const child = spawn('claude', ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
     '--permission-prompt-tool', 'stdio'], { cwd: wtPath, env: ENV, stdio: ['pipe', 'pipe', 'ignore'] });
@@ -1405,6 +1430,16 @@ const chatOnLine = (ch, j) => {
     saveChat(proj, slug, a);
     chatEmitState(proj, slug);
   }
+  if (j.type === 'system' && j.subtype === 'init' && CHAT_MODES.includes(j.permissionMode) && j.permissionMode !== ch.mode) {
+    ch.mode = j.permissionMode;
+    chatEmitState(proj, slug);
+  }
+  // a message sent during a turn may be answered in that turn or in a turn of its own, so
+  // busy is "a turn is running": on when one starts, off at its result
+  if (!j.parent_tool_use_id && !ch.busy && (j.type === 'assistant' || (j.type === 'stream_event' && j.event?.type === 'message_start'))) {
+    ch.busy = true;
+    chatEmitState(proj, slug);
+  }
   if (j.type === 'stream_event') {
     if (j.parent_tool_use_id) return;   // a subagent's words: its tool line says enough
     const e = j.event || {};
@@ -1426,9 +1461,9 @@ const chatOnLine = (ch, j) => {
     if (!j.parent_tool_use_id) { ch.partial = ''; chatEmit(ch.key, 'delta', { reset: true }); }
     chatHistorySoon(ch);
   } else if (j.type === 'result') {
-    ch.queued = Math.max(0, ch.queued - 1);
-    ch.busy = ch.queued > 0;
-    if (!ch.busy) { ch.partial = ''; ch.waits.clear(); }
+    ch.busy = false;
+    ch.partial = '';
+    ch.waits.clear();
     ch.last = { ok: !j.is_error && j.subtype === 'success', subtype: j.subtype, cost: j.total_cost_usd };
     chatEmitState(proj, slug);
     chatHistorySoon(ch);
@@ -1446,7 +1481,7 @@ const chatStart = (proj, slug, b) => {
   const fork = !!a.fork;
   saveChat(proj, slug, a);
   const mode = CHAT_MODES.includes(b.mode) ? b.mode : 'default';
-  const model = /^[A-Za-z0-9.[\]-]{1,60}$/.test(b.model || '') && b.model !== 'default' ? b.model : '';
+  const model = chatModel(b.model) === 'default' ? '' : b.model;
   const rules = repoAllowRules([wtPath, proj.root]);
   // the flags the VS Code extension starts its sessions with; --allowedTools takes every word
   // after it, so it comes last
@@ -1456,7 +1491,7 @@ const chatStart = (proj, slug, b) => {
     ...(rules.length ? ['--allowedTools', ...rules] : [])],
   { cwd: wtPath, env: ENV, stdio: ['pipe', 'pipe', 'pipe'] });
   const ch = { key, proj, slug, child, session: fork ? null : id, fork, mode, model: model || 'default', busy: false,
-    queued: 0, partial: '', waits: new Map(), pending: new Map(), err: '', last: null };
+    closing: false, partial: '', waits: new Map(), pending: new Map(), err: '', last: null };
   chats.set(key, ch);
   chatNotes.delete(key);
   child.stdin.on('error', () => {});
@@ -1497,6 +1532,12 @@ const chatMessage = async (proj, slug, b) => {
   if (!q) return { ok: false, output: 'Type a message first.' };
   const { wtPath } = planSessions(proj, slug);
   let ch = chats.get(key);
+  if (ch && ch.closing) {
+    // it is being closed (idle, a run starting, Stop): let it go, then open the session again
+    await new Promise((r) => { ch.child.once('exit', r); setTimeout(r, 5000); });
+    if (chats.get(key) === ch) chats.delete(key);
+    ch = chats.get(key);
+  }
   if (!ch) {
     if (!existsSync(wtPath)) return { ok: false, output: 'The folder ' + tilde(wtPath) + ' is gone, so the session cannot run there.' };
     if (existsSync(path.join(proj.plansDir, slug + '.md'))
@@ -1504,21 +1545,12 @@ const chatMessage = async (proj, slug, b) => {
       return { ok: false, output: 'A run or another chat is working in this plan right now. Send it when that has stopped.' };
     ch = chatStart(proj, slug, b);
     if (ch.error) return { ok: false, output: ch.error };
-  } else {
-    // the mode and the model change in the open session, as the extension's pickers do
-    if (CHAT_MODES.includes(b.mode) && b.mode !== ch.mode) {
-      ch.mode = b.mode;
-      chatControl(ch, { subtype: 'set_permission_mode', mode: b.mode });
-    }
-    const model = /^[A-Za-z0-9.[\]-]{1,60}$/.test(b.model || '') ? b.model : 'default';
-    if (model !== ch.model) { ch.model = model; chatControl(ch, { subtype: 'set_model', model }); }
-  }
+  } else applyModeModel(ch, b, false);   // the pickers change the open session, as the extension's do
   const content = [];
   const sel = selectionTag(proj, slug, wtPath, b.selection);
   if (sel) content.push({ type: 'text', text: sel });
   content.push({ type: 'text', text: q });
   chatSend(ch, { type: 'user', session_id: '', parent_tool_use_id: null, message: { role: 'user', content } });
-  ch.queued++;
   ch.busy = true;
   ch.partial = '';
   chatIdle(ch);
@@ -1546,6 +1578,8 @@ const chatAnswer = (proj, slug, b) => {
   // "all edits": the session switches to acceptEdits, as the extension's "allow all edits" does
   const edits = b.edits && (req.permission_suggestions || []).some((s) => s.type === 'setMode' && s.mode === 'acceptEdits');
   if (edits) ch.mode = 'acceptEdits';
+  // an approved plan ends Plan mode; the next turn's init says which mode claude went on in
+  if (b.allow && req.tool_name === 'ExitPlanMode' && ch.mode === 'plan') ch.mode = 'default';
   const response = b.allow
     ? { behavior: 'allow', updatedInput: req.input || {}, ...(edits ? { updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] }
       : b.always && rules.length ? { updatedPermissions: rules } : {}) }
@@ -1563,11 +1597,11 @@ const chatStop = (proj, slug) => {
   ch.waits.clear();
   chatControl(ch, { subtype: 'interrupt' });
   // a turn that does not end on the interrupt ends with the process
-  setTimeout(() => { if (chats.get(ch.key) === ch && ch.busy) ch.child.kill('SIGTERM'); }, 8000);
+  setTimeout(() => { if (chats.get(ch.key) === ch && ch.busy) chatKill(ch); }, 8000);
   return { ok: true };
 };
 // a run is starting in this folder: the chat gives way (its transcript stays)
-const chatEnd = (key) => { const ch = chats.get(key); if (ch) ch.child.kill('SIGTERM'); };
+const chatEnd = (key) => { const ch = chats.get(key); if (ch) chatKill(ch); };
 // Fork: the next message goes on in a copy of this session. New chat: the next message
 // starts again from the run's latest session. Both close the open claude.
 const chatRestart = (proj, slug, fork) => {
@@ -1585,13 +1619,8 @@ const chatRestart = (proj, slug, fork) => {
 };
 const chatSetMode = (proj, slug, b) => {
   const ch = chats.get(proj.name + '/' + slug);
-  if (!ch) return { ok: true };   // the next message starts the session with them
-  if (CHAT_MODES.includes(b.mode) && b.mode !== ch.mode) {
-    ch.mode = b.mode;
-    chatControl(ch, { subtype: 'set_permission_mode', mode: b.mode });
-  }
-  const model = /^[A-Za-z0-9.[\]-]{1,60}$/.test(b.model || '') ? b.model : 'default';
-  if (model !== ch.model) { ch.model = model; chatControl(ch, { subtype: 'set_model', model }); }
+  if (!ch || ch.closing) return { ok: true };   // the next message starts the session with them
+  applyModeModel(ch, b, true);
   chatEmitState(proj, slug);
   return { ok: true };
 };
@@ -2643,7 +2672,8 @@ function modeLabel(p) {
 // running/waiting = machine's turn; dead/done = your turn, most urgent first.
 const MOODS = [['live', '\u{1F3C3}'], ['inflight', '\u{23F3}'], ['bad', '\u{1F480}'],
                ['ready', '\u2705'], ['idle', '\u{1F634}']];
-let lastMood = '';
+let lastMood = '', baseTitle = 'Plans';
+const unseen = [];   // alerts that rang while you were away, newest last
 function setMood(counts) {
   const [key, face] = MOODS.find(([k]) => k === 'idle' || counts[k]);
   const n = counts[key] || 0;
@@ -2653,8 +2683,18 @@ function setMood(counts) {
   byId('favicon').href = 'data:image/svg+xml,' + encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
     '<text x="32" y="46" font-size="56" text-anchor="middle">' + face + '</text></svg>');
-  document.title = (n ? '(' + n + ') ' : '') + 'Plans';
+  baseTitle = (n ? '(' + n + ') ' : '') + 'Plans';
+  paintTitle();
 }
+// While you are in another app, each alert also goes in front of the tab title, so you can
+// see which tab rang. Coming back to the tab clears it.
+function paintTitle() {
+  const last = unseen[unseen.length - 1];
+  document.title = last ? '🔔 ' + (unseen.length > 1 ? '+' + (unseen.length - 1) + ' ' : '') + last + ' — ' + baseTitle : baseTitle;
+}
+function clearUnseen() { if (unseen.length) { unseen.length = 0; paintTitle(); } }
+window.addEventListener('focus', clearUnseen);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && document.hasFocus()) clearUnseen(); });
 function renderList() {
   // pinned "running now" strip + header counters — running must be unmissable
   const live = plans.filter((p) => p.live);
@@ -3094,7 +3134,9 @@ function bindPrTabs(p) {
 // in the diff or the plan go with the next message. The panel lives outside #detail, so
 // opening another file or tab does not touch it.
 const hasChat = (p) => !!(p && ((p.sessions && p.sessions.length) || p.asked));
-const CHAT_MODES = [['default', 'Ask before edits'], ['acceptEdits', 'Edit automatically'], ['plan', 'Plan mode'], ['auto', 'Auto']];
+// the modes are the server's; only their names on the picker are the page's
+const CHAT_MODE_NAMES = { default: 'Ask before edits', acceptEdits: 'Edit automatically', plan: 'Plan mode', auto: 'Auto' };
+const CHAT_MODES = ${JSON.stringify(CHAT_MODES)}.map((m) => [m, CHAT_MODE_NAMES[m] || m]);
 let chatOn = false, chatW = 0, chatMode = 'default', chatModel = '';
 try {
   chatOn = localStorage.getItem('dash-chat-open') === '1';
@@ -3212,7 +3254,19 @@ function chatSetMode(mode, model) {
 async function chatLoad(how) {
   const c = ch;
   if (!c || (how === 'old' && (c.loadingOld || c.first <= 0))) return;
+  // one reload of the end at a time: an older answer landing last would undo a newer one
+  if (how !== 'old') {
+    if (c.loading) { c.again = c.again === 'init' || how === 'init' ? 'init' : 'new'; return; }
+    c.loading = true;
+    try { await chatLoadEnd(c, how); } finally { c.loading = false; }
+    if (ch === c && c.again) { const next = c.again; c.again = null; chatLoad(next); }
+    return;
+  }
+  return chatLoadEnd(c, how);
+}
+async function chatLoadEnd(c, how) {
   let q = '';
+  const was = { first: c.first, session: c.session };
   if (how === 'old') { c.loadingOld = true; q = '&before=' + c.first; }
   if (how === 'new' && c.session) {
     // from the first tool call still waiting for its result, else from the end
@@ -3225,7 +3279,8 @@ async function chatLoad(how) {
     .then((x) => x.json()).catch(() => null);
   if (how === 'old') c.loadingOld = false;
   if (ch !== c || !r) return;
-  if (how !== 'init' && r.session !== c.session) return chatLoad('init');
+  if (how !== 'init' && r.session !== c.session) { if (how === 'old') chatLoad('init'); else c.again = 'init'; return; }
+  if (how === 'old' && (c.first !== was.first || c.session !== was.session)) return;   // the list was redrawn meanwhile
   const L = byId('clog'), box = byId('citems');
   const atEnd = L.scrollHeight - L.scrollTop - L.clientHeight < 80;
   const html = (list) => list.map((it) => { c.items[it.i] = it; return chatItemHtml(it, c); }).join('');
@@ -4866,6 +4921,7 @@ function chime() {
   } catch {}
 }
 function alertUser(title, body, key, tab) {
+  if (!document.hasFocus()) { unseen.push(title + ' · ' + body.split(' / ')[0]); paintTitle(); }
   if (!alertsOn) return;
   chime();
   if (document.hasFocus() || !('Notification' in window) || Notification.permission !== 'granted') return;
