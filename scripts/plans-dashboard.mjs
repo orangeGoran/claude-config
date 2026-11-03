@@ -29,6 +29,7 @@ import {
   writeFileSync, renameSync, statSync, closeSync, readSync, realpathSync,
 } from 'node:fs';
 import { execFile, execFileSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -187,7 +188,8 @@ const resolveProject = (p) => {
     launchers: Array.isArray(p.launchers) ? p.launchers : [],
     hasPipeline: existsSync(launcherScript), launcherScript,
     hasLanes: existsSync(path.join(root, '.claude/scripts/plan-lanes.mjs')),
-    worktrees: path.join(path.dirname(root), 'worktrees'),
+    worktrees: path.join(path.dirname(root), 'worktrees', path.basename(root)),
+    legacyWorktrees: path.join(path.dirname(root), 'worktrees'),
     doneDir: expand(p.doneDir) || path.join(plansDir, 'done'),
     validDir: path.join(plansDir, '.validations'),
     autoRunsDir,
@@ -331,11 +333,16 @@ const chatActiveIn = (wtPath) => {
       && Date.now() - statSync(path.join(dir, f)).mtimeMs < CHAT_ACTIVE_MS);
   } catch { return false; }
 };
+// a run's worktree: the per-project folder, or the flat folder older runs still live in
+const worktreeOf = (proj, slug) => {
+  const wt = path.join(proj.worktrees, slug), legacy = path.join(proj.legacyWorktrees, slug);
+  return !existsSync(wt) && existsSync(legacy) ? legacy : wt;
+};
 const pipelineLive = (proj, slug) =>
   new Promise((resolve) => {
     execFile('pgrep', ['-f', `skill-auto-pipeline ${slug}.md`], (err) =>
       // the chat panel's own claude runs there too, and chatting is not running the plan
-      resolve(!err || (!chats.has(proj.name + '/' + slug) && chatActiveIn(path.join(proj.worktrees, slug)))));
+      resolve(!err || (!chats.has(proj.name + '/' + slug) && chatActiveIn(worktreeOf(proj, slug)))));
   });
 
 // generic flavor: runs tracked by this dashboard in <stateDir>/runs.json
@@ -449,7 +456,7 @@ const listPlans = async (proj) => {
         launch: live ? null : launches.get(key) || null,
         validations: validationRounds(proj, slug),
         run, live,
-        worktree: proj.hasPipeline && existsSync(path.join(proj.worktrees, slug)),
+        worktree: proj.hasPipeline && existsSync(worktreeOf(proj, slug)),
         status: meta[slug]?.status || null,
         tags: meta[slug]?.tags || [],
         ...planSessions(proj, slug),
@@ -975,7 +982,7 @@ const cleanup = (proj, slug, artifacts) =>
       });
   });
 const openInVsCode = (proj, slug) => {
-  const wt = path.join(proj.worktrees, slug);
+  const wt = worktreeOf(proj, slug);
   const target = proj.hasPipeline && existsSync(wt) ? wt : proj.root;
   execFile('code', [target], { env: ENV }, (err) => {
     if (err) execFile('open', ['-a', 'Visual Studio Code', target], () => {});
@@ -985,7 +992,7 @@ const openInVsCode = (proj, slug) => {
 const archivePlan = async (proj, slug) => {
   const live = proj.hasPipeline ? await pipelineLive(proj, slug) : genericRunInfo(proj, slug).live;
   if (live) return { ok: false, output: 'A session for this plan is still running.' };
-  if (proj.hasPipeline && existsSync(path.join(proj.worktrees, slug)))
+  if (proj.hasPipeline && existsSync(worktreeOf(proj, slug)))
     return { ok: false, output: 'Worktree still exists — run Clean up first, then archive.' };
   const src = path.join(proj.plansDir, slug + '.md');
   if (!existsSync(src)) return { ok: false, output: 'Plan file not found.' };
@@ -1147,6 +1154,118 @@ const runPrAction = async (proj, b) => {
   return { ok: false, output: 'Unknown action.' };
 };
 
+// ---------- local changes: what the worktree has that the PR on GitHub does not ----------
+// The chat's agent edits, commits and merges in the plan's worktree, and Files changed read
+// only the PR from GitHub, so none of it showed until a push. This is the worktree (uncommitted
+// and untracked files too) against the PR's head commit, and against the base for the
+// whole-branch view. GIT_OPTIONAL_LOCKS=0: a status or diff every few seconds must never hold
+// index.lock while the agent commits.
+const gitRaw = (wt, args, timeout = 60000) =>
+  new Promise((resolve) => execFile('git', ['-C', wt, ...args],
+    { env: { ...ENV, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }, timeout, maxBuffer: 64 * 1024 * 1024 },
+    (err, stdout, stderr) => resolve({ ok: !err, code: err ? err.code : 0, out: String(stdout || ''),
+      err: String(stderr || (err && err.message) || '').trim() })));
+const UNTRACKED_MAX = 100, UNTRACKED_AT_ONCE = 8;
+const localFetchAt = new Map();   // worktree -> when it last fetched the PR's head
+// a plan whose Push or Discard runs now: the chat does not start a turn meanwhile
+const localLocks = new Set();
+const localTarget = (proj, slug) => {
+  const branch = 'auto/' + slug, pr = prsFor(proj)[branch];
+  const wt = proj.hasPipeline ? worktreeOf(proj, slug) : null;
+  if (!pr || pr.state !== 'OPEN' || !/^[0-9a-f]{40}$/.test(pr.head || '') || !wt || !existsSync(wt)) return null;
+  return { pr, wt, branch };
+};
+const localState = async (proj, slug) => {
+  const t = localTarget(proj, slug);
+  if (!t) return { ok: true, none: true };
+  const { pr, wt } = t;
+  // pushed from elsewhere (GitHub, another Mac): the PR's head is not here yet. At most one
+  // fetch a minute, so a fetch that fails (offline) is not tried again at every poll.
+  if (!(await gitRaw(wt, ['cat-file', '-e', pr.head + '^{commit}'])).ok && Date.now() - (localFetchAt.get(wt) || 0) > 60000) {
+    localFetchAt.set(wt, Date.now());
+    await gitRaw(wt, ['fetch', '--quiet', 'origin', t.branch]);
+  }
+  const [br, head, ahead, behind, st, un, mb] = await Promise.all([
+    gitRaw(wt, ['rev-parse', '--abbrev-ref', 'HEAD']), gitRaw(wt, ['rev-parse', 'HEAD']),
+    gitRaw(wt, ['rev-list', '--count', pr.head + '..HEAD']), gitRaw(wt, ['rev-list', '--count', 'HEAD..' + pr.head]),
+    gitRaw(wt, ['status', '--porcelain']), gitRaw(wt, ['ls-files', '--others', '--exclude-standard', '-z']),
+    gitRaw(wt, ['merge-base', 'origin/' + pr.base, 'HEAD'])]);
+  if (!ahead.ok) return { ok: false, output: 'The PR head ' + pr.head.slice(0, 7) + ' is not in ' + tilde(wt) + '.' };
+  // git diff leaves out untracked files: each one is a diff against /dev/null (exit 1 = they differ)
+  const news = un.out.split('\0').filter(Boolean).slice(0, UNTRACKED_MAX), parts = [];
+  for (let i = 0; i < news.length; i += UNTRACKED_AT_ONCE)
+    parts.push(...await Promise.all(news.slice(i, i + UNTRACKED_AT_ONCE).map((f) =>
+      gitRaw(wt, ['diff', '--no-color', '--no-ext-diff', '--no-index', '--', '/dev/null', f]).then((r) => r.out))));
+  const untracked = parts.join('');
+  const diff = async (from) => {
+    const d = await gitRaw(wt, ['diff', '--no-color', '--no-ext-diff', from]);
+    return d.ok ? d.out + untracked : null;
+  };
+  const [vsPr, vsBase] = await Promise.all([diff(pr.head), mb.ok ? diff(mb.out.trim()) : null]);
+  const ch = chats.get(proj.name + '/' + slug);
+  return { ok: true, branch: br.out.trim(), wanted: t.branch, head: head.out.trim(), prHead: pr.head, number: pr.number,
+    ahead: +ahead.out || 0, behind: +behind.out || 0, dirty: st.out.split('\n').filter(Boolean).length,
+    agentBusy: !!(ch && ch.busy), vsPr: vsPr ?? '', vsBase: vsBase ?? '',
+    baseError: !mb.ok ? 'The worktree has no origin/' + pr.base + ' to compare with.' : vsBase == null ? 'git diff against ' + pr.base + ' failed.' : '' };
+};
+// the page asks every few seconds; an unchanged answer is one line, not the whole diff again
+const localFor = async (proj, slug, since) => {
+  const r = await localState(proj, slug);
+  const sig = createHash('sha1').update(JSON.stringify(r)).digest('hex');
+  return sig === since ? { ok: true, same: true, sig } : { ...r, sig };
+};
+// Push and Discard act only on what the page showed: a commit or an edit made since stops them
+const localGuard = async (proj, slug, b) => {
+  const t = localTarget(proj, slug);
+  if (!t) return { error: 'This plan has no worktree with an open PR.' };
+  if ((await localFor(proj, slug, '')).sig !== b.sig)
+    return { error: 'The worktree changed since the page showed it. Look at the new changes first, then try again.' };
+  const ch = chats.get(proj.name + '/' + slug);
+  if (ch && ch.busy) return { error: 'The agent is working. Try again when it has stopped.' };
+  if (await pipelineLive(proj, slug)) return { error: 'A run is working in this plan. Try again when it has stopped.' };
+  const [br, head] = await Promise.all([gitRaw(t.wt, ['rev-parse', '--abbrev-ref', 'HEAD']), gitRaw(t.wt, ['rev-parse', 'HEAD'])]);
+  if (br.out.trim() !== t.branch) return { error: 'The worktree is on ' + br.out.trim() + ', not ' + t.branch + '.' };
+  if (head.out.trim() !== b.head) return { error: 'The worktree has a new commit since the page showed it. Look at it first, then try again.' };
+  if (b.prHead && b.prHead !== t.pr.head) return { error: 'The PR changed on GitHub since the page loaded it. Reload, then try again.' };
+  return t;
+};
+// the lock is taken before the checks: a chat message in between waits for the answer
+const localLocked = async (proj, slug, b, act) => {
+  const key = proj.name + '/' + slug;
+  if (localLocks.has(key)) return { ok: false, output: 'A Push or Discard is running in this plan already.' };
+  localLocks.add(key);
+  try {
+    const t = await localGuard(proj, slug, b);
+    return t.error ? { ok: false, output: t.error } : await act(t);
+  } finally { localLocks.delete(key); }
+};
+const localPush = (proj, slug, b) => localLocked(proj, slug, b, async (t) => {
+  // the commit that was on screen, not whatever HEAD is by now; no force: GitHub refuses a non-fast-forward
+  const r = await gitRaw(t.wt, ['push', 'origin', b.head + ':refs/heads/' + t.branch], 300000);
+  const c = prLists[proj.root];
+  if (c && c.loading) await c.loading;
+  await refreshPrList(proj);
+  return r.ok ? { ok: true } : { ok: false, output: 'git push failed: ' + r.err.split('\n').slice(-4).join(' ') };
+});
+const localDiscard = (proj, slug, b) => localLocked(proj, slug, b, async (t) => {
+  // back to the PR's head: unpushed commits, edits and new files go; ignored files (.env, node_modules) stay
+  const r = await gitRaw(t.wt, ['reset', '--hard', t.pr.head]);
+  if (!r.ok) return { ok: false, output: 'git reset failed: ' + r.err };
+  const c = await gitRaw(t.wt, ['clean', '-fd']);
+  return c.ok ? { ok: true } : { ok: false, output: 'git clean failed: ' + c.err };
+});
+// one worktree file as it is on disk: the whole-file view of a local change
+const localFile = (proj, slug, file) => {
+  const t = localTarget(proj, slug);
+  if (!t) return { ok: false, output: 'This plan has no worktree with an open PR.' };
+  try {
+    const root = realpathSync(t.wt), f = realpathSync(path.join(t.wt, file));
+    if (!f.startsWith(root + path.sep)) return { ok: false, output: 'outside the worktree' };
+    if (statSync(f).size > 8 * 1024 * 1024) return { ok: false, output: 'file too large' };
+    return { ok: true, text: readFileSync(f, 'utf8') };
+  } catch (e) { return { ok: false, output: e.code === 'ENOENT' ? 'not in the worktree' : e.message }; }
+};
+
 // ---------- chat: talk to a plan's Claude session from the browser ----------
 // The chat panel (beside Files changed and the plan) keeps one `claude -p` per plan open and
 // talks to it in stream-json both ways, the protocol the VS Code extension uses: messages and
@@ -1171,7 +1290,7 @@ const saveChat = (proj, slug, a) => {
 };
 // the sessions a plan's runs made; the chat's copies are its own and not listed
 const planSessions = (proj, slug) => {
-  const wtPath = proj.hasPipeline ? path.join(proj.worktrees, slug) : proj.root;
+  const wtPath = proj.hasPipeline ? worktreeOf(proj, slug) : proj.root;
   const transcriptDir = transcriptDirFor(wtPath);
   const copies = new Set(loadChat(proj, slug).copies || []);
   const sessions = sessionsIn(transcriptDir, proj.hasPipeline ? null : sessionIdsInLog(proj, slug))
@@ -1537,6 +1656,7 @@ const chatMessage = async (proj, slug, b) => {
   const key = proj.name + '/' + slug;
   const q = String(b.text || '').trim().slice(0, 20000);
   if (!q) return { ok: false, output: 'Type a message first.' };
+  if (localLocks.has(key)) return { ok: false, output: 'A Push or Discard is running in this plan. Send it when that has finished.' };
   const { wtPath } = planSessions(proj, slug);
   let ch = chats.get(key);
   if (ch && ch.closing) {
@@ -1812,6 +1932,13 @@ const server = http.createServer(async (req, res) => {
       const r = await gh(proj, ['pr', 'diff', n]);
       return json(res, 200, r.ok ? { ok: true, diff: r.out } : r);
     }
+    if (url.pathname === '/api/local' || url.pathname === '/api/local-file') {
+      const proj = getProj(), file = url.searchParams.get('path') || '';
+      if (!proj || !safeName(slug)) return json(res, 400, { error: 'bad request' });
+      if (url.pathname === '/api/local') return json(res, 200, await localFor(proj, slug, url.searchParams.get('since') || ''));
+      if (!file || file.split('/').some((s) => !s || s === '..' || s === '.')) return json(res, 400, { error: 'bad request' });
+      return json(res, 200, localFile(proj, slug, file));
+    }
     if (url.pathname === '/api/pr-file') {
       // one file at the PR's head commit: the whole-file view fills the lines between hunks from it
       const proj = getProj();
@@ -1893,6 +2020,10 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === '/api/chat/new') return json(res, 200, chatRestart(proj, b.slug, false));
       // ⟳ in the PR bar: read the PR list now, not at the next minute (a push changes the head)
       if (url.pathname === '/api/pr-refresh') { await refreshPrList(proj); return json(res, 200, { ok: true }); }
+      if (url.pathname === '/api/local-push' || url.pathname === '/api/local-discard') {
+        if (!/^[0-9a-f]{40}$/.test(String(b.head)) || !/^[0-9a-f]{40}$/.test(String(b.sig))) return json(res, 400, { error: 'bad request' });
+        return json(res, 200, await (url.pathname === '/api/local-push' ? localPush : localDiscard)(proj, b.slug, b));
+      }
       if (url.pathname === '/api/pr-action') {
         const r = await prAction(proj, b);
         return json(res, 200, r.ok ? { ok: true, notes: r.notes } : r);
@@ -2303,7 +2434,27 @@ const PAGE = /* html */ `<!doctype html>
   .prtabsrow .prtabs { flex:1; margin:0; border:0; }
   .prtabsrow .btns { margin:0; }
   #prview.pvfiles { flex:1; min-height:0; display:flex; }
-  #prview.pvfiles .prfiles { flex:1; height:auto; border:0; border-radius:0; }
+  #prview.pvfiles .prfiles { flex:1; height:auto; min-height:0; border:0; border-radius:0; }
+  /* not pushed yet: what the worktree has that the PR on GitHub does not */
+  #prview.pvfiles { flex-direction:column; }
+  .lstrip { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:6px 12px; border-bottom:1px solid var(--line);
+            background:color-mix(in srgb, var(--warn) 12%, var(--panel)); font-size:calc(12.5px * var(--fs)); flex-shrink:0; }
+  .lstrip .ldot { width:8px; height:8px; border-radius:50%; background:var(--warn); flex-shrink:0; }
+  .lstrip .ldot.live { animation:lpulse 1.2s infinite; }
+  @keyframes lpulse { 50% { opacity:.25; } }
+  @media (prefers-reduced-motion: reduce) { .lstrip .ldot.live { animation:none; } }
+  .lstrip .lwarn { color:var(--bad); }
+  .lstrip button { padding:3px 9px; font-size:calc(12px * var(--fs)); }
+  .lstrip .lseg { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+  .lstrip .lseg button { border:0; border-radius:0; }
+  .lstrip .lseg button.on { background:var(--sel); color:var(--accent); }
+  .lstrip button.lpush { background:var(--warn); border-color:var(--warn); color:var(--accentfg); font-weight:600; }
+  .lstrip button:disabled { opacity:.45; cursor:default; }
+  .pgrp { padding:6px 10px 3px; color:var(--dim); font-size:calc(11px * var(--fs)); text-transform:uppercase; letter-spacing:.04em; }
+  .ltag { font:600 calc(10px * var(--fs)) ui-monospace,monospace; padding:0 4px; border-radius:4px; border:1px solid; flex-shrink:0; }
+  .ltag.local { color:var(--warn); } .ltag.both { color:var(--merge); }
+  .pf.fresh { box-shadow:inset 3px 0 0 var(--warn); }
+  .ctool .cjump { margin-left:6px; padding:0 6px; font-size:calc(11px * var(--fs)); }
   button.merge { background:var(--merge); border-color:var(--merge); color:var(--mergefg); font-weight:600; }
   .mbox { border:1px solid var(--line); border-radius:10px; overflow:hidden; margin-bottom:16px; }
   .mline { display:flex; gap:10px; align-items:center; padding:8px 14px; border-bottom:1px solid var(--line); }
@@ -3152,8 +3303,20 @@ try {
   chatModel = localStorage.getItem('dash-chat-model') || '';
 } catch {}
 let ch = null;        // the chat on screen: { p, key, items, first, total, session, st, es }
+let chatLock = null;  // the lock on that chat: { key, release }
 let chatSel = null;   // the lines that go with the next message
 const chatDraft = {}, chatMetas = {};   // plan key -> unsent text; project -> commands and models
+// sent messages, oldest first; ArrowUp on the first line steps back through them, like a terminal.
+// chatHistList is fixed while you step: the dashboard's own sends, then this chat's messages from its log
+let chatHist = [], chatHistAt = -1, chatHistDraft = '', chatHistList = [];
+try { chatHist = JSON.parse(localStorage.getItem('dash-chat-hist') || '[]'); } catch {}
+function chatHistPush(text) {
+  chatHistAt = -1;
+  if (chatHist[chatHist.length - 1] === text) return;
+  chatHist.push(text);
+  chatHist = chatHist.slice(-100);
+  try { localStorage.setItem('dash-chat-hist', JSON.stringify(chatHist)); } catch {}
+}
 const chatBtn = (p) => hasChat(p) ? '<button class="chatbtn' + (chatOn ? ' on' : '') + '" data-chat="1" aria-pressed="' + chatOn +
   '" title="Chat with the agent that ran this plan">💬 Chat' + (p.chatWaits ? ' <span class="n">!</span>' : '') + '</button>' : '';
 function toggleChat(on) {
@@ -3173,13 +3336,27 @@ function setChatWidth(px, save) {
 function syncChat(p) {
   const show = chatOn && hasChat(p);
   byId('chat').hidden = byId('csplit').hidden = !show;
-  if (!show) { if (ch) { ch.es.close(); ch = null; } return; }
+  if (!show) { if (ch) { ch.es.close(); ch = null; } holdChatLock(); return; }
   if (ch && ch.key === p.key) { ch.p = p; return; }
   chatBind(p);
+  holdChatLock();
+}
+// a lock tells the other tabs that this tab has the chat open, so they leave its alerts to this tab.
+// The browser drops the lock when the tab closes.
+function holdChatLock() {
+  const key = ch ? ch.key : null;
+  if ((chatLock ? chatLock.key : null) === key) return;
+  if (chatLock) chatLock.release();
+  chatLock = null;
+  if (!key || !navigator.locks) return;
+  let release;
+  const held = new Promise((r) => { release = r; });
+  chatLock = { key, release };
+  navigator.locks.request('dash-chat:' + key, { mode: 'shared' }, () => held).catch(() => {});
 }
 function chatBind(p) {
   if (ch) ch.es.close();
-  const c = ch = { p, key: p.key, items: {}, first: 0, total: 0, session: null, st: {}, open: new Set() };
+  const c = ch = { p, key: p.key, items: {}, first: 0, total: 0, session: null, st: {}, open: new Set(), sent: [] };
   const C = byId('chat');
   if (chatW) C.style.width = chatW + 'px';
   C.innerHTML =
@@ -3198,7 +3375,8 @@ function chatBind(p) {
         '<span style="flex:1"></span><button id="cstop" hidden>Stop</button><button id="cgo" class="primary">Send</button></div></div>';
   const inp = byId('cin');
   inp.value = chatDraft[p.key] || '';
-  inp.addEventListener('input', () => { chatDraft[c.key] = inp.value; chatMenu(); });
+  chatHistAt = -1;
+  inp.addEventListener('input', () => { chatDraft[c.key] = inp.value; chatHistAt = -1; chatMenu(); });
   inp.addEventListener('click', chatMenu);
   inp.addEventListener('keydown', chatKey);
   inp.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== inp) byId('cmenu').hidden = true; }, 150));
@@ -3211,6 +3389,8 @@ function chatBind(p) {
   byId('cmodel').addEventListener('change', (e) => chatSetMode(chatMode, e.target.value));
   const L = byId('clog');
   L.addEventListener('click', async (e) => {
+    const j = e.target.closest && e.target.closest('.cjump');
+    if (j) { e.preventDefault(); return chatJump(find(c.key) || c.p, j.dataset.jump); }
     const b = e.target.closest && e.target.closest('.ccopy');
     if (!b) return;
     const it = b.dataset.copymsg != null ? c.items[+b.dataset.copymsg] : null;
@@ -3228,8 +3408,8 @@ function chatBind(p) {
   chatLoad('init');
   chatMetaLoad(p);
   c.es = new EventSource('/api/chat/events?project=' + encodeURIComponent(p.project) + '&slug=' + encodeURIComponent(p.slug));
-  c.es.addEventListener('state', (e) => { if (ch === c) chatState(JSON.parse(e.data)); });
-  c.es.addEventListener('history', () => { if (ch === c) chatLoad('new'); });
+  c.es.addEventListener('state', (e) => { if (ch === c) { chatState(JSON.parse(e.data)); localSoon(); } });
+  c.es.addEventListener('history', () => { if (ch === c) { chatLoad('new'); localSoon(); } });
   c.es.addEventListener('delta', (e) => {
     if (ch !== c) return;
     const d = JSON.parse(e.data);
@@ -3318,6 +3498,9 @@ async function chatLoadEnd(c, how) {
   });
   byId('cmore').textContent = c.first > 0 ? 'Scroll up for earlier messages' : '';
   if (!c.total) box.innerHTML = '<div class="dim askempty">No messages in this session yet.</div>';
+  // a sent message leaves the live area once the session log has it; when the agent is idle, it has read them all
+  const said = Object.values(c.items).filter((it) => it.k === 'you');
+  c.sent = c.sent.filter((s) => !(s.ok && !c.st.busy) && !said.some((it) => it.i >= s.from && it.text.trim() === s.text));
   paintLive();
 }
 const chatTime = (at) => at ? new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
@@ -3330,7 +3513,9 @@ function chatItemHtml(it, c) {
     '<button class="ccopy cmsg" data-copymsg="' + it.i + '" title="Copy the whole answer as Markdown">Copy</button></div>';
   if (it.k === 'think') return '<details class="cnote" data-i="' + it.i + '"' + open + '><summary>Thinking</summary><div class="mdc">' + md(it.text) + '</div></details>';
   if (it.k === 'tool') return '<details class="ctool' + (it.err ? ' err' : '') + '" data-i="' + it.i + '"' + open + '><summary><b>' + esc(it.name) + '</b> ' +
-    '<span>' + esc(it.sum) + '</span>' + (it.done ? '' : ' <i class="dim">running…</i>') + '</summary>' +
+    '<span>' + esc(it.sum) + '</span>' + (it.done ? '' : ' <i class="dim">running…</i>') +
+    (/^(Edit|MultiEdit|Write|NotebookEdit)$/.test(it.name) && it.sum && it.sum[0] !== '/' && c.p.pr
+      ? '<button class="cjump" data-jump="' + escA(it.sum) + '" title="Open this file in Files changed">view in diff</button>' : '') + '</summary>' +
     (it.input ? '<pre>' + esc(it.input) + '</pre>' : '') + (it.out ? '<pre class="out">' + esc(it.out) + '</pre>' : '') + '</details>';
   return it.body ? '<details class="cnote" data-i="' + it.i + '"' + open + '><summary>' + esc(it.text) + '</summary><pre>' + esc(it.body) + '</pre></details>'
     : '<div class="cnote" data-i="' + it.i + '">' + esc(it.text) + '</div>';
@@ -3359,6 +3544,8 @@ function paintLive() {
   if (!V) return;
   const L = byId('clog'), atEnd = L.scrollHeight - L.scrollTop - L.clientHeight < 80;
   V.innerHTML = (st.partial ? '<div class="amsg agent live">' + esc(st.partial) + '</div>' : '') +
+    c.sent.map((s) => chatItemHtml({ k: 'you', i: '', text: s.text, sel: s.sel }, c)
+      .replace('>', '><div class="ctime">' + (!s.ok ? 'sending…' : s.queued ? 'queued: the agent reads it after this step' : 'sent') + '</div>')).join('') +
     (st.busy && !(st.waits || []).length ? '<div class="aend cwork">working…</div>' : '') +
     (st.error ? '<div class="aend bad">' + esc(st.error) + '</div>' : '') +
     (!st.busy && st.last && !st.last.ok ? '<div class="aend bad">' + (st.last.subtype === 'error_during_execution' ? 'Stopped'
@@ -3393,9 +3580,20 @@ async function chatSendMsg() {
   if (!c || !text) return;
   byId('cmenu').hidden = true;
   const s = chatSel;
+  // shown at once; the session log has it only when the agent reads it
+  const mine = { text, from: c.total, queued: !!c.st.busy,
+    sel: s ? [(s.file ? s.file.slice(s.file.lastIndexOf('/') + 1) : 'selected text') +
+      (s.start ? ':' + s.start + (s.end > s.start ? '-' + s.end : '') : '') + (s.side === 'old' ? ' (before)' : '')] : [] };
+  c.sent.push(mine);
+  paintLive();
+  byId('clog').scrollTop = byId('clog').scrollHeight;
   const r = await post('/api/chat/send', { project: c.p.project, slug: c.p.slug, text, mode: chatMode, model: chatModel || 'default',
     selection: s ? { file: s.file, side: s.side, start: s.start, end: s.end, text: s.text } : null });
+  if (!r.ok) c.sent = c.sent.filter((x) => x !== mine);
+  else mine.ok = true;
+  if (ch === c) paintLive();
   if (!r.ok || ch !== c) return;
+  chatHistPush(text);
   inp.value = ''; delete chatDraft[c.key];
   setChatSel(null);
   c.st.partial = ''; c.st.busy = true; c.st.error = '';
@@ -3458,6 +3656,28 @@ function chatKey(e) {
     e.preventDefault();
     const i = CHAT_MODES.findIndex(([v]) => v === chatMode);
     return chatSetMode(CHAT_MODES[(i + 1) % CHAT_MODES.length][0], chatModel);
+  }
+  if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+    const inp = e.target, v = inp.value, a = inp.selectionStart, b = inp.selectionEnd, nl = String.fromCharCode(10);
+    const up = e.key === 'ArrowUp';
+    // only on the first line (up) or the last line (down), so the arrows still move inside a long message
+    if (a !== b || (up ? v.lastIndexOf(nl, a - 1) !== -1 : v.indexOf(nl, b) !== -1)) return;
+    if (up && chatHistAt === -1) {
+      const said = Object.values(ch.items || {}).filter((it) => it.k === 'you' && it.text.trim())
+        .sort((x, y) => x.i - y.i).map((it) => it.text.trim());
+      chatHistList = [...chatHist.filter((t) => !said.includes(t)), ...said]
+        .filter((t, n, all) => t !== all[n - 1]);
+    }
+    if (up ? !chatHistList.length || chatHistAt === 0 : chatHistAt === -1) return;
+    e.preventDefault();
+    if (up && chatHistAt === -1) { chatHistDraft = v; chatHistAt = chatHistList.length; }
+    chatHistAt += up ? -1 : 1;
+    if (chatHistAt >= chatHistList.length) chatHistAt = -1;
+    inp.value = chatHistAt === -1 ? chatHistDraft : chatHistList[chatHistAt];
+    chatDraft[ch.key] = inp.value;
+    const at = up ? 0 : inp.value.length;
+    inp.setSelectionRange(at, at);
+    return;
   }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); chatSendMsg(); }
 }
@@ -3892,6 +4112,152 @@ async function drawFiles(p, force) {
   }
   if (lastPrDraw !== sig) return;
   drawFilesView(p);
+  // the local layer comes after: a slow git (a fetch) must not keep the PR's files off the screen
+  if (await loadLocal(p) && lastPrDraw === sig && byId('prview')) drawFilesView(p);
+}
+// --- Not pushed yet: the worktree's own changes (the chat's agent edits, commits and merges
+// there), read every few seconds while Files changed is open and at once when the chat says a
+// tool ran. They sit above the PR's files until Push sends them to GitHub.
+const prLocal = {};   // plan key -> { sig, d: the server's answer, pr: files vs the PR head, base: files vs the base, fresh }
+let localCmp = 'pr', localShow = 'all';
+try { localCmp = localStorage.getItem('dash-local-cmp') === 'base' ? 'base' : 'pr'; } catch {}
+try { localShow = localStorage.getItem('dash-local-show') || 'all'; } catch {}
+const FRESH_MS = 10000;   // a file the agent changed this recently has a yellow edge
+async function loadLocal(p) {
+  if (!p.worktree || !p.pr) return false;
+  const L = prLocal[p.key];
+  let r;
+  try {
+    r = await (await fetch('/api/local?project=' + encodeURIComponent(p.project) + '&slug=' + encodeURIComponent(p.slug) +
+      '&since=' + (L ? L.sig : ''))).json();
+  } catch { return false; }
+  if (r.same) return false;
+  const live = r.ok && !r.none;
+  const pr = live ? parseDiff(r.vsPr) : [], base = live ? parseDiff(r.vsBase) : [];
+  for (const f of [...pr, ...base]) {
+    f.src = 'local';
+    // a submodule is a folder on disk: its diff is the whole story, there is no file to read
+    if (f.hunks.length && f.hunks.every((h) => h.lines.every((l) => l[3].startsWith('Subproject commit')))) { f.full = null; f.fullErr = ''; }
+  }
+  const fresh = L ? L.fresh : {}, before = {};
+  if (L) for (const f of L.pr) before[f.path] = f.hash;
+  if (L) for (const f of pr) if (before[f.path] !== f.hash) fresh[f.path] = Date.now();
+  prLocal[p.key] = { sig: r.sig, d: r, pr, base, fresh };
+  return true;
+}
+const localCmpOf = (L) => (L.d.baseError ? 'pr' : localCmp);   // no base to compare with: vs PR
+const localOn = (L) => !!(L && L.d.ok && !L.d.none && (L.d.ahead || L.d.dirty || L.pr.length));
+// where each file's changes are: 'local' (only here), 'both' (in the PR, changed again here), 'pr'
+function viewFiles(p, df) {
+  const L = prLocal[p.key];
+  if (!localOn(L)) { for (const f of df.files) f.where = null; return df.files; }
+  const inPr = new Set(df.files.map((f) => f.path)), inLocal = new Set(L.pr.map((f) => f.path));
+  const where = (f) => { f.where = inLocal.has(f.path) ? (inPr.has(f.path) ? 'both' : 'local') : 'pr'; return f; };
+  // Only PR is what GitHub has: a file changed again here still shows the PR's own diff
+  if (localShow === 'pr') return df.files.map(where);
+  const list = (localCmpOf(L) === 'base' ? L.base : [...L.pr, ...df.files.filter((f) => !inLocal.has(f.path))]).map(where);
+  return localShow === 'local' ? list.filter((f) => f.where !== 'pr') : list;
+}
+const plural = (k, one, many) => k + ' ' + (k === 1 ? one : many);
+function localStrip(p) {
+  const L = prLocal[p.key];
+  if (!L || L.d.none) return '';
+  const d = L.d;
+  if (!d.ok) return '<div class="lstrip"><span class="lwarn">⚠️ Could not read the worktree: ' + esc(d.output || d.error || '') + '</span></div>';
+  const has = localOn(L), off = d.branch !== d.wanted;
+  if (!has && !d.behind && !off) return '';
+  const working = d.agentBusy || p.live;
+  const parts = [d.ahead && plural(d.ahead, 'commit', 'commits'), d.dirty && plural(d.dirty, 'file', 'files') + ' not committed'].filter(Boolean);
+  let h = '<div class="lstrip"><span class="ldot' + (working ? ' live' : '') + '"></span><span><b>Not pushed yet:</b> ' +
+    esc(parts.join(' + ') || 'nothing') + (working ? ' <span class="dim">· the agent is working</span>' : '') + '</span>';
+  if (off) h += '<span class="lwarn">⚠️ The worktree is on ' + esc(d.branch) + ', not ' + esc(d.wanted) + '.</span>';
+  if (d.behind) h += '<span class="lwarn">⚠️ The PR has ' + plural(d.behind, 'commit', 'commits') + ' that the worktree does not have. GitHub will refuse a push.</span>';
+  h += '<span style="flex:1"></span>';
+  if (!has) return h + '</div>';
+  // an option with a reason it cannot be picked is shown, greyed out, with that reason
+  const seg = (attr, cur, opts) => '<span class="lseg">' + opts.map(([v, l, t, off]) => '<button data-' + attr + '="' + v + '" class="' +
+    (v === cur ? 'on' : '') + '" title="' + escA(off || t) + '"' + (off ? ' disabled' : '') + '>' + l + '</button>').join('') + '</span>';
+  h += '<span class="dim">Show:</span>' + seg('lshow', localShow, [['all', 'All', 'Every changed file'],
+    ['local', 'Only local', 'Only files changed in the worktree'], ['pr', 'Only PR', 'Only files the PR on GitHub changes']]) +
+    seg('lcmp', localCmpOf(L), [['pr', 'vs PR (only new)', 'A local file shows only what changed after the last push'],
+      ['base', 'vs ' + esc(prData[p.key] && prData[p.key].baseRefName || 'base') + ' (whole)', 'Every file shows the whole change, as reviewers will see it after the push', d.baseError]]);
+  const why = working ? 'Wait until the agent stops.' : off ? 'The worktree is on another branch.'
+    : d.behind ? 'The PR has commits the worktree does not have. Ask the agent to pull them first.'
+    : !d.ahead ? 'Nothing is committed yet. Ask the agent to commit first.' : '';
+  h += '<button id="ldiscard"' + (working ? ' disabled title="Wait until the agent stops."'
+    : ' title="Put the worktree back to the PR\\u2019s head commit. Unpushed commits, edits and new files are deleted."') + '>↶ Discard local changes</button>';
+  h += '<button id="lpush" class="lpush"' + (why ? ' disabled title="' + escA(why) + '"'
+    : ' title="' + escA('git push to ' + d.wanted + (d.dirty ? '. Edits that are not committed stay in the worktree.' : '')) + '"') +
+    '>⬆ ' + (d.ahead ? 'Push ' + plural(d.ahead, 'commit', 'commits') + ' to PR #' + d.number
+      : d.dirty ? 'Commit first, then push' : 'Nothing to push') + '</button>';
+  return h + '</div>';
+}
+function bindStrip(p, v) {
+  v.querySelectorAll('[data-lshow]').forEach((el) => el.addEventListener('click', () => {
+    localShow = el.dataset.lshow;
+    try { localStorage.setItem('dash-local-show', localShow); } catch {}
+    drawFilesView(p);
+  }));
+  v.querySelectorAll('[data-lcmp]').forEach((el) => el.addEventListener('click', () => {
+    localCmp = el.dataset.lcmp;
+    try { localStorage.setItem('dash-local-cmp', localCmp); } catch {}
+    drawFilesView(p);
+  }));
+  const push = byId('lpush'), discard = byId('ldiscard');
+  if (push) push.addEventListener('click', () => localAct(p, 'push', push, 'Pushing…'));
+  if (discard) discard.addEventListener('click', () => {
+    const d = prLocal[p.key].d;
+    if (!confirm('Discard everything that is not pushed in ' + d.wanted + '?\\n\\n' +
+      [d.ahead && plural(d.ahead, 'commit', 'commits'), d.dirty && plural(d.dirty, 'file', 'files') + ' with edits or new'].filter(Boolean).join(', ') +
+      ' will be deleted. The worktree goes back to PR #' + d.number + ' as it is on GitHub. This cannot be undone.')) return;
+    localAct(p, 'discard', discard, 'Discarding…');
+  });
+}
+async function localAct(p, what, btn, label) {
+  const d = prLocal[p.key].d;
+  busy(true);
+  document.querySelectorAll('.lstrip button').forEach((b) => { b.disabled = true; });
+  btn.textContent = label;
+  let r;
+  try {
+    r = await (await fetch('/api/local-' + what, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: p.project, slug: p.slug, head: d.head, prHead: d.prHead, sig: prLocal[p.key].sig }) })).json();
+  } catch (e) { r = { output: String((e && e.message) || e) }; }
+  if (!r.ok) alert('⚠️ ' + (r.output || r.error || 'failed'));
+  prLocal[p.key].sig = '';
+  if (what === 'push' && r.ok) {
+    // the PR has a new head now: read the state, then the PR and its diff, as ⟳ does
+    while (ticking) await new Promise((res) => setTimeout(res, 100));
+    const before = lastPrDraw;
+    await refresh();
+    if (lastPrDraw === before) { lastPrDraw = null; await renderDetail(true); }
+  } else {
+    await loadLocal(p);
+    drawFilesView(p);
+  }
+  busy(false);
+}
+let localTicking = false, localTimer = null;
+async function localTick() {
+  const p = selected && find(selected), v = byId('prview');
+  if (localTicking || document.hidden || !p || !p.worktree || !p.pr || prTab[p.key] !== 'files'
+    || !v || !v.classList.contains('pvfiles') || selectionLive()) return;
+  localTicking = true;
+  try {
+    const df = prDiff[p.key];
+    if (await loadLocal(p) && selected === p.key && prTab[p.key] === 'files' && df && !df.error) drawFilesView(p);
+  } finally { localTicking = false; }
+}
+const localSoon = () => { clearTimeout(localTimer); localTimer = setTimeout(localTick, 400); };
+setInterval(localTick, 3000);
+// "view in diff" on a chat tool line: that file in Files changed
+function chatJump(p, file) {
+  if (!p || !p.pr) return;
+  prFile[p.key] = file;
+  if (localShow !== 'all') localShow = 'all';
+  if (selected === p.key && prTab[p.key] === 'files' && byId('prview')) return drawFilesView(p);
+  selected = p.key; prTab[p.key] = 'files'; lastPrDraw = null;
+  renderList(); renderDetail(false);
 }
 // --- VS Code's diff view: Monaco, the editor inside VS Code, loaded from a CDN the first time
 // Files changed opens. It gets the whole file at both sides, rebuilt from the head version and
@@ -4022,9 +4388,13 @@ function drawFilesView(p) {
     v.innerHTML = '<div class="metabox">⚠️ ' + esc(df.error) + '</div>';
     return;
   }
-  const files = df.files;
+  const L = prLocal[p.key], files = viewFiles(p, df), strip = localStrip(p);
   const cur = files.find((f) => f.path === prFile[p.key]) || files[0];
-  if (!cur) { v.innerHTML = '<span class="dim">No changed files.</span>'; return; }
+  if (!cur) {
+    v.innerHTML = strip + '<div class="dim" style="padding:14px">No changed files' + (localShow !== 'all' ? ' in this filter' : '') + '.</div>';
+    bindStrip(p, v);
+    return;
+  }
   prFile[p.key] = cur.path;
   syncUrl();
   const treeTop = byId('ptree') ? byId('ptree').scrollTop : 0;
@@ -4032,13 +4402,23 @@ function drawFilesView(p) {
   // folder tree like VS Code's: folders first, a folder with one subfolder and no files
   // shares its row ("domains/ai"), and a folder's box ticks every file under it
   const closed = prClosedDirs[p.key] = prClosedDirs[p.key] || new Set();
-  const root = { dirs: {}, files: [] };
-  for (const f of files) {
-    const parts = f.path.split('/');
-    let node = root;
-    for (const d of parts.slice(0, -1)) node = node.dirs[d] = node.dirs[d] || { dirs: {}, files: [] };
-    node.files.push(f);
-  }
+  const rootOf = (list) => {
+    const root = { dirs: {}, files: [] };
+    for (const f of list) {
+      const parts = f.path.split('/');
+      let node = root;
+      for (const d of parts.slice(0, -1)) node = node.dirs[d] = node.dirs[d] || { dirs: {}, files: [] };
+      node.files.push(f);
+    }
+    return root;
+  };
+  // with local changes the list has two parts: not pushed yet, then the rest of the PR
+  const groups = localShow === 'all' && files.some((f) => f.where) ? [
+    ['Not pushed yet', files.filter((f) => f.where !== 'pr')], ['In PR #' + p.pr.number, files.filter((f) => f.where === 'pr')],
+  ].filter((g) => g[1].length) : [[null, files]];
+  const fresh = (f) => f.where && f.where !== 'pr' && Date.now() - (L.fresh[f.path] || 0) < FRESH_MS;
+  const LTAG = { local: '<span class="ltag local" title="Changed only in the worktree, not pushed">local</span>',
+    both: '<span class="ltag both" title="In the PR, then changed again in the worktree">PR+local</span>' };
   const under = (node) => [...node.files, ...Object.values(node.dirs).flatMap(under)];
   let tree;
   const walk = (node, prefix, depth) => {
@@ -4058,16 +4438,23 @@ function drawFilesView(p) {
     }
     for (const f of node.files.slice().sort((a, b) => a.path.localeCompare(b.path))) {
       const seen = isViewed(p, f);
-      tree += '<div class="pf ' + f.st + (f === cur ? ' on' : '') + (isRecheck(p, f) ? ' rk' : '') + '" tabindex="0" style="--d:' + depth + '" data-file="' +
+      tree += '<div class="pf ' + f.st + (f === cur ? ' on' : '') + (isRecheck(p, f) ? ' rk' : '') + (fresh(f) ? ' fresh' : '') + '" tabindex="0" style="--d:' + depth + '" data-file="' +
         escA(f.path) + '" title="' + escA(f.path) + '"><span class="chev"></span>' +
         '<input type="checkbox" tabindex="-1" aria-label="viewed" data-seen="' + escA(f.path) + '"' + (seen ? ' checked' : '') + ' title="viewed">' +
         '<span class="nm">' + esc(f.path.slice(f.path.lastIndexOf('/') + 1)) + '</span>' +
         '<button class="flag" tabindex="-1" data-flag="' + escA(f.path) + '" aria-pressed="' + isRecheck(p, f) + '" ' +
-          'title="Recheck this file later (F)" aria-label="recheck later">⚑</button>' +
+          'title="Recheck this file later (F)" aria-label="recheck later">⚑</button>' + (LTAG[f.where] || '') +
         '<span class="fst ' + f.st + '">' + f.st + '</span></div>';
     }
   };
-  const treeHtml = () => { tree = ''; walk(root, '', 0); return tree; };
+  const treeHtml = () => {
+    tree = '';
+    for (const [label, list] of groups) {
+      if (label) tree += '<div class="pgrp">' + esc(label) + ' · ' + list.length + '</div>';
+      walk(rootOf(list), '', 0);
+    }
+    return tree;
+  };
   treeHtml();
   const nSeen = files.filter((f) => isViewed(p, f)).length;
   // VS Code's diff view (Monaco) when it loads; our own table is the fallback (offline, binary)
@@ -4078,7 +4465,9 @@ function drawFilesView(p) {
   const wantFull = (mono || diffFull) && cur.hunks.length && !big && (cur.st === 'M' || cur.st === 'R');
   if (wantFull && cur.full === undefined && !cur.loading) {
     cur.loading = true;
-    fetch('/api/pr-file?project=' + p.project + '&sha=' + p.pr.head + '&path=' + encodeURIComponent(cur.path))
+    fetch(cur.src === 'local'
+      ? '/api/local-file?project=' + encodeURIComponent(p.project) + '&slug=' + encodeURIComponent(p.slug) + '&path=' + encodeURIComponent(cur.path)
+      : '/api/pr-file?project=' + p.project + '&sha=' + p.pr.head + '&path=' + encodeURIComponent(cur.path))
       .then((r) => r.json()).catch((e) => ({ output: String(e) })).then((r) => {
         cur.loading = false;
         cur.full = r.ok ? fullHunks(cur, r.text) : null;
@@ -4095,15 +4484,15 @@ function drawFilesView(p) {
   const showMono = mono && monaco && !(wantFull && cur.full === undefined);
   const focusKey = document.activeElement && document.activeElement.closest && document.activeElement.closest('.pf')
     ? document.activeElement.closest('.pf').dataset.file || document.activeElement.closest('.pf').dataset.dir : null;
-  v.innerHTML = '<div class="prfiles"><div class="ptree" id="ptree">' + tree + '</div>' +
+  v.innerHTML = strip + '<div class="prfiles"><div class="ptree" id="ptree">' + tree + '</div>' +
     '<div class="tsplit" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Divider between the file list and the diff" ' +
     'title="Drag to resize the file list. Double-click: default width."></div>' +
     '<div class="pdiff"><div class="pdhead"><span class="pdpath" title="' + escA(cur.path) + '">' + esc(cur.path) + '</span>' +
       '<span class="add">+' + cur.add + '</span><span class="del">−' + cur.del + '</span>' +
-      '<button data-full="1" class="' + (diffFull ? 'on' : '') + '">Whole file</button>' +
-      '<button data-full="0" class="' + (diffFull ? '' : 'on') + '">Changes only</button>' +
-      '<button data-split="1" class="' + (diffSplit ? 'on' : '') + '">Side by side</button>' +
-      '<button data-split="0" class="' + (diffSplit ? '' : 'on') + '">One column</button>' +
+      '<button data-full title="Click to show ' + (diffFull ? 'only the changes' : 'the whole file') + '">' +
+        (diffFull ? 'Whole file' : 'Changes only') + '</button>' +
+      '<button data-split title="Click to show ' + (diffSplit ? 'one column' : 'side by side') + '">' +
+        (diffSplit ? 'Side by side' : 'One column') + '</button>' +
       '<button class="flagbtn" data-flag="' + escA(cur.path) + '" aria-pressed="' + isRecheck(p, cur) + '" title="Come back to this file later (F)">⚑ Recheck</button>' +
       '<label><input type="checkbox" data-seen="' + escA(cur.path) + '"' + (isViewed(p, cur) ? ' checked' : '') + '> Viewed</label></div>' +
     '<div class="pdmain"><div class="pdbody' + (showMono ? ' monoon' : '') + '" tabindex="0" aria-label="diff">' +
@@ -4211,13 +4600,15 @@ function drawFilesView(p) {
     }));
   };
   bindRows(v);
+  bindStrip(p, v);
+  if (v.querySelector('.pf.fresh')) setTimeout(() => v.querySelectorAll('.pf.fresh').forEach((r) => r.classList.remove('fresh')), FRESH_MS);
   v.querySelectorAll('[data-split]').forEach((el) => el.addEventListener('click', () => {
-    diffSplit = el.dataset.split === '1';
+    diffSplit = !diffSplit;
     try { localStorage.setItem('dash-diff-split', diffSplit ? '1' : '0'); } catch {}
     drawFilesView(p);
   }));
   v.querySelectorAll('[data-full]').forEach((el) => el.addEventListener('click', () => {
-    diffFull = el.dataset.full === '1';
+    diffFull = !diffFull;
     try { localStorage.setItem('dash-diff-full', diffFull ? '1' : '0'); } catch {}
     drawFilesView(p);
   }));
@@ -4927,7 +5318,33 @@ function chime() {
     });
   } catch {}
 }
-function alertUser(title, body, key, tab) {
+// With several tabs open, one tab rings: the tab with the plan's chat open, else the tab used last.
+// The last used tab holds this lock; the other tabs wait in line, so closing it passes the lock on.
+let alertLead = false, alertLeadWait = null;
+function claimAlertLead(steal) {
+  if (!navigator.locks || alertLead) return;
+  if (steal && alertLeadWait) alertLeadWait.abort();
+  const wait = alertLeadWait = steal ? null : new AbortController();
+  navigator.locks.request('dash-alert-lead', steal ? { steal: true } : { signal: wait.signal },
+    () => { alertLead = true; return new Promise(() => {}); })
+    .catch(() => {
+      if (wait && wait.signal.aborted) return;
+      alertLead = false;   // another tab took it
+      claimAlertLead(false);
+    });
+}
+claimAlertLead(document.hasFocus());
+window.addEventListener('focus', () => claimAlertLead(true));
+async function ringsHere(key) {
+  if (!navigator.locks || (ch && ch.key === key)) return true;
+  try {
+    const { held } = await navigator.locks.query();
+    if (held.some((l) => l.name === 'dash-chat:' + key)) return false;
+  } catch { return true; }
+  return alertLead;
+}
+async function alertUser(title, body, key, tab) {
+  if (!await ringsHere(key)) return;
   if (!document.hasFocus()) { unseen.push(title + ' · ' + body.split(' / ')[0]); paintTitle(); }
   if (!alertsOn) return;
   chime();
@@ -4964,6 +5381,8 @@ byId('alertBtn').addEventListener('click', async () => {
       alert('Notifications are blocked for this site, so you will only hear the sound. Allow them in the browser’s site settings.');
   }
 });
+// the 🔔 is one setting across tabs, so the tab that rings never has an old value
+window.addEventListener('storage', (e) => { if (e.key === 'dash-alerts') { alertsOn = e.newValue === '1'; paintAlertBtn(); } });
 // a browser keeps sound locked until the page gets a click; the first click anywhere unlocks it
 document.addEventListener('pointerdown', () => { if (alertsOn && !audio) { try { audio = new AudioContext(); } catch {} } }, { once: true });
 paintAlertBtn();
