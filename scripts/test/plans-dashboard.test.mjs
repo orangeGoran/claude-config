@@ -49,7 +49,8 @@ const id = r < 0 ? 'ses-probe' : a.includes('--fork-session') ? 'ses-copy' : a[r
 const dir = path.join(process.env.HOME, '.claude', 'projects', process.cwd().replace(/[^a-zA-Z0-9]/g, '-'));
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const log = (o) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(path.join(dir, id + '.jsonl'), JSON.stringify(o) + '\\n'); };
-let q = '';
+let q = '', slow = null;
+let mode = a.includes('--permission-mode') ? a[a.indexOf('--permission-mode') + 1] : 'default';
 const answer = (text) => {
   out({ type: 'stream_event', session_id: id, parent_tool_use_id: null, event: { type: 'message_start' } });
   out({ type: 'stream_event', session_id: id, parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } });
@@ -64,18 +65,29 @@ const handle = (j) => {
       models: [{ value: 'default', displayName: 'Default' }, { value: 'haiku', displayName: 'Haiku' }] } } });
   if (j.type === 'control_request') {
     note('control ' + j.request.subtype + ' ' + (j.request.mode || j.request.model || ''));
+    if (j.request.subtype === 'set_permission_mode') mode = j.request.mode;
     return out({ type: 'control_response', response: { subtype: 'success', request_id: j.request_id, response: {} } });
   }
   if (j.type === 'control_response') {
     const res = j.response.response, ok = res.behavior === 'allow';
     note('answer ' + res.behavior + ' ' + JSON.stringify(res.updatedPermissions || null));
+    if (j.response.request_id === 'perm-3') { if (ok) mode = 'default'; return answer('answer: ' + q + (ok ? ' (approved)' : '')); }
     log({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: ok ? 'merged' : 'refused', is_error: !ok }] } });
     return answer('answer: ' + q + (ok ? ' (merged)' : ' (not merged)'));
   }
   if (j.type === 'user') {
     const c = j.message.content;
+    // like claude, a message that comes during a turn is answered in that turn: one result for both
+    if (slow) { slow.push(c[c.length - 1].text); return; }
     q = c[c.length - 1].text;
-    out({ type: 'system', subtype: 'init', session_id: id });
+    out({ type: 'system', subtype: 'init', session_id: id, permissionMode: mode });
+    if (/slow/.test(q)) {
+      slow = [q];
+      return setTimeout(() => { const all = slow; slow = null; log({ type: 'user', message: { role: 'user', content: c } }); answer('answer: ' + all.join(' + ')); }, 700);
+    }
+    if (/plan/.test(q))
+      return out({ type: 'control_request', request_id: 'perm-3', request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode',
+        input: { plan: '# Plan\\n1. edit a.txt' }, permission_suggestions: [] } });
     log({ type: 'user', message: { role: 'user', content: c }, timestamp: new Date().toISOString() });
     if (/edit/.test(q))
       return out({ type: 'control_request', request_id: 'perm-2', request: { subtype: 'can_use_tool', tool_name: 'Edit',
@@ -273,8 +285,11 @@ test("the chat continues the plan's session live: history, permission prompts, s
   const spawns = () => calls().filter((l) => l.startsWith('-p ') && l.includes('--resume'));
   const send = (data) => post('/api/chat/send', { ...who, ...data });
 
-  // the / menu and the model picker come from the protocol's first answer
-  const meta = await (await get('/api/chat/meta?' + q)).json();
+  // the / menu and the model picker come from the protocol's first answer; pages asking at
+  // the same time share one lookup
+  const [meta, meta2] = await Promise.all([1, 2].map(async () => (await get('/api/chat/meta?' + q)).json()));
+  assert.deepEqual(meta2, meta);
+  assert.equal(calls().filter((l) => l.startsWith('-p ') && !l.includes('--resume')).length, 1, 'one lookup for both pages');
   assert.deepEqual(meta.commands, [{ name: 'code-review', description: 'Review the diff', hint: '[level]' }]);
   assert.deepEqual(meta.models.map((m) => m.value), ['default', 'haiku']);
   const ev = await get('/api/chat/events?' + q);
@@ -317,6 +332,31 @@ test("the chat continues the plan's session live: history, permission prompts, s
   assert.deepEqual(await post('/api/chat/answer', { ...who, id: st.waits[0].id, allow: true, edits: true }), { ok: true });
   assert.equal((await chat()).mode, 'acceptEdits');
   await until(async () => calls().some((l) => l === 'answer allow [{"type":"setMode","mode":"acceptEdits","destination":"session"}]'), 'the setMode answer');
+  await until(async () => !(await chat()).busy, 'the end of the turn');
+
+  // a message sent while the agent works can share its turn and its one result; the chat
+  // must still end up idle
+  assert.deepEqual(await send({ text: 'slow one', mode: 'acceptEdits' }), { ok: true });
+  assert.deepEqual(await send({ text: 'and two', mode: 'acceptEdits' }), { ok: true });
+  await until(async () => (await history()).items.some((i) => i.text === 'answer: slow one + and two'), 'the shared answer');
+  await until(async () => !(await chat()).busy, 'idle after one result for two messages');
+  assert.equal((await onlyPlan()).chatting, false);
+
+  // an approved plan ends Plan mode; picking Plan mode again is sent again
+  assert.deepEqual(await send({ text: 'plan it', mode: 'plan' }), { ok: true });
+  st = await until(async () => { const s = await chat(); return s.waits.length && s; }, 'the plan card');
+  assert.deepEqual(st.waits.map((w) => [w.plan, w.detail]), [[true, '# Plan\n1. edit a.txt']]);
+  assert.deepEqual(await post('/api/chat/answer', { ...who, id: st.waits[0].id, allow: true }), { ok: true });
+  await until(async () => !(await chat()).busy, 'the end of the turn');
+  assert.equal((await chat()).mode, 'default');
+  const sets = () => calls().filter((l) => l === 'control set_permission_mode plan').length;
+  const before = sets();
+  assert.deepEqual(await post('/api/chat/mode', { ...who, mode: 'plan', model: 'default' }), { ok: true });
+  await until(async () => sets() === before + 1, 'Plan mode sent again');
+  // the next turn reports the mode claude is in, and the page follows it
+  assert.deepEqual(await send({ text: 'what now?', mode: 'plan' }), { ok: true });
+  await until(async () => !(await chat()).busy && (await history()).items.some((i) => i.text === 'answer: what now?'), 'the answer');
+  assert.equal((await chat()).mode, 'plan');
 
   // Fork: the next message goes on in a copy, which is not one of the plan's sessions
   await until(async () => !(await chat()).busy, 'the end of the turn');

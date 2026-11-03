@@ -1253,8 +1253,8 @@ const userItems = (t, j, cwd) => {
       you.push(tagText(s, 'command-name') + (tagText(s, 'command-args') ? ' ' + tagText(s, 'command-args') : ''));
       continue;
     }
-    if (s.includes('<local-command-stdout>')) {
-      const out = tagText(s, 'local-command-stdout');
+    if (s.includes('<local-command-stdout>') || s.includes('<local-command-stderr>')) {
+      const out = tagText(s, 'local-command-stdout') || tagText(s, 'local-command-stderr');
       if (out) t.items.push({ k: 'note', text: 'Command output', body: clip(out, 6000) });
       continue;
     }
@@ -1296,12 +1296,15 @@ const readTranscript = (file, cwd) => {
     const lines = (t.rest + buf.toString('utf8')).split('\n');
     t.rest = lines.pop();
     for (const line of lines) {
-      // most lines are request copies and attachments; only messages are worth parsing
-      if (!line.includes('"type":"user"') && !line.includes('"type":"assistant"')) continue;
+      // most lines are request copies and attachments; only messages are worth parsing, and
+      // a slash command's output (/context, /cost) is a system line of its own
+      if (!line.includes('"type":"user"') && !line.includes('"type":"assistant"')
+        && !line.includes('"subtype":"local_command"')) continue;
       let j;
       try { j = JSON.parse(line); } catch { continue; }
       if (j.isSidechain) continue;
-      if (j.type === 'user') userItems(t, j, cwd);
+      if (j.type === 'system' && j.subtype === 'local_command') userItems(t, { message: { content: j.content } }, cwd);
+      else if (j.type === 'user') userItems(t, j, cwd);
       else if (j.type === 'assistant') assistantItems(t, j, cwd);
     }
   }
