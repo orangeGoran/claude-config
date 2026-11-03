@@ -1297,13 +1297,17 @@ const readTranscript = (file, cwd) => {
     t.rest = lines.pop();
     for (const line of lines) {
       // most lines are request copies and attachments; only messages are worth parsing, and
-      // a slash command's output (/context, /cost) is a system line of its own
+      // a slash command's output (/context, /cost) is a system line of its own, and a message
+      // sent during a turn (or a background task's notice) is a queued_command attachment
       if (!line.includes('"type":"user"') && !line.includes('"type":"assistant"')
-        && !line.includes('"subtype":"local_command"')) continue;
+        && !line.includes('"subtype":"local_command"') && !line.includes('"type":"queued_command"')) continue;
       let j;
       try { j = JSON.parse(line); } catch { continue; }
       if (j.isSidechain) continue;
       if (j.type === 'system' && j.subtype === 'local_command') userItems(t, { message: { content: j.content } }, cwd);
+      else if (j.type === 'attachment' && j.attachment?.type === 'queued_command') {
+        userItems(t, { message: { content: j.attachment.prompt }, timestamp: j.attachment.timestamp || j.timestamp }, cwd);
+      }
       else if (j.type === 'user') userItems(t, j, cwd);
       else if (j.type === 'assistant') assistantItems(t, j, cwd);
     }
