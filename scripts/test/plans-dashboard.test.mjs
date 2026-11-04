@@ -224,6 +224,61 @@ test('records a generic run exit code, and keeps it after a restart', async () =
   assert.equal(after.live, false);
 });
 
+test('the log serves a run as chat rows: tools, errors, subagents, plain output, pages', async () => {
+  const dir = path.join(home, '.claude', 'pipeline-dashboard', 'logs', 'demo');
+  mkdirSync(dir, { recursive: true });
+  const cwd = '/work/tree';
+  const call = (id, command, parent = null) => JSON.stringify({ type: 'assistant', parent_tool_use_id: parent, message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } });
+  const done = (id, content, extra = {}, parent = null) => JSON.stringify({ type: 'user', parent_tool_use_id: parent, message: { content: [{ type: 'tool_result', tool_use_id: id, content, ...extra }] } });
+  const file = path.join(dir, 'log-demo.log');
+  writeFileSync(file, [
+    'Packages: +962',
+    'Done in 7.1s',
+    JSON.stringify({ type: 'system', subtype: 'init', model: 'opus', cwd }),
+    JSON.stringify({ type: 'system', subtype: 'task_progress' }),
+    JSON.stringify({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'Running **tests**' }, { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: cwd + '/src/a.ts' } }] } }),
+    done('r1', 'line one\nline two'),
+    call('b1', 'grep x', null),
+    done('b1', 'This command requires approval', { is_error: true }),
+    JSON.stringify({ type: 'user', parent_tool_use_id: null, isSynthetic: true, message: { content: [{ type: 'text', text: 'Base directory for this skill: /s/review' }] } }),
+    JSON.stringify({ type: 'user', parent_tool_use_id: 'task1', message: { content: [{ type: 'text', text: 'You are reviewing' }] } }),
+    JSON.stringify({ type: 'assistant', parent_tool_use_id: 'task1', message: { content: [{ type: 'text', text: 'Subagent words' }] } }),
+    call('s1', 'ls', 'task1'),
+    done('s1', 'a.ts', {}, 'task1'),
+    call('open', 'sleep 60'),
+    JSON.stringify({ type: 'result', subtype: 'success', result: 'All done', is_error: false }),
+    'no line end yet',
+  ].join('\n'));
+  const q = 'project=demo&slug=log-demo';
+  const r = await (await get('/api/log?' + q)).json();
+  const items = r.items;
+  assert.deepEqual(items.map((it) => it.k), ['raw', 'note', 'agent', 'tool', 'tool', 'note', 'note', 'tool', 'tool', 'note', 'raw']);
+  assert.equal(items[0].text, 'Packages: +962\nDone in 7.1s');
+  assert.equal(items[3].sum, 'src/a.ts', 'paths are relative to the run folder');
+  assert.equal(items[3].out, 'line one\nline two', 'output keeps its line breaks');
+  assert.equal(items[4].err, true);
+  assert.match(items[5].text, /^Skill loaded: review/);
+  assert.equal(items[6].sub, true);
+  assert.equal(items[6].body, 'Subagent words');
+  assert.equal(items[7].sub, true);
+  assert.equal(items[7].out, 'a.ts');
+  assert.equal(items[8].done, false, 'a call without a result is still running');
+  assert.equal(items[9].body, 'All done');
+  assert.equal(items.at(-1).text, 'no line end yet', 'output without its line end still shows');
+  assert.ok(!JSON.stringify(items).includes('You are reviewing'), "a subagent's prompt is left out");
+
+  // pages: the end first, then what comes before it
+  const page = await (await get('/api/log?' + q + '&limit=4')).json();
+  assert.deepEqual([page.total, page.first, page.items.length], [11, 7, 4]);
+  const older = await (await get('/api/log?' + q + '&before=7&limit=4')).json();
+  assert.deepEqual([older.first, older.items[0].i], [3, 3]);
+
+  // what the run writes next is read on the next look
+  writeFileSync(file, readFileSync(file, 'utf8') + ' and now it has\n');
+  assert.equal((await (await get('/api/log?' + q + '&from=10')).json()).items[0].text, 'no line end yet and now it has');
+  assert.deepEqual(await (await get('/api/log?project=demo&slug=no-such-run')).json(), { total: 0, first: 0, items: [] });
+});
+
 test('a launcher can report its own status, outcome and links via $PLAN_REPORT', async () => {
   const run = async (cmd) => {
     assert.deepEqual(await post('/api/launchers', { project: 'demo', launchers: [{ label: 'reports', cmd }] }), { ok: true });

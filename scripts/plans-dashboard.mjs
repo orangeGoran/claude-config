@@ -1399,7 +1399,23 @@ const assistantItems = (t, j, cwd) => {
     }
   }
 };
-const readTranscript = (file, cwd) => {
+const transcriptLine = (t, line, cwd) => {
+  // most lines are request copies and attachments; only messages are worth parsing, and
+  // a slash command's output (/context, /cost) is a system line of its own, and a message
+  // sent during a turn (or a background task's notice) is a queued_command attachment
+  if (!line.includes('"type":"user"') && !line.includes('"type":"assistant"')
+    && !line.includes('"subtype":"local_command"') && !line.includes('"type":"queued_command"')) return;
+  let j;
+  try { j = JSON.parse(line); } catch { return; }
+  if (j.isSidechain) return;
+  if (j.type === 'system' && j.subtype === 'local_command') userItems(t, { message: { content: j.content } }, cwd);
+  else if (j.type === 'attachment' && j.attachment?.type === 'queued_command') {
+    userItems(t, { message: { content: j.attachment.prompt }, timestamp: j.attachment.timestamp || j.timestamp }, cwd);
+  }
+  else if (j.type === 'user') userItems(t, j, cwd);
+  else if (j.type === 'assistant') assistantItems(t, j, cwd);
+};
+const readTranscript = (file, cwd, parseLine = transcriptLine) => {
   let st;
   try { st = statSync(file); } catch { return { items: [] }; }
   let t = transcripts.get(file);
@@ -1415,22 +1431,7 @@ const readTranscript = (file, cwd) => {
     t.size = st.size;
     const lines = (t.rest + buf.toString('utf8')).split('\n');
     t.rest = lines.pop();
-    for (const line of lines) {
-      // most lines are request copies and attachments; only messages are worth parsing, and
-      // a slash command's output (/context, /cost) is a system line of its own, and a message
-      // sent during a turn (or a background task's notice) is a queued_command attachment
-      if (!line.includes('"type":"user"') && !line.includes('"type":"assistant"')
-        && !line.includes('"subtype":"local_command"') && !line.includes('"type":"queued_command"')) continue;
-      let j;
-      try { j = JSON.parse(line); } catch { continue; }
-      if (j.isSidechain) continue;
-      if (j.type === 'system' && j.subtype === 'local_command') userItems(t, { message: { content: j.content } }, cwd);
-      else if (j.type === 'attachment' && j.attachment?.type === 'queued_command') {
-        userItems(t, { message: { content: j.attachment.prompt }, timestamp: j.attachment.timestamp || j.timestamp }, cwd);
-      }
-      else if (j.type === 'user') userItems(t, j, cwd);
-      else if (j.type === 'assistant') assistantItems(t, j, cwd);
-    }
+    for (const line of lines) parseLine(t, line, cwd);
   }
   return t;
 };
@@ -1446,16 +1447,18 @@ const chatTranscript = (proj, slug) => {
   return null;
 };
 // a page of items: the last `limit`, the `limit` before index `before`, or all from index `from`
-const chatHistory = (proj, slug, q) => {
-  const tr = chatTranscript(proj, slug);
-  if (!tr) return { session: null, total: 0, first: 0, items: [] };
-  const all = readTranscript(tr.file, tr.wtPath).items;
+const itemsPage = (all, q) => {
   const limit = Math.min(500, Math.max(1, +q.limit || 150));
   let lo, hi = all.length;
   if (q.from != null && q.from !== '') lo = Math.max(0, Math.min(all.length, +q.from || 0));
   else if (q.before != null && q.before !== '') { hi = Math.max(0, Math.min(all.length, +q.before || 0)); lo = Math.max(0, hi - limit); }
   else lo = Math.max(0, hi - limit);
-  return { session: tr.id, total: all.length, first: lo, items: all.slice(lo, hi).map((it, n) => ({ ...it, i: lo + n })) };
+  return { total: all.length, first: lo, items: all.slice(lo, hi).map((it, n) => ({ ...it, i: lo + n })) };
+};
+const chatHistory = (proj, slug, q) => {
+  const tr = chatTranscript(proj, slug);
+  if (!tr) return { session: null, total: 0, first: 0, items: [] };
+  return { session: tr.id, ...itemsPage(readTranscript(tr.file, tr.wtPath).items, q) };
 };
 
 // --- the live session ---
@@ -1787,42 +1790,47 @@ const chatEvents = (req, res, proj, slug) => {
 
 // ---------- http ----------
 
-// render stream-json session output as a human-readable activity feed
-const prettyLog = (raw) => raw.split('\n').filter((l) => l.trim()).map((line) => {
-  if (!line.startsWith('{')) return line;
-  try {
-    const j = JSON.parse(line);
-    if (j.type === 'system' && j.subtype === 'init')
-      return '⚙️  session started — model ' + (j.model || '?');
-    if (j.type === 'assistant') {
-      const out = [];
-      for (const c of j.message?.content || []) {
-        if (c.type === 'text' && c.text?.trim()) out.push('🤖 ' + c.text.trim());
-        if (c.type === 'tool_use') {
-          const i = c.input || {};
-          const arg = i.command || i.file_path || i.path || i.pattern || i.skill || i.description || '';
-          out.push('🔧 ' + c.name + '  ' + String(arg).replace(/\s+/g, ' ').slice(0, 170));
-        }
-      }
-      return out.join('\n');
-    }
-    if (j.type === 'user') {
-      const out = [];
-      for (const c of j.message?.content || []) {
-        if (c.type === 'tool_result') {
-          let t = typeof c.content === 'string' ? c.content
-            : (c.content || []).map((x) => x.text || '').join(' ');
-          t = String(t).replace(/\s+/g, ' ').trim();
-          if (t) out.push('   ↳ ' + t.slice(0, 220));
-        }
-      }
-      return out.join('\n');
-    }
-    if (j.type === 'result')
-      return '🏁 ' + (j.subtype || 'done') + (j.result ? '\n\n' + String(j.result).slice(0, 4000) : '');
-    return '';
-  } catch { return line; }
-}).filter(Boolean).join('\n');
+// a run's log is stream-json mixed with plain launcher output; both become the chat's items.
+// A subagent's steps are marked, and its prompt is left out: the Agent call already shows it.
+const logLine = (t, line) => {
+  if (!line.trim()) return;
+  const raw = () => {
+    const last = t.items.at(-1);
+    if (last?.k === 'raw' && last.lines < 200) { last.text += '\n' + line; last.lines++; }
+    else t.items.push({ k: 'raw', text: line, lines: 1 });
+  };
+  if (!line.startsWith('{')) return raw();
+  let j;
+  try { j = JSON.parse(line); } catch { return raw(); }
+  if (j.type === 'system' && j.subtype === 'init') {
+    t.cwd = j.cwd;
+    t.items.push({ k: 'note', text: '⚙️ Session started, model ' + (j.model || '?') });
+  } else if (j.type === 'assistant') {
+    const n = t.items.length;
+    assistantItems(t, j, t.cwd);
+    if (j.parent_tool_use_id) t.items.slice(n).forEach((it, k) => {
+      t.items[n + k] = it.k === 'agent' ? { k: 'note', text: 'Subagent message', body: clip(it.text, 6000), sub: true } : Object.assign(it, { sub: true });
+    });
+  } else if (j.type === 'user') {
+    const c = j.message?.content;
+    if (j.parent_tool_use_id) userItems(t, { message: { content: Array.isArray(c) ? c.filter((b) => b.type === 'tool_result') : [] } }, t.cwd);
+    else userItems(t, { ...j, isMeta: j.isMeta || j.isSynthetic }, t.cwd);
+  } else if (j.type === 'result') {
+    t.items.push({ k: 'note', text: '🏁 ' + (j.subtype || 'done'), body: j.result ? clip(j.result, 4000) : '', err: !!j.is_error });
+  }
+};
+const logHistory = (proj, slug, q) => {
+  const file = path.join(proj.hasPipeline ? proj.autoRunsDir : proj.logsDir, slug + '.log');
+  const t = readTranscript(file, null, logLine);
+  const all = [...t.items];
+  // plain output without its line end yet (a launcher's last words) still shows
+  if (t.rest?.trim() && !t.rest.startsWith('{')) {
+    const last = all.at(-1);
+    if (last?.k === 'raw') all[all.length - 1] = { ...last, text: last.text + '\n' + t.rest };
+    else all.push({ k: 'raw', text: t.rest });
+  }
+  return itemsPage(all, q);
+};
 
 const json = (res, code, obj) => {
   res.writeHead(code, { 'Content-Type': 'application/json' });
@@ -1903,12 +1911,8 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/log') {
       const proj = getProj();
       if (!proj || !safeName(slug)) return json(res, 400, { error: 'bad request' });
-      const f = proj.hasPipeline
-        ? path.join(proj.autoRunsDir, slug + '.log')
-        : path.join(proj.logsDir, slug + '.log');
-      const raw = existsSync(f)
-        ? readFileSync(f, 'utf8').split('\n').slice(-800).join('\n') : '';
-      return text(res, raw.trim() ? prettyLog(raw) : 'No output yet.');
+      return json(res, 200, logHistory(proj, slug,
+        Object.fromEntries(['from', 'before', 'limit'].map((k) => [k, url.searchParams.get(k)]))));
     }
     if (url.pathname === '/api/report') {
       const proj = getProj();
@@ -2507,6 +2511,13 @@ const PAGE = /* html */ `<!doctype html>
                            max-height:320px; overflow:auto; color:var(--logfg); }
   .ctool pre.out { border-style:dashed; }
   .cnote .mdc { font-family:-apple-system,"Segoe UI",sans-serif; padding:4px 8px; }
+  .cnote.err, .cnote.err summary { color:var(--bad); }
+  .logitems { display:flex; flex-direction:column; gap:6px; white-space:normal; font:calc(13px * var(--fs))/1.55 -apple-system,system-ui,sans-serif; color:var(--fg); }
+  .logitems .cgroup > summary b { color:var(--dim); }
+  .logitems .cgroup[open] { display:flex; flex-direction:column; gap:4px; padding-bottom:4px; }
+  .logitems .cgroup > :not(summary) { margin-left:14px; }
+  .lograw { margin:0; padding:0 4px; white-space:pre-wrap; overflow-wrap:anywhere; font:calc(11.5px * var(--fs))/1.5 ui-monospace,monospace; color:var(--logfg); }
+  .logmore { align-self:center; }
   .aend { font-size:calc(11px * var(--fs)); color:var(--dim); padding:0 4px; }
   .aend.bad { color:var(--bad); white-space:pre-wrap; }
   .cwork::after { content:''; display:inline-block; width:6px; height:6px; margin-left:6px; border-radius:50%; background:var(--accent);
@@ -3513,13 +3524,14 @@ function chatItemHtml(it, c) {
   if (it.k === 'agent') return '<div class="amsg agent mdc" data-i="' + it.i + '">' + md(it.text) +
     '<button class="ccopy cmsg" data-copymsg="' + it.i + '" title="Copy the whole answer as Markdown">Copy</button></div>';
   if (it.k === 'think') return '<details class="cnote" data-i="' + it.i + '"' + open + '><summary>Thinking</summary><div class="mdc">' + md(it.text) + '</div></details>';
-  if (it.k === 'tool') return '<details class="ctool' + (it.err ? ' err' : '') + '" data-i="' + it.i + '"' + open + '><summary><b>' + esc(it.name) + '</b> ' +
+  if (it.k === 'tool') return '<details class="ctool' + (it.err ? ' err' : '') + '" data-i="' + it.i + '"' + open + '><summary>' + (it.sub ? '<i class="dim">subagent</i> ' : '') + '<b>' + esc(it.name) + '</b> ' +
     '<span>' + esc(it.sum) + '</span>' + (it.done ? '' : ' <i class="dim">running…</i>') +
     (/^(Edit|MultiEdit|Write|NotebookEdit)$/.test(it.name) && it.sum && it.sum[0] !== '/' && c.p.pr
       ? '<button class="cjump" data-jump="' + escA(it.sum) + '" title="Open this file in Files changed">view in diff</button>' : '') + '</summary>' +
     (it.input ? '<pre>' + esc(it.input) + '</pre>' : '') + (it.out ? '<pre class="out">' + esc(it.out) + '</pre>' : '') + '</details>';
-  return it.body ? '<details class="cnote" data-i="' + it.i + '"' + open + '><summary>' + esc(it.text) + '</summary><pre>' + esc(it.body) + '</pre></details>'
-    : '<div class="cnote" data-i="' + it.i + '">' + esc(it.text) + '</div>';
+  const err = it.err ? ' err' : '';
+  return it.body ? '<details class="cnote' + err + '" data-i="' + it.i + '"' + open + '><summary>' + esc(it.text) + '</summary><pre>' + esc(it.body) + '</pre></details>'
+    : '<div class="cnote' + err + '" data-i="' + it.i + '">' + esc(it.text) + '</div>';
 }
 function chatState(st) {
   const c = ch, was = c.st;
@@ -4704,19 +4716,20 @@ const setBack = (fn) => {
 byId('backBtn').addEventListener('click', () => { const f = drawerBack; if (f) f(); });
 function openLog(key, kind) {
   setBack(null);
-  logKey = key; logKind = kind; byId('logbody')._raw = null; byId('logpane').classList.add('open'); loadLog();
+  logKey = key; logKind = kind; lg = null; byId('logbody')._raw = null; byId('logpane').classList.add('open'); loadLog();
 }
-function closeLog() { setBack(null); logKey = null; byId('logpane').classList.remove('open'); }
+function closeLog() { setBack(null); logKey = null; lg = null; byId('logpane').classList.remove('open'); }
 async function loadLog() {
   const p = find(logKey);
   if (!p) return;
   byId('logtitle').textContent = logKind + ': [' + p.project + '] ' + p.slug;
+  if (logKind === 'log') return loadLogItems(p);
   const t = await (await fetch('/api/' + logKind + '?project=' + p.project + '&slug=' + p.slug)).text();
   const el = byId('logbody');
   if (el._raw === t || selectionIn(el)) return;
   const stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
   el._raw = t;
-  // a run report is a Markdown file: show it formatted, like the plan; the log stays plain text
+  // a run report is a Markdown file: show it formatted, like the plan
   if (logKind === 'report' && !/^\(no report yet\)$/.test(t.trim())) {
     const top = el.scrollTop;
     el.innerHTML = '<div class="mdc logmd">' + md(t) + '</div>';
@@ -4726,6 +4739,88 @@ async function loadLog() {
     if (stick) el.scrollTop = el.scrollHeight;
   }
 }
+// --- the log: a run's steps as chat rows; finished tool calls in a row fold into one line ---
+let lg = null;   // { key, p, items, first, total, open, loading, wantOld, painted }
+const logFolds = (it) => it.k === 'think' || (it.k === 'tool' && it.done && !it.err) || (it.k === 'note' && it.sub);
+const logItemHtml = (it, c) => it.k === 'raw' ? '<pre class="lograw">' + esc(it.text) + '</pre>' : chatItemHtml(it, c);
+function logListHtml(c) {
+  let h = '', run = [];
+  const flush = () => {
+    const tools = run.filter((it) => it.k === 'tool');
+    if (tools.length < 2) h += run.map((it) => logItemHtml(it, c)).join('');
+    else {
+      const names = {};
+      tools.forEach((it) => { names[it.name] = (names[it.name] || 0) + 1; });
+      const g = 'g' + run[0].i;
+      h += '<details class="ctool cgroup" data-g="' + g + '"' + (c.open.has(g) ? ' open' : '') + '><summary><b>' + tools.length + ' tool calls</b> <span>' +
+        esc(Object.entries(names).map(([n, k]) => n + (k > 1 ? ' ×' + k : '')).join(', ')) + '</span></summary>' +
+        run.map((it) => logItemHtml(it, c)).join('') + '</details>';
+    }
+    run = [];
+  };
+  for (let i = c.first; i < c.total; i++) {
+    const it = c.items[i];
+    if (!it) continue;
+    if (logFolds(it)) run.push(it);
+    else { flush(); h += logItemHtml(it, c); }
+  }
+  flush();
+  return h;
+}
+function paintLog(c, older) {
+  const el = byId('logbody');
+  const stick = !c.painted || el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
+  const top = el.scrollTop, height = el.scrollHeight;
+  el.innerHTML = c.total ? '<div class="logitems">' +
+    (c.first > 0 ? '<button class="logmore" data-older="1">Load earlier (' + c.first + ' earlier steps)</button>' : '') +
+    logListHtml(c) + '</div>' : 'No output yet.';
+  el.scrollTop = older ? top + el.scrollHeight - height : stick ? el.scrollHeight : top;
+  c.painted = true;
+}
+async function loadLogItems(p, older) {
+  const el = byId('logbody');
+  if (!lg) lg = { key: logKey, p: {}, items: {}, first: 0, total: null, open: new Set() };
+  const c = lg;
+  if (c.loading) { if (older) c.wantOld = true; return; }
+  if (!older && selectionIn(el)) return;
+  let q = '';
+  if (older) q = '&before=' + c.first;
+  else if (c.total) {
+    // from the first tool call still waiting for its result, else the last row: plain output grows
+    let from = c.total - 1;
+    for (let i = Math.max(c.first, c.total - 300); i < c.total; i++)
+      if (c.items[i] && c.items[i].k === 'tool' && !c.items[i].done) { from = i; break; }
+    q = '&from=' + from;
+  }
+  c.loading = true;
+  const r = await fetch('/api/log?project=' + encodeURIComponent(p.project) + '&slug=' + encodeURIComponent(p.slug) + q)
+    .then((x) => x.json()).catch(() => null);
+  c.loading = false;
+  if (lg !== c || !r || !r.items) return;
+  if (c.total != null && r.total < c.total) { lg = null; return loadLogItems(p); }   // the file was replaced
+  const changed = !c.painted || older || r.total !== c.total || r.items.some((it) => JSON.stringify(c.items[it.i]) !== JSON.stringify(it));
+  if (older || c.total == null) c.first = r.first;
+  r.items.forEach((it) => { c.items[it.i] = it; });
+  c.total = r.total;
+  if (changed) paintLog(c, older);
+  if (c.wantOld) { c.wantOld = false; if (c.first > 0) loadLogItems(p, true); }
+}
+byId('logbody').addEventListener('click', async (e) => {
+  if (!lg || !e.target.closest) return;
+  if (e.target.closest('[data-older]')) { const p = find(logKey); if (p) loadLogItems(p, true); return; }
+  const b = e.target.closest('.ccopy');
+  if (!b || b.dataset.copymsg == null) return;
+  const ok = await copyText(lg.items[+b.dataset.copymsg].text);
+  b.textContent = ok ? 'Copied' : 'Copy failed';
+  setTimeout(() => { b.textContent = 'Copy'; }, 1400);
+});
+// rows and groups keep their open state when the list repaints
+byId('logbody').addEventListener('toggle', (e) => {
+  const d = e.target.dataset;
+  const k = d && (d.g || (d.i != null ? +d.i : null));
+  if (!lg || k == null) return;
+  e.target.open ? lg.open.add(k) : lg.open.delete(k);
+}, true);
 // --- launcher setup dialog (generic projects): pick a skill/script or write a command ---
 // back: where ‹ Back and a save return to (the settings panel, the setup guide), or null
 async function openLauncherSetup(projName, back) {
