@@ -1,11 +1,12 @@
 // The report of one test run as ONE self-contained HTML file (screenshots embedded as
 // base64), easy to send to someone else. It is written as soon as the findings are known
 // and rewritten, to the same file, whenever something changes: a finding with a "result"
-// shows its view before and after the fix, an open one the screen as it was found.
+// shows its view before and after the fix, an open one the screen as it was found. A later
+// run on the same route updates that file too, and each page it replaces stays as a version.
 // Usage: node scripts/compare.mjs <items.json> [--out=<file.html>]
 // items.json (written by Claude after the test run, and updated after every change):
 //   {
-//     "date": "2026-10-31",                                  // day of the test run: keeps one file across updates
+//     "date": "2026-10-31",                                  // day of the test run: names the file of a route's first report
 //     "route": "/cases", "account": "Ana (Member, Acme)",
 //     "title": "Filters on /cases fit a phone",              // optional, plain-words headline
 //     "issues": ["https://github.com/acme/shop-web/issues/435"],  // GitHub issues/PRs the run tests; the QA list searches them
@@ -42,8 +43,9 @@
 // "before" is the version tested. "reviewEachFix" asks "Should I apply this fix?" on an open
 // finding and "Is this fix good?" on a fixed one.
 // Output: ~/.claude/browser-usability-test/projects/<project>/reports/<date>-<route>-report.html
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, extname, join } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { extname, join } from "node:path";
+import { sameNameIn, writeVersioned } from "../../../scripts/page-versions.mjs";
 import { BEFORE_AFTER_FILE, PROJECT } from "./lib.mjs";
 import { STORE } from "./profile.mjs";
 import { publish } from "./publish.mjs";
@@ -560,11 +562,11 @@ ${copyBlocks.join("\n")}
 `;
 
 const slug = route.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "root";
-const out =
-  arg("out") ?? join(STORE, PROJECT.name, "reports", `${spec.date ?? date}-${slug}-report.html`);
+const reports = join(STORE, PROJECT.name, "reports");
+// One route has one report, also across days; what it replaces stays as an older version.
+const out = arg("out") ?? join(reports, sameNameIn(reports, `${spec.date ?? date}-${slug}-report.html`));
 const updated = existsSync(out);
-mkdirSync(dirname(out), { recursive: true });
-writeFileSync(out, html);
+const version = writeVersioned(out, html);
 
 const mb = statSync(out).size / 1024 / 1024;
 for (const w of warnings) console.error(`!! ${w}`);
@@ -574,4 +576,4 @@ if (mb > 15)
 const { url } = await publish(out);
 if (!url)
   console.error(`!! No report link: the plans dashboard's report server (localhost:4898) isn't running, or the file is outside the reports folder. Open it with \`open ${out}\` (macOS) or \`xdg-open ${out}\` (Linux) and give the path.`);
-console.log(JSON.stringify({ out, url, updated, sizeMb: Number(mb.toFixed(2)), warnings }, null, 2));
+console.log(JSON.stringify({ out, url, updated, version, sizeMb: Number(mb.toFixed(2)), warnings }, null, 2));

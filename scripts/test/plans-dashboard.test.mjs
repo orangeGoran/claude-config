@@ -11,6 +11,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sameNameIn, writeVersioned } from '../page-versions.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'plans-dashboard.mjs');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -728,6 +729,46 @@ test('serves browser-usability-test reports read-only on their own port, with a 
   assert.equal(rebound, 403, 'a rebound public name is refused');
   assert.equal((await get('/solver/2026-11-01-cases-report.html')).status, 404, 'the dashboard port does not serve reports');
   assert.match(await (await get('/')).text(), new RegExp(`href="http://localhost:${qaPort}/"`), 'the header links the list');
+});
+
+test('a saved page keeps its link across days and serves its older versions', async () => {
+  const qa = (p) => fetch(`http://127.0.0.1:${qaPort}${p}`);
+  const reports = path.join(home, '.claude', 'browser-usability-test', 'projects', 'solver', 'reports');
+  const first = path.join(reports, '2026-11-01-d4-report.html');
+  mkdirSync(reports, { recursive: true });
+  writeFileSync(path.join(reports, '2026-11-01-other-d4-report.html'), '<!doctype html><title>Other</title>');
+  assert.equal(writeVersioned(first, '<!doctype html><title>D4</title><body>morning</body>'), 1);
+  assert.equal(writeVersioned(first, '<!doctype html><title>D4</title><body>morning</body>'), 1, 'the same bytes add no version');
+  const once = await (await qa('/solver/2026-11-01-d4-report.html')).text();
+  assert.doesNotMatch(once, /id="qa-ver"/, 'a page with one version has no menu');
+  assert.match(once, /id="qa-dl"/, 'and still has Download');
+
+  const next = path.join(reports, sameNameIn(reports, '2026-11-02-d4-report.html'));
+  assert.equal(next, first, 'a later day on the same route updates the same file');
+  assert.equal(sameNameIn(reports, '2026-11-02-new-report.html'), '2026-11-02-new-report.html', 'a new route starts its own file');
+  assert.equal(writeVersioned(next, '<!doctype html><title>D4</title><body>evening</body>'), 2);
+
+  const latest = await (await qa('/solver/2026-11-01-d4-report.html')).text();
+  assert.match(latest, /evening/, 'the link shows the newest version');
+  assert.match(latest, /v2 \(latest\) ▾/, 'the menu names the version shown');
+  assert.match(latest, /href="\/solver\/2026-11-01-d4-report\.html\?v=1"/, 'the menu links the older version');
+  assert.doesNotMatch(latest, /id="qa-old"/, 'the newest version has no old-version notice');
+
+  const old = await (await qa('/solver/2026-11-01-d4-report.html?v=1')).text();
+  assert.match(old, /morning/, '?v=1 shows the page as it was');
+  assert.match(old, /id="qa-old" href="\/solver\/2026-11-01-d4-report\.html"/, 'an old version links back to the latest');
+  assert.match(old, /href="\?v=1&amp;download"/, 'Download on an old version gives that version');
+
+  const dl = await qa('/solver/2026-11-01-d4-report.html?v=1&download');
+  assert.match(dl.headers.get('content-disposition'), /2026-11-01-d4-report-v1\.html/, 'the download names its version');
+  assert.doesNotMatch(await dl.text(), /qa-bar/, 'a download is the file as saved');
+  for (const v of ['2', '9', '../v1', '1.html', ''])
+    assert.equal((await qa(`/solver/2026-11-01-d4-report.html?v=${encodeURIComponent(v)}`)).status, v ? 404 : 200, `v=${v}`);
+  assert.equal((await qa('/solver/.versions/2026-11-01-d4-report/v1.html')).status, 404, 'version files have no route of their own');
+
+  const list = await (await qa('/')).text();
+  assert.match(list, /2026-11-01-d4-report\.html<\/span> <span class="tk">2 versions</, 'the list has one row with its version count');
+  assert.doesNotMatch(list, /v1\.html/, 'older versions have no rows');
 });
 
 test('the QA list shows ticket numbers, saved Claude artifacts and scratchpad drafts', async () => {

@@ -7,7 +7,9 @@
 //
 //   node scripts/artifact-copies.mjs --save <page.html> [--project <name>] [--title <t>]
 //       a page Claude wrote: packed into one file and saved to the project of the repo
-//       you run it in; prints the file and its http://localhost:4898 link
+//       you run it in; prints the file and its http://localhost:4898 link. Saving the same
+//       name again, also on a later day, keeps the same file and link and the old page as
+//       a version (scripts/page-versions.mjs)
 //   node scripts/artifact-copies.mjs <manifest.jsonl>...
 //       Claude artifacts downloaded from claude.ai with the Artifact tool. A manifest line:
 //       {"url","title","updated","dir","assets":[{"url","saved"}],"error"}
@@ -26,6 +28,7 @@ import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sameNameIn, writeVersioned } from './page-versions.mjs';
 
 export const QA_HOME = process.env.QA_HOME || path.join(os.homedir(), '.claude', 'browser-usability-test', 'projects');
 export const OTHER = '_other';
@@ -252,9 +255,9 @@ const savePage = (src, { project, title } = {}) => {
   const html = inlineHtml(readFileSync(full, 'utf8'), path.dirname(full), { page: full });
   title ||= html.match(/<title>([^<]*)<\/title>/i)?.[1] || path.basename(full, '.html');
   const day = new Date().toISOString().slice(0, 10);
-  const name = /^\d{4}-\d{2}-\d{2}-/.test(path.basename(full)) ? path.basename(full) : `${day}-${slug(title)}.html`;
-  write(project, name, stamp(html, { title, updated: day, issues: findIssues(title + ' ' + html) }));
-  console.log(JSON.stringify({ file: path.join(dirOf(project), name), url: linkOf(project, name), project: project || OTHER }, null, 2));
+  const name = sameNameIn(dirOf(project), /^\d{4}-\d{2}-\d{2}-/.test(path.basename(full)) ? path.basename(full) : `${day}-${slug(title)}.html`);
+  const version = writeVersioned(path.join(dirOf(project), name), stamp(html, { title, updated: day, issues: findIssues(title + ' ' + html) }));
+  console.log(JSON.stringify({ file: path.join(dirOf(project), name), url: linkOf(project, name), project: project || OTHER, version }, null, 2));
 };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

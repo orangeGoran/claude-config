@@ -34,6 +34,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { OTHER, inlineHtml, findIssues, readMeta } from './artifact-copies.mjs';
+import { olderVersions } from './page-versions.mjs';
 
 const VERSION = '1.0.0';
 const HOME = os.homedir();
@@ -5492,6 +5493,7 @@ const qaPages = (project, folder) => {
       href: remote ? null : `/${encodeURIComponent(project)}/${folder === 'reports' ? '' : 'artifacts/'}${encodeURIComponent(f)}`,
       // a downloaded Claude artifact: its claude.ai link; Docs, Slides and Design open only there
       url: meta.source, live: !!meta.live, guessed: meta['project-from'] === 'content',
+      versions: olderVersions(file).length + 1,
       issues: (meta.issues || '').split(/\s+/).filter(Boolean) };
   }).sort((a, b) => b.mtime - a.mtime);
 };
@@ -5546,6 +5548,7 @@ const qaListPage = () => {
     const open = r.href ? `<a href="${r.href}" target="_blank" rel="noopener">${escH(r.title)}</a>`
       : `<a href="${escH(r.url)}" target="_blank" rel="noopener">${escH(r.title)} ↗</a>`;
     const sub = [...r.issues.map(issueChip), r.file && `<span>${escH(r.file)}</span>`,
+      r.versions > 1 && `<span class="tk">${r.versions} versions</span>`,
       r.url && r.href && `<a class="tk" href="${escH(r.url)}" target="_blank" rel="noopener">claude.ai ↗</a>`,
       r.live && '<span class="warn">saved data and comments work only on claude.ai</span>',
       !r.href && '<span>Docs, Slides or Design: opens on claude.ai only</span>',
@@ -5613,17 +5616,43 @@ document.querySelectorAll('[data-path]').forEach((b) => b.addEventListener('clic
 }));
 </script></body></html>`;
 };
-// a Download button at the top right of every page served here; ?download gives the file as saved, without the button
-const DL_BUTTON = `<style>#qa-dl{all:initial;position:fixed;top:10px;right:10px;z-index:2147483647;font:500 12.5px system-ui,-apple-system,sans-serif;color:#eceff4;background:rgba(46,52,64,.88);border:1px solid #4c566a;border-radius:6px;padding:5px 11px;cursor:pointer;opacity:.75}
-#qa-dl:hover,#qa-dl:focus-visible{opacity:1;outline:2px solid #88c0d0;outline-offset:2px}@media print{#qa-dl{display:none}}</style>
-<a id="qa-dl" href="?download" download title="Download this page as one HTML file">⬇ Download</a>`;
-const sendPage = (req, res, html, name) => {
+// a bar at the top right of every page served here: Download, and a version menu on a page
+// with older versions (scripts/page-versions.mjs). ?download gives the file as saved, without the bar
+const QA_BAR_ITEM = 'all:initial;display:block;box-sizing:border-box;font:500 12.5px system-ui,-apple-system,sans-serif;color:#eceff4;background:rgb(46,52,64);border:1px solid #4c566a;border-radius:6px;padding:5px 11px;cursor:pointer;white-space:nowrap';
+const QA_BAR_STYLE = `<style>#qa-bar{all:initial;position:fixed;top:10px;right:10px;z-index:2147483647;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;max-width:calc(100vw - 20px)}
+#qa-dl,#qa-old,#qa-ver>summary,#qa-ver a{${QA_BAR_ITEM}}#qa-dl,#qa-ver>summary{opacity:.75}
+#qa-old{background:#b35c00;color:#fff;border-color:#b35c00;text-decoration:underline}
+#qa-ver{all:initial;display:block;position:relative;z-index:1}#qa-ver>div{all:initial;display:block;position:absolute;top:calc(100% + 4px);right:0;max-height:60vh;overflow:auto}
+#qa-ver a{border-radius:0;margin-top:-1px}#qa-ver a[aria-current]{background:#434c5e;font-weight:700}
+#qa-dl:hover,#qa-dl:focus-visible,#qa-ver>summary:hover,#qa-ver>summary:focus-visible,#qa-ver[open]>summary{opacity:1}
+#qa-dl:hover,#qa-dl:focus-visible,#qa-old:focus-visible,#qa-ver>summary:focus-visible,#qa-ver a:hover,#qa-ver a:focus-visible{outline:2px solid #88c0d0;outline-offset:-2px}@media print{#qa-bar{display:none}}</style>`;
+// versions: [{ n, mtime, latest, href, current }], newest first; one entry means no menu
+const qaBar = (versions) => {
+  const when = (ms) => new Date(ms).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const current = versions.find((v) => v.current), latest = versions[0];
+  const old = current && !current.latest;
+  const menu = versions.length > 1 ? `<details id="qa-ver"><summary aria-label="Versions of this page">v${current.n}${current.latest ? ' (latest)' : ''} ▾</summary><div>
+${versions.map((v) => `<a href="${escH(v.href)}"${v.current ? ' aria-current="page"' : ''}>v${v.n}${v.latest ? ' (latest)' : ''} · ${escH(when(v.mtime))}</a>`).join('\n')}</div></details>` : '';
+  return `${QA_BAR_STYLE}<div id="qa-bar">${old ? `<a id="qa-old" href="${escH(latest.href)}">Old version from ${escH(when(current.mtime))}. Go to latest</a>` : ''}${menu}
+<a id="qa-dl" href="?${old ? `v=${current.n}&amp;` : ''}download" download title="Download this page as one HTML file">⬇ Download</a></div>`;
+};
+const sendPage = (req, res, html, name, versions = []) => {
   const dl = new URL(req.url, 'http://x').searchParams.has('download');
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
     ...(dl && { 'Content-Disposition': `attachment; filename="${name.replace(/[^A-Za-z0-9._-]/g, '_')}"` }) });
   if (dl) return res.end(html);
-  const s = String(html), at = s.lastIndexOf('</body>');
-  res.end(at < 0 ? s + DL_BUTTON : s.slice(0, at) + DL_BUTTON + s.slice(at));
+  const s = String(html), at = s.lastIndexOf('</body>'), bar = qaBar(versions);
+  res.end(at < 0 ? s + bar : s.slice(0, at) + bar + s.slice(at));
+};
+// a saved page, or with ?v=<n> one of its older versions, downloaded as <name>-v<n>.html
+const sendSaved = (req, res, file, name) => {
+  const { pathname, searchParams } = new URL(req.url, 'http://x');
+  const older = olderVersions(file), v = searchParams.get('v');
+  const old = v && older.find((o) => String(o.n) === v);
+  if (v && !old) { res.writeHead(404); return res.end('version not found'); }
+  const versions = [...older.map((o) => ({ n: o.n, mtime: o.mtime, href: `${pathname}?v=${o.n}`, current: o === old })),
+    { n: (older.at(-1)?.n || 0) + 1, mtime: statSync(file).mtimeMs, href: pathname, current: !old, latest: true }].reverse();
+  sendPage(req, res, readFileSync(old ? old.path : file), old ? name.replace(/\.html$/, `-v${old.n}.html`) : name, versions);
 };
 const reportServer = http.createServer((req, res) => {
   const host = (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
@@ -5643,14 +5672,15 @@ const reportServer = http.createServer((req, res) => {
   if (req.method === 'GET' && (art || draft)) {
     const f = art ? path.join(QA_REPORTS, art[1], 'artifacts', art[2]) : draft;
     if (!existsSync(f)) { res.writeHead(404); return res.end('page not found'); }
+    if (art) return sendSaved(req, res, f, art[2]);
     // a draft's images sit next to it: packed in, so a download is one file
-    return sendPage(req, res, art ? readFileSync(f) : inlineHtml(readFileSync(f, 'utf8'), path.dirname(f), { page: f }), path.basename(f));
+    return sendPage(req, res, inlineHtml(readFileSync(f, 'utf8'), path.dirname(f), { page: f }), path.basename(f));
   }
   const m = pathname
     .match(/^\/([A-Za-z0-9_-][A-Za-z0-9._-]*)\/([A-Za-z0-9_-][A-Za-z0-9._-]*\.html)$/);
   const f = m && path.join(QA_REPORTS, m[1], 'reports', m[2]);
   if (req.method !== 'GET' || !f || !existsSync(f)) { res.writeHead(404); return res.end('report not found'); }
-  sendPage(req, res, readFileSync(f), m[2]);
+  sendSaved(req, res, f, m[2]);
 });
 reportServer.on('error', (e) => console.error(`QA reports server on port ${QA_PORT}: ${e.code || e}`));
 reportServer.listen(QA_PORT, '127.0.0.1');
