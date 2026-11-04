@@ -2451,7 +2451,7 @@ const PAGE = /* html */ `<!doctype html>
   .lstrip .lseg button.on { background:var(--sel); color:var(--accent); }
   .lstrip button.lpush { background:var(--warn); border-color:var(--warn); color:var(--accentfg); font-weight:600; }
   .lstrip button:disabled { opacity:.45; cursor:default; }
-  .pgrp { padding:6px 10px 3px; color:var(--dim); font-size:calc(11px * var(--fs)); text-transform:uppercase; letter-spacing:.04em; }
+  .pf.pgrp { padding:6px 10px 3px; color:var(--dim); font-size:calc(11px * var(--fs)); text-transform:uppercase; letter-spacing:.04em; }
   .ltag { font:600 calc(10px * var(--fs)) ui-monospace,monospace; padding:0 4px; border-radius:4px; border:1px solid; flex-shrink:0; }
   .ltag.local { color:var(--warn); } .ltag.both { color:var(--merge); }
   .pf.fresh { box-shadow:inset 3px 0 0 var(--warn); }
@@ -4123,6 +4123,9 @@ const prLocal = {};   // plan key -> { sig, d: the server's answer, pr: files vs
 let localCmp = 'pr', localShow = 'all';
 try { localCmp = localStorage.getItem('dash-local-cmp') === 'base' ? 'base' : 'pr'; } catch {}
 try { localShow = localStorage.getItem('dash-local-show') || 'all'; } catch {}
+// the parts of the file list folded away, remembered per browser
+let closedGroups = new Set();
+try { closedGroups = new Set(JSON.parse(localStorage.getItem('dash-closed-groups') || '[]')); } catch {}
 const FRESH_MS = 10000;   // a file the agent changed this recently has a yellow edge
 async function loadLocal(p) {
   if (!p.worktree || !p.pr) return false;
@@ -4415,7 +4418,7 @@ function drawFilesView(p) {
   };
   // with local changes the list has two parts: not pushed yet, then the rest of the PR
   const groups = localShow === 'all' && files.some((f) => f.where) ? [
-    ['Not pushed yet', files.filter((f) => f.where !== 'pr')], ['In PR #' + p.pr.number, files.filter((f) => f.where === 'pr')],
+    ['Not pushed yet', files.filter((f) => f.where !== 'pr'), 'local'], ['In PR #' + p.pr.number, files.filter((f) => f.where === 'pr'), 'pr'],
   ].filter((g) => g[1].length) : [[null, files]];
   const fresh = (f) => f.where && f.where !== 'pr' && Date.now() - (L.fresh[f.path] || 0) < FRESH_MS;
   const LTAG = { local: '<span class="ltag local" title="Changed only in the worktree, not pushed">local</span>',
@@ -4450,9 +4453,11 @@ function drawFilesView(p) {
   };
   const treeHtml = () => {
     tree = '';
-    for (const [label, list] of groups) {
-      if (label) tree += '<div class="pgrp">' + esc(label) + ' · ' + list.length + '</div>';
-      walk(rootOf(list), '', 0);
+    for (const [label, list, grp] of groups) {
+      const shut = closedGroups.has(grp);
+      if (label) tree += '<div class="pf pgrp" tabindex="0" role="button" aria-expanded="' + !shut + '" data-grp="' + grp + '" title="' + (shut ? 'Show' : 'Hide') + ' these files">' +
+        '<span class="chev">' + (shut ? '▸' : '▾') + '</span><span class="nm">' + esc(label) + ' · ' + list.length + '</span></div>';
+      if (!label || !shut) walk(rootOf(list), '', 0);
     }
     return tree;
   };
@@ -4483,8 +4488,9 @@ function drawFilesView(p) {
   const keepTop = diffShown[p.key] !== view ? null : monoEd ? monoEd.getModifiedEditor().getScrollTop()
     : oldBody ? oldBody.scrollTop : null;
   const showMono = mono && monaco && !(wantFull && cur.full === undefined);
+  const rowKey = (r) => r.dataset.file || r.dataset.dir || r.dataset.grp;
   const focusKey = document.activeElement && document.activeElement.closest && document.activeElement.closest('.pf')
-    ? document.activeElement.closest('.pf').dataset.file || document.activeElement.closest('.pf').dataset.dir : null;
+    ? rowKey(document.activeElement.closest('.pf')) : null;
   v.innerHTML = strip + '<div class="prfiles"><div class="ptree" id="ptree">' + tree + '</div>' +
     '<div class="tsplit" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Divider between the file list and the diff" ' +
     'title="Drag to resize the file list. Double-click: default width."></div>' +
@@ -4524,7 +4530,7 @@ function drawFilesView(p) {
   }
   byId('ptree').scrollTop = treeTop;
   // keyboard: ↑/↓ move, Enter opens a file or folds a folder, Space marks it viewed
-  const back = focusKey && [...v.querySelectorAll('.pf')].find((r) => (r.dataset.file || r.dataset.dir) === focusKey);
+  const back = focusKey && [...v.querySelectorAll('.pf')].find((r) => rowKey(r) === focusKey);
   if (back) back.focus({ preventScroll: true });
   byId('ptree').addEventListener('keydown', (e) => {
     const rows = [...byId('ptree').querySelectorAll('.pf')];
@@ -4538,6 +4544,7 @@ function drawFilesView(p) {
     else if (e.key === ' ') {
       e.preventDefault();
       const cb = rows[i].querySelector('input');
+      if (!cb) { rows[i].click(); return; }
       cb.checked = !cb.checked; cb.dispatchEvent(new Event('change'));
     } else if ((e.key === 'f' || e.key === 'F') && rows[i].dataset.file) {
       e.preventDefault(); rows[i].querySelector('.flag').click();
@@ -4588,16 +4595,26 @@ function drawFilesView(p) {
       el.addEventListener('change', () =>
         markSeen(files.filter((x) => x.path.startsWith(el.dataset.seendir + '/')), el.checked));
     });
-    // folding a folder repaints only the tree: the open diff stays as it is
-    scope.querySelectorAll('[data-dir]').forEach((el) => el.addEventListener('click', (e) => {
-      if (e.target.matches('input')) return;
-      const d = el.dataset.dir, pt = byId('ptree'), top = pt.scrollTop;
-      closed.has(d) ? closed.delete(d) : closed.add(d);
+    // folding a folder or a group repaints only the tree: the open diff stays as it is
+    const repaintTree = (attr, key) => {
+      const pt = byId('ptree'), top = pt.scrollTop;
       pt.innerHTML = treeHtml();
       bindRows(pt);
       pt.scrollTop = top;
-      const row = [...pt.querySelectorAll('[data-dir]')].find((r) => r.dataset.dir === d);
+      const row = [...pt.querySelectorAll('[data-' + attr + ']')].find((r) => r.dataset[attr] === key);
       if (row) row.focus({ preventScroll: true });
+    };
+    scope.querySelectorAll('[data-dir]').forEach((el) => el.addEventListener('click', (e) => {
+      if (e.target.matches('input')) return;
+      const d = el.dataset.dir;
+      closed.has(d) ? closed.delete(d) : closed.add(d);
+      repaintTree('dir', d);
+    }));
+    scope.querySelectorAll('[data-grp]').forEach((el) => el.addEventListener('click', () => {
+      const g = el.dataset.grp;
+      closedGroups.has(g) ? closedGroups.delete(g) : closedGroups.add(g);
+      try { localStorage.setItem('dash-closed-groups', JSON.stringify([...closedGroups])); } catch {}
+      repaintTree('grp', g);
     }));
   };
   bindRows(v);
