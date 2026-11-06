@@ -2080,7 +2080,8 @@ const PAGE = /* html */ `<!doctype html>
           border-radius:8px; padding:6px 10px; font-size:calc(13px * var(--fs)); }
   .filters input { flex:1; min-width:0; }
   .filters button { padding:5px 9px; flex-shrink:0; }
-  .items { flex:1; overflow-y:auto; }
+  /* the run strip scrolls with the plan list: a long strip must not squeeze the list out of a small screen */
+  .sidescroll { flex:1; min-height:0; overflow-y:auto; }
   .ghead { padding:12px 13px 5px; font-size:calc(11px * var(--fs)); letter-spacing:.14em; font-weight:800;
            color:var(--accent); text-transform:uppercase;
            border-top:3px solid var(--accent); background:var(--card); }
@@ -2597,8 +2598,10 @@ const PAGE = /* html */ `<!doctype html>
       <input id="q" placeholder="search plans, archived too…">
       <button id="collapseAll" title="collapse or expand all project sections">Collapse all</button>
     </div>
-    <div class="runstrip" id="runstrip"></div>
-    <div class="items" id="side"></div>
+    <div class="sidescroll">
+      <div class="runstrip" id="runstrip"></div>
+      <div class="items" id="side"></div>
+    </div>
     <div class="launchbar">
       <span id="selcount" class="dim">0 queued</span>
       <span class="dim" id="selmodes"></span>
