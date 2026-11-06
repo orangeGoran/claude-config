@@ -2378,7 +2378,12 @@ const PAGE = /* html */ `<!doctype html>
   .prfiles { display:flex; border:1px solid var(--line); border-radius:10px; overflow:hidden;
              height:calc(100vh - 230px); min-height:360px; }
   .ptree { width:360px; min-width:200px; max-width:60%; flex-shrink:0; overflow:auto; border-right:1px solid var(--line); background:var(--bg);
-           padding:4px 0; font-size:calc(12.5px * var(--fs)); }
+           font-size:calc(12.5px * var(--fs)); }
+  #ptrows { padding:4px 0; }
+  .pfsearch { position:sticky; top:0; z-index:1; display:flex; align-items:center; gap:8px; padding:6px 8px; background:var(--bg); border-bottom:1px solid var(--line); }
+  .pfsearch input { flex:1; min-width:0; background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:6px;
+                    padding:4px 8px; font-size:calc(12.5px * var(--fs)); }
+  .pfsearch span { color:var(--dim); font-size:calc(11px * var(--fs)); white-space:nowrap; }
   .pf { display:flex; align-items:center; gap:6px; padding:2px 10px 2px calc(10px + var(--d) * 14px);
         cursor:pointer; white-space:nowrap; }
   .pf:hover { background:var(--hover); } .pf.on { background:var(--sel); }
@@ -3265,7 +3270,7 @@ async function renderDetail(loadPlan) {
 }
 
 // --- pull request tabs: the PR on the plan's branch (auto/<slug>), its text and its diff ---
-const prTab = {}, prData = {}, prDiff = {}, prFile = {}, prClosedDirs = {}, prNotes = {};
+const prTab = {}, prData = {}, prDiff = {}, prFile = {}, prClosedDirs = {}, prFileQ = {}, prNotes = {};
 const moreOpen = new Set(), planOpen = new Set();   // plan tab: what the user unfolded, kept across repaints
 // a run report's link to its own PR opens the PR tab here; any other link opens on the web
 function openRunLink(p, url) {
@@ -4440,6 +4445,9 @@ function drawFilesView(p) {
   // folder tree like VS Code's: folders first, a folder with one subfolder and no files
   // shares its row ("domains/ai"), and a folder's box ticks every file under it
   const closed = prClosedDirs[p.key] = prClosedDirs[p.key] || new Set();
+  // the search box: every word typed must be somewhere in the file's path
+  const fileQ = () => (prFileQ[p.key] || '').trim().toLowerCase();
+  const fileShown = (f) => fileQ().split(' ').filter(Boolean).every((w) => f.path.toLowerCase().includes(w));
   const rootOf = (list) => {
     const root = { dirs: {}, files: [] };
     for (const f of list) {
@@ -4468,11 +4476,11 @@ function drawFilesView(p) {
       }
       const full = prefix + name, all = under(d), nSeen = all.filter((f) => isViewed(p, f)).length;
       tree += '<div class="pf" tabindex="0" style="--d:' + depth + '" data-dir="' + escA(full) + '">' +
-        '<span class="chev">' + (closed.has(full) ? '▸' : '▾') + '</span>' +
+        '<span class="chev">' + (!fileQ() && closed.has(full) ? '▸' : '▾') + '</span>' +
         '<input type="checkbox" tabindex="-1" aria-label="mark the folder as viewed" data-seendir="' + escA(full) + '"' + (nSeen === all.length ? ' checked' : '') +
         (nSeen && nSeen < all.length ? ' data-some="1"' : '') + ' title="mark everything in this folder as viewed">' +
         '<span class="nm">' + esc(name) + '</span></div>';
-      if (!closed.has(full)) walk(d, full + '/', depth + 1);
+      if (fileQ() || !closed.has(full)) walk(d, full + '/', depth + 1);
     }
     for (const f of node.files.slice().sort((a, b) => a.path.localeCompare(b.path))) {
       const seen = isViewed(p, f);
@@ -4488,14 +4496,16 @@ function drawFilesView(p) {
   const treeHtml = () => {
     tree = '';
     for (const [label, list, grp] of groups) {
-      const shut = closedGroups.has(grp);
+      const hits = list.filter(fileShown), shut = !fileQ() && closedGroups.has(grp);
+      if (!hits.length) continue;
       if (label) tree += '<div class="pf pgrp" tabindex="0" role="button" aria-expanded="' + !shut + '" data-grp="' + grp + '" title="' + (shut ? 'Show' : 'Hide') + ' these files">' +
-        '<span class="chev">' + (shut ? '▸' : '▾') + '</span><span class="nm">' + esc(label) + ' · ' + list.length + '</span></div>';
-      if (!label || !shut) walk(rootOf(list), '', 0);
+        '<span class="chev">' + (shut ? '▸' : '▾') + '</span><span class="nm">' + esc(label) + ' · ' + hits.length + '</span></div>';
+      if (!label || !shut) walk(rootOf(hits), '', 0);
     }
-    return tree;
+    return tree || '<div class="dim" style="padding:8px 12px">No file matches this search.</div>';
   };
   treeHtml();
+  const countText = () => fileQ() ? files.filter(fileShown).length + ' of ' + files.length : '';
   const nSeen = files.filter((f) => isViewed(p, f)).length;
   // VS Code's diff view (Monaco) when it loads; our own table is the fallback (offline, binary)
   const mono = !monacoFailed && !cur.binary && cur.hunks.length > 0 && !(cur.full === null && cur.fullErr);
@@ -4525,7 +4535,12 @@ function drawFilesView(p) {
   const rowKey = (r) => r.dataset.file || r.dataset.dir || r.dataset.grp;
   const focusKey = document.activeElement && document.activeElement.closest && document.activeElement.closest('.pf')
     ? rowKey(document.activeElement.closest('.pf')) : null;
-  v.innerHTML = strip + '<div class="prfiles"><div class="ptree" id="ptree">' + tree + '</div>' +
+  const caret = document.activeElement && document.activeElement.id === 'pfq' ? document.activeElement.selectionStart : null;
+  v.innerHTML = strip + '<div class="prfiles"><div class="ptree" id="ptree">' +
+    '<div class="pfsearch"><input id="pfq" autocomplete="off" spellcheck="false" placeholder="search files…" aria-label="Search the changed files" ' +
+      'title="Type parts of a file name or folder. Esc clears." value="' + escA(prFileQ[p.key] || '') + '">' +
+      '<span id="pfcount" role="status">' + countText() + '</span></div>' +
+    '<div id="ptrows">' + tree + '</div></div>' +
     '<div class="tsplit" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Divider between the file list and the diff" ' +
     'title="Drag to resize the file list. Double-click: default width."></div>' +
     '<div class="pdiff"><div class="pdhead"><span class="pdpath" title="' + escA(cur.path) + '">' + esc(cur.path) + '</span>' +
@@ -4566,6 +4581,34 @@ function drawFilesView(p) {
   // keyboard: ↑/↓ move, Enter opens a file or folds a folder, Space marks it viewed
   const back = focusKey && [...v.querySelectorAll('.pf')].find((r) => rowKey(r) === focusKey);
   if (back) back.focus({ preventScroll: true });
+  const search = byId('pfq');
+  // a repaint (a new local change, a file opened) must not take the box away from the typing
+  if (caret != null) { search.focus({ preventScroll: true }); search.setSelectionRange(caret, caret); }
+  // searching repaints only the tree: the open diff stays as it is
+  const searchFiles = (text) => {
+    prFileQ[p.key] = text;
+    const rowsBox = byId('ptrows');
+    rowsBox.innerHTML = treeHtml();
+    bindRows(rowsBox);
+    byId('pfcount').textContent = countText();
+    byId('ptree').scrollTop = 0;
+  };
+  search.addEventListener('input', () => searchFiles(search.value));
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && search.value) {   // only a second Esc leaves Files changed
+      e.stopPropagation();
+      search.value = '';
+      searchFiles('');
+    } else if (e.key === 'Enter') {
+      const first = byId('ptrows').querySelector('[data-file]');
+      if (first) first.click();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      e.stopPropagation();   // the tree's own handler would move one row further
+      const first = byId('ptrows').querySelector('.pf');
+      if (first) first.focus();
+    }
+  });
   byId('ptree').addEventListener('keydown', (e) => {
     const rows = [...byId('ptree').querySelectorAll('.pf')];
     const i = rows.indexOf(document.activeElement);
@@ -4574,6 +4617,7 @@ function drawFilesView(p) {
       e.preventDefault();
       const r = rows[i + (e.key === 'ArrowDown' ? 1 : -1)];
       if (r) r.focus();
+      else if (e.key === 'ArrowUp') byId('pfq').focus();
     } else if (e.key === 'Enter') { e.preventDefault(); rows[i].click(); }
     else if (e.key === ' ') {
       e.preventDefault();
@@ -4606,7 +4650,7 @@ function drawFilesView(p) {
       if (f) cb.checked = isViewed(p, f);
     });
     v.querySelectorAll('[data-seendir]').forEach((cb) => {
-      const all = files.filter((x) => x.path.startsWith(cb.dataset.seendir + '/')), n = all.filter((x) => isViewed(p, x)).length;
+      const all = files.filter((x) => x.path.startsWith(cb.dataset.seendir + '/') && fileShown(x)), n = all.filter((x) => isViewed(p, x)).length;
       cb.checked = n === all.length; cb.indeterminate = n > 0 && n < all.length;
     });
     if (byId('rseen')) byId('rseen').textContent = marksText(p, files);
@@ -4627,24 +4671,26 @@ function drawFilesView(p) {
     scope.querySelectorAll('[data-seendir]').forEach((el) => {
       el.indeterminate = !!el.dataset.some;
       el.addEventListener('change', () =>
-        markSeen(files.filter((x) => x.path.startsWith(el.dataset.seendir + '/')), el.checked));
+        markSeen(files.filter((x) => x.path.startsWith(el.dataset.seendir + '/') && fileShown(x)), el.checked));
     });
     // folding a folder or a group repaints only the tree: the open diff stays as it is
     const repaintTree = (attr, key) => {
       const pt = byId('ptree'), top = pt.scrollTop;
-      pt.innerHTML = treeHtml();
-      bindRows(pt);
+      const rowsBox = byId('ptrows');
+      rowsBox.innerHTML = treeHtml();
+      bindRows(rowsBox);
       pt.scrollTop = top;
       const row = [...pt.querySelectorAll('[data-' + attr + ']')].find((r) => r.dataset[attr] === key);
       if (row) row.focus({ preventScroll: true });
     };
     scope.querySelectorAll('[data-dir]').forEach((el) => el.addEventListener('click', (e) => {
-      if (e.target.matches('input')) return;
+      if (e.target.matches('input') || fileQ()) return;   // a search keeps every folder open
       const d = el.dataset.dir;
       closed.has(d) ? closed.delete(d) : closed.add(d);
       repaintTree('dir', d);
     }));
     scope.querySelectorAll('[data-grp]').forEach((el) => el.addEventListener('click', () => {
+      if (fileQ()) return;
       const g = el.dataset.grp;
       closedGroups.has(g) ? closedGroups.delete(g) : closedGroups.add(g);
       try { localStorage.setItem('dash-closed-groups', JSON.stringify([...closedGroups])); } catch {}
