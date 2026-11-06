@@ -2097,7 +2097,6 @@ const PAGE = /* html */ `<!doctype html>
   .item { padding:10px 13px; border-bottom:1px solid var(--line); cursor:pointer;
           display:flex; gap:10px; }
   .item:hover { background:var(--hover); }
-  .item.sel { background:var(--sel); }
   .item input { transform:scale(1.15); flex-shrink:0; margin-top:3px; }
   .item .t { flex:1; min-width:0; }
   .item .name { font:600 calc(12px * var(--fs))/1.4 ui-monospace,monospace; word-break:break-all; }
@@ -2121,6 +2120,8 @@ const PAGE = /* html */ `<!doctype html>
   .item.live { border-left:3px solid var(--run); background:color-mix(in srgb, var(--run) 8%, transparent); }
   .item.bad { border-left:3px solid var(--bad); }
   .item.ok { border-left:3px solid var(--ok); background:color-mix(in srgb, var(--ok) 6%, transparent); }
+  /* the open plan; after the status rules, whose backgrounds would hide it */
+  .item.sel, .item.sel:hover { background:var(--sel); box-shadow:inset 0 0 0 2px var(--accent); }
   .runstrip { padding:8px 12px 10px; border-bottom:2px solid var(--line); display:none; }
   .runstrip.on { display:block; }
   .runstrip .cap { font-size:calc(10px * var(--fs)); letter-spacing:.12em; color:var(--run); font-weight:700; margin-bottom:4px; }
@@ -2143,6 +2144,7 @@ const PAGE = /* html */ `<!doctype html>
   .runstrip .cap:first-child { margin-top:0; }
   .runstrip .rp.bp { border-color:var(--bad); background:color-mix(in srgb, var(--bad) 10%, transparent); }
   .runstrip .rp.bp:hover { background:color-mix(in srgb, var(--bad) 18%, transparent); }
+  .runstrip .rp.sel, .runstrip .rp.sel:hover { background:var(--sel); border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
   .hdok { font-size:calc(12px * var(--fs)); color:var(--ok); border:1px solid var(--ok); border-radius:99px;
           padding:2px 11px; font-weight:600; }
   .hdrun { font-size:calc(12px * var(--fs)); color:var(--run); border:1px solid var(--run); border-radius:99px;
@@ -2821,7 +2823,7 @@ function archivedMatches() {
 }
 let lastItemClick = {};
 const itemHtml = (p, withProject) => \`
-    <div class="item \${selected === p.key ? 'sel' : ''} \${p.archived ? 'arch' : ''} \${dotClass(p)}" data-key="\${p.key}">
+    <div class="item \${selected === p.key ? 'sel' : ''} \${p.archived ? 'arch' : ''} \${dotClass(p)}" data-key="\${p.key}"\${selected === p.key ? ' aria-current="true"' : ''}>
       <input type="checkbox" aria-label="queue this plan" data-check="\${p.key}" \${picked.has(p.key) ? 'checked' : ''}
              \${p.live || starting(p) || p.worktree || p.archived ? 'disabled' : ''}>
       <div class="t">
@@ -2909,8 +2911,10 @@ function renderList() {
   if (ready.length) sh += '<div class="cap okc">✓ WAITING ON YOU — ' + ready.length + '</div>' +
     ready.map((p) => doneRow(p, 'okp', 'ok')).join('');
   rs.innerHTML = sh;
-  rs.querySelectorAll('[data-go]').forEach((el) =>
-    el.addEventListener('click', () => { selected = el.dataset.go; renderList(); renderDetail(true); }));
+  rs.querySelectorAll('[data-go]').forEach((el) => {
+    if (el.dataset.go === selected) { el.classList.add('sel'); el.setAttribute('aria-current', 'true'); }
+    el.addEventListener('click', () => { selected = el.dataset.go; renderList(); renderDetail(true); });
+  });
   rs.querySelectorAll('[data-why]').forEach((el) =>
     el.addEventListener('click', (e) => { e.stopPropagation(); showLaunchError(find(el.dataset.why)); }));
   rs.querySelectorAll('[data-log]').forEach((el) =>
