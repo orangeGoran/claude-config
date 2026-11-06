@@ -2425,18 +2425,32 @@ const PAGE = /* html */ `<!doctype html>
   body.dragging { cursor:col-resize; user-select:none; }
   .dtab tr.hk td { background:var(--thbg); color:var(--dim); padding:3px 8px; }
   .dtab td.a { background:var(--addbg); } .dtab td.d { background:var(--delbg); } .dtab td.e { background:var(--codebg); }
-  /* review mode: the PR tabs take the whole window; one thin bar holds the plan name, tabs and next step */
+  /* review mode: the PR tabs take the whole window; one thin toolbar: back and title, the tabs in the middle, the actions on the right */
   body.review > header, body.review aside { display:none; }
   body.review #detail { padding:0; display:flex; flex-direction:column; }
-  .rbar { position:sticky; top:0; z-index:3; display:flex; align-items:center; gap:12px; padding:7px 16px;
-          background:var(--panel); border-bottom:1px solid var(--line); flex-shrink:0; }
-  .rbar .rname { font:600 calc(13px * var(--fs)) ui-monospace,monospace; min-width:0; overflow:hidden;
-                 text-overflow:ellipsis; white-space:nowrap; }
-  .rbar .prtabs { margin:0; border:0; flex-shrink:0; }
-  .rbar .prtabs button { padding:5px 11px; border-radius:7px; border-bottom:0; }
+  .rbar { position:sticky; top:0; z-index:3; display:grid; grid-template-columns:minmax(0,1fr) auto minmax(max-content,1fr);
+          align-items:center; gap:16px; padding:6px 12px; background:var(--panel); border-bottom:1px solid var(--line); flex-shrink:0; }
+  .rbar .rleft { display:flex; align-items:center; gap:4px; min-width:0; }
+  .rbar .rright { display:flex; align-items:center; justify-content:flex-end; gap:2px; }
+  .rbar .rname { font-weight:600; font-size:calc(13px * var(--fs)); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .rbar #rback { color:var(--accent); flex-shrink:0; white-space:nowrap; }
+  .rbar .prtabs { margin:0; border:0; gap:2px; padding:2px; border-radius:8px; background:var(--input); }
+  .rbar .prtabs button { padding:3px 12px; border:0; border-radius:6px; white-space:nowrap; }
+  .rbar .prtabs button:hover { color:var(--fg); }
   .rbar .prtabs button.on { background:var(--sel); }
-  .rbar .seen { font:calc(12px * var(--fs)) ui-monospace,monospace; color:var(--dim); white-space:nowrap; }
-  .rbar .btns { margin:0; flex-wrap:nowrap; }
+  .rbar .prtabs .n { font:inherit; background:none; padding:0; margin-left:2px; color:var(--dim); }
+  .rbar .seen { font-size:calc(12px * var(--fs)); font-variant-numeric:tabular-nums; color:var(--dim); white-space:nowrap; margin-right:8px; }
+  .rbar .btns { margin:0; flex-wrap:nowrap; gap:2px; }
+  .rbar #ract button.merge, .rbar #ract button.primary { padding:4px 12px; margin-left:6px; }
+  .rbar #ract .chip { margin-right:6px; }
+  /* quiet actions: no box until the pointer is on them, so the one filled button is the next step */
+  .rbar #rback, .rbar .chatbtn, #ract .ghbtn, #ract .rfbtn { background:none; border-color:transparent; }
+  .rbar #rback, .rbar .chatbtn, .rbar #ract .ghbtn, .rbar #ract .rfbtn { padding:4px 10px; border-radius:6px; }
+  .rbar #rback:hover, .rbar .chatbtn:hover, #ract .ghbtn:hover, #ract .rfbtn:hover { background:var(--hover); border-color:transparent; }
+  #ract .rfbtn { font-size:calc(16px * var(--fs)); }
+  .rbar .chatbtn { margin-left:0; }
+  .rbar .chatbtn.on { background:var(--sel); border-color:transparent; color:var(--fg); }
+  .rbar .chatbtn .n { border-radius:10px; padding:0 5px; margin-left:4px; font-size:calc(11px * var(--fs)); }
   #prview.pvpr { max-width:calc(1000px * var(--fs)); }
   .prtabsrow { display:flex; align-items:center; gap:12px; border-bottom:1px solid var(--line); margin:12px 0 16px; }
   .prtabsrow .prtabs { flex:1; margin:0; border:0; }
@@ -2548,7 +2562,6 @@ const PAGE = /* html */ `<!doctype html>
   .cmi b { font-family:ui-monospace,monospace; font-weight:600; }
   .cmi .dim { font-size:calc(11.5px * var(--fs)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .cmi.on, .cmi:hover { background:var(--sel); }
-  .rbar kbd { font:calc(10px * var(--fs)) ui-monospace,monospace; border:1px solid var(--line); border-radius:4px; padding:0 4px; margin-left:4px; color:var(--dim); }
   #ract { align-items:center; }
   /* busy: a thin moving bar along the top while the page waits for GitHub or the server */
   body.busy::before { content:''; position:fixed; top:0; left:0; right:0; height:3px; z-index:50; pointer-events:none;
@@ -3285,19 +3298,20 @@ const saveRecheck = () => { try { localStorage.setItem('dash-pr-recheck', JSON.s
 const isRecheck = (p, f) => !!(prRecheck[p.pr.url] || {})[f.path];
 const marksText = (p, files) => {
   const k = files.filter((x) => isRecheck(p, x)).length;
-  return files.filter((x) => isViewed(p, x)).length + ' / ' + files.length + ' viewed' + (k ? ' · ⚑ ' + k + ' to recheck' : '');
+  return files.filter((x) => isViewed(p, x)).length + ' of ' + files.length + ' viewed' + (k ? ' · ⚑ ' + k + ' to recheck' : '');
 };
 let diffSplit = true, diffFull = true;
 try { diffSplit = localStorage.getItem('dash-diff-split') !== '0'; } catch {}
 try { diffFull = localStorage.getItem('dash-diff-full') !== '0'; } catch {}
 
-const prTabs = (p, tab) => !p.pr && !hasChat(p) ? '' : '<div class="prtabs">' + [
-  ['plan', 'Plan'],
+// inBar: the review toolbar, where ‹ Plan is the way back, the viewed line has the file count and Chat sits with the actions
+const prTabs = (p, tab, inBar) => !p.pr && !hasChat(p) ? '' : '<div class="prtabs">' + [
+  !inBar && ['plan', 'Plan'],
   p.pr && ['pr', 'Pull request <span class="n">#' + p.pr.number + '</span>'],
-  p.pr && ['files', 'Files changed' + ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
-    prData[p.key] && prData[p.key].changedFiles != null ? prData[p.key].changedFiles : p.pr.changedFiles)],
+  p.pr && ['files', 'Files changed' + (inBar ? '' : ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
+    prData[p.key] && prData[p.key].changedFiles != null ? prData[p.key].changedFiles : p.pr.changedFiles))],
 ].filter(Boolean).map(([id, label]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '">' + label + '</button>').join('') +
-  chatBtn(p) + '</div>';
+  (inBar ? '' : chatBtn(p)) + '</div>';
 function bindPrTabs(p) {
   byId('detail').querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => {
     prTab[p.key] = el.dataset.tab; lastPrDraw = null; renderDetail(false);
@@ -3337,7 +3351,7 @@ function chatHistPush(text) {
   try { localStorage.setItem('dash-chat-hist', JSON.stringify(chatHist)); } catch {}
 }
 const chatBtn = (p) => hasChat(p) ? '<button class="chatbtn' + (chatOn ? ' on' : '') + '" data-chat="1" aria-pressed="' + chatOn +
-  '" title="Chat with the agent that ran this plan">💬 Chat' + (p.chatWaits ? ' <span class="n">!</span>' : '') + '</button>' : '';
+  '" title="Chat with the agent that ran this plan">Chat' + (p.chatWaits ? ' <span class="n">!</span>' : '') + '</button>' : '';
 function toggleChat(on) {
   chatOn = on == null ? !chatOn : on;
   try { localStorage.setItem('dash-chat-open', chatOn ? '1' : '0'); } catch {}
@@ -3777,10 +3791,11 @@ async function renderPrTab(p, tab, force) {
   const review = tab === 'files';
   document.body.classList.toggle('review', review);
   if (!again) byId('detail').innerHTML = (review ? \`
-    <div class="rbar"><button id="rback" title="back to the plan and the plan list (Esc)">‹ Plan <kbd>Esc</kbd></button>
-      <span class="rname" title="\${escA(p.client + ' / ' + p.project + ' / ' + p.file)}">\${esc(p.slug)}</span>
-      \${prTabs(p, tab)}<span class="seen" id="rseen"></span><span style="flex:1"></span>
-      <span class="btns" id="ract"></span></div>\` : \`
+    <div class="rbar">
+      <div class="rleft"><button id="rback" title="Back to the plan and the plan list (Esc)">‹ Plan</button>
+        <span class="rname" title="\${escA((p.title || p.slug) + '\\n' + p.client + ' / ' + p.project + ' / ' + p.file)}">\${inline(p.title || p.slug)}</span></div>
+      \${prTabs(p, tab, true)}
+      <div class="rright"><span class="seen" id="rseen"></span>\${chatBtn(p)}<span class="btns" id="ract"></span></div></div>\` : \`
     <div class="crumb">\${esc(p.client)} / 📁 \${esc(p.project)}</div>
     <h2 class="fname">\${p.file}</h2>
     <div class="subtitle">\${inline(p.title)}</div>
@@ -3805,15 +3820,15 @@ async function renderPrTab(p, tab, force) {
 function drawBarAction(p, tab) {
   const d = prData[p.key], R = byId('ract');
   if (!R || !d || d.error) return;
-  // the PR's state, then GitHub, then the one next step
-  R.innerHTML = prChip(d) + '<a class="ghbtn" href="' + escA(d.url) + '" target="_blank" rel="noopener" ' +
+  // the PR's state when it is not simply open, then GitHub, then the one next step
+  R.innerHTML = (d.state === 'OPEN' && !d.isDraft ? '' : prChip(d)) + '<a class="ghbtn" href="' + escA(d.url) + '" target="_blank" rel="noopener" ' +
     'title="Open the PR on GitHub">↗ GitHub</a>';
   // the PR list is read once a minute; after a push this reads it, the PR and the diff now
   const rf = document.createElement('button');
   rf.textContent = '⟳'; rf.className = 'rfbtn'; rf.title = 'Reload the PR from GitHub, for example after a push';
   rf.setAttribute('aria-label', 'Reload the PR from GitHub');
   rf.addEventListener('click', async () => {
-    rf.disabled = true; rf.textContent = '⟳ …'; busy(true);
+    rf.disabled = true; busy(true);
     await fetch('/api/pr-refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project: p.project, slug: p.slug }) }).catch(() => {});
     while (ticking) await new Promise((r) => setTimeout(r, 100));
