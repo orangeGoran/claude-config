@@ -2523,7 +2523,6 @@ const PAGE = /* html */ `<!doctype html>
   .amsg { padding:8px 12px; border-radius:10px; line-height:1.55; overflow-wrap:anywhere; }
   .amsg.you { max-width:92%; background:color-mix(in srgb, var(--accent) 16%, var(--card)); white-space:pre-wrap; }
   .amsg.agent { background:var(--card); border:1px solid var(--line); }
-  .amsg.agent.live { white-space:pre-wrap; }
   .amsg.agent > :first-child { margin-top:0; } .amsg.agent > :last-child { margin-bottom:0; }
   .ctool pre, .cnote pre, .cwait pre { white-space:pre-wrap; overflow-wrap:anywhere; }
   /* code in an answer keeps its lines (diagrams, tables) and scrolls sideways, as in VS Code */
@@ -2811,6 +2810,19 @@ function md(src, breaks) {
   }
   flushPara(); flushList(); flushTbl();
   return out.join('\\n').replace(/\\u0001(\\d+)\\u0001/g, (m, i) => fences[+i]);
+}
+// an answer still arriving: finish the marks it left open, so # or ** never show on the way
+function mdLive(src) {
+  const fence = BT + BT + BT;
+  if ((src.split(fence).length - 1) % 2) return md(src + '\\n' + fence);
+  const cut = src.lastIndexOf('\\n') + 1;
+  let last = src.slice(cut);
+  // only a mark so far: its text has not come yet
+  if (new RegExp('^\\\\s*(#{1,4}|-{1,2}|\\\\*{1,2}|>|\\\\d+[.)]?|' + BT + '{1,2})\\\\s*$').test(last)) return md(src.slice(0, cut));
+  if ((last.split(BT).length - 1) % 2) last += BT;
+  const stars = () => (last.replace(new RegExp(BT + '[^' + BT + ']*' + BT, 'g'), '').split('**').length - 1) % 2;
+  if (stars()) { last = last.replace(/\\*+$/, ''); if (stars()) last += '**'; }
+  return md(src.slice(0, cut) + last);
 }
 
 // --- rendering ---
@@ -3591,7 +3603,7 @@ function paintLive() {
   const c = ch, st = c.st, V = byId('clive');
   if (!V) return;
   const L = byId('clog'), atEnd = L.scrollHeight - L.scrollTop - L.clientHeight < 80;
-  V.innerHTML = (st.partial ? '<div class="amsg agent live">' + esc(st.partial) + '</div>' : '') +
+  V.innerHTML = (st.partial ? '<div class="amsg agent mdc live">' + mdLive(st.partial) + '</div>' : '') +
     c.sent.map((s) => chatItemHtml({ k: 'you', i: '', text: s.text, sel: s.sel }, c)
       .replace('>', '><div class="ctime">' + (!s.ok ? 'sending…' : s.queued ? 'queued: the agent reads it after this step' : 'sent') + '</div>')).join('') +
     (st.busy && !(st.waits || []).length ? '<div class="aend cwork">working…</div>' : '') +

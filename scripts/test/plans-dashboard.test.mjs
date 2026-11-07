@@ -189,6 +189,27 @@ test('serves plan markdown and rejects slugs that are not plain names', async ()
   assert.equal((await get('/api/plan?project=nope&slug=demo-plan')).status, 400);
 });
 
+test('an answer still arriving shows as Markdown, with no raw marks', async () => {
+  const page = await (await get('/')).text();
+  const line = (start) => page.slice(page.indexOf(start), page.indexOf('\n', page.indexOf(start)));
+  const render = new Function(line('const BT =') + '\n' + line('const esc =') + '\nconst CUR_ISSUES = "";\n' +
+    page.slice(page.indexOf('function inline('), page.indexOf('// --- rendering ---')) + 'return mdLive;')();
+  const BT = '`', FENCE = BT.repeat(3);
+  for (const [partial, html] of [
+    ['## Title\nSome text', '<h2>Title</h2>\n<p>Some text</p>'],
+    ['Done\n##', '<p>Done</p>'],
+    ['Done\n- ', '<p>Done</p>'],
+    ['A **bold wor', '<p>A <b>bold wor</b></p>'],
+    ['A **bold wor*', '<p>A <b>bold wor</b></p>'],
+    ['A **', '<p>A</p>'],
+    ['Run ' + BT + 'npm te', '<p>Run <code>npm te</code></p>'],
+    ['Say ' + BT + '**' + BT + ' now', '<p>Say <code>**</code> now</p>'],
+    [FENCE + 'js\nconst a = 1', '<pre><code>const a = 1\n</code></pre>'],
+    ['| a | b |\n|---|-', '<table><tr><th>a</th><th>b</th></tr></table>'],
+    ['**done** and ' + BT + 'ok' + BT, '<p><b>done</b> and <code>ok</code></p>'],
+  ]) assert.equal(render(partial).trim(), html, partial);
+});
+
 test('stores status and tags', async () => {
   assert.deepEqual(await post('/api/meta', { project: 'demo', slug: 'demo-plan', status: 'in review', tags: ['api', 'api'] }), { ok: true });
   const p = await onlyPlan();
