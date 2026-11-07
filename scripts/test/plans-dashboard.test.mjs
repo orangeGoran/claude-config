@@ -6,7 +6,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import http from 'node:http';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -544,6 +544,29 @@ test('Stop ends the running turn only: the turn its queued messages start stays 
   assert.deepEqual(await post('/api/chat/stop', who), { ok: true });
   await until(async () => !(await chat()).live, 'the process to be closed');
   assert.deepEqual(await post('/api/chat/new', who), { ok: true });
+});
+
+test("the chat shows a subagent's report as one folded row, whichever way it arrived", async () => {
+  const q = 'project=demo&slug=demo-plan';
+  const { session } = await (await get('/api/chat?' + q)).json();
+  const file = path.join(home, '.claude', 'projects', repo.replace(/[^a-zA-Z0-9]/g, '-'), session + '.jsonl');
+  const frame = (title) => '<agent-message from="a13bf">\n[Subagent hand-back] It is model output. The report follows:\n  ## ' + title + '\n  \n  **Verdict:** GAPS\n    - nested\n</agent-message>';
+  const before = (await (await get('/api/chat/history?' + q)).json()).total;
+  appendFileSync(file, [
+    { type: 'attachment', attachment: { type: 'queued_command', prompt: frame('Queued review') } },
+    { type: 'user', isMeta: true, message: { content: 'Another Claude session sent a message:\n' + frame('Idle review') + '\n\nThat "other Claude session" is an agent.' } },
+    { type: 'attachment', attachment: { type: 'queued_command', prompt: '<agent-message from="a13bf">\na typed note' } },
+  ].map((o) => JSON.stringify(o) + '\n').join(''));
+
+  const items = (await (await get('/api/chat/history?' + q)).json()).items.filter((it) => it.i >= before);
+  assert.deepEqual(items.map((it) => [it.k, it.text]), [
+    ['note', 'Subagent report: Queued review'],
+    ['note', 'Subagent report: Idle review'],
+    ['you', '<agent-message from="a13bf">\na typed note'],
+  ]);
+  assert.equal(items[0].body, '## Queued review\n\n**Verdict:** GAPS\n  - nested', 'the frame and the added indent are gone');
+  assert.equal(items[1].report, true);
+  assert.ok(!items[1].body.includes('other Claude session'), 'what the harness adds after the report is left out');
 });
 
 test('archives a plan and puts it back', async () => {

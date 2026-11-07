@@ -1361,6 +1361,16 @@ const selLabel = (t, cwd) => {
   return name + (m[1] ? ':' + m[1] + (m[2] !== m[1] ? '-' + m[2] : '') : '') + (t.includes('before this pull request') ? ' (before)' : '');
 };
 const tagText = (s, tag) => ((s.match(new RegExp('<' + tag + '>([\\s\\S]*?)</' + tag + '>')) || [])[1] || '').trim();
+// A subagent's report reaches the session as a message: queued during a turn, or as a meta line
+// between turns. The frame is for the model, and the harness indents each line of the report.
+const HAND_BACK_RE = /^(?:Another Claude session sent a message:\n)?<agent-message from="[^"]*">\n\[Subagent hand-back\][^\n]*\n([\s\S]*?)\n<\/agent-message>/;
+const handBackItem = (s) => {
+  const m = HAND_BACK_RE.exec(s);
+  if (!m) return null;
+  const body = m[1].replace(/^ {2}/gm, '');
+  const title = (body.split('\n').find((l) => l.trim()) || '').replace(/^[#\s]+/, '').replace(/\*\*/g, '');
+  return { k: 'note', text: 'Subagent report' + (title ? ': ' + title : ''), body, report: true };
+};
 const userItems = (t, j, cwd) => {
   const c = j.message?.content;
   const blocks = typeof c === 'string' ? [{ type: 'text', text: c }] : Array.isArray(c) ? c : [];
@@ -1377,6 +1387,8 @@ const userItems = (t, j, cwd) => {
     if (s.startsWith('<ide_selection>')) { const l = selLabel(s, cwd); if (l) sel.push(l); continue; }
     if (s.startsWith('<ide_opened_file>') || s.includes('<local-command-caveat>')) continue;
     if (j.isCompactSummary) { t.items.push({ k: 'note', text: 'The earlier conversation was compacted', body: clip(s, 6000) }); continue; }
+    const report = handBackItem(s);
+    if (report) { t.items.push(report); continue; }
     if (j.isMeta) {
       const m = /^Base directory for this skill: (.*)/.exec(s);
       if (m) t.items.push({ k: 'note', text: 'Skill loaded: ' + m[1].slice(m[1].lastIndexOf('/') + 1), body: clip(s, 6000) });
@@ -2626,6 +2638,7 @@ const PAGE = /* html */ `<!doctype html>
   .ctool pre.out { border-style:dashed; }
   .cnote .mdc { font-family:-apple-system,"Segoe UI",sans-serif; padding:4px 8px; }
   .cnote.err, .cnote.err summary { color:var(--bad); }
+  .cnote.report summary, .cnote.report .mdc { color:var(--fg); }
   .logitems { display:flex; flex-direction:column; gap:6px; white-space:normal; font:calc(13px * var(--fs))/1.55 -apple-system,system-ui,sans-serif; color:var(--fg); }
   .logitems .cgroup > summary b { color:var(--dim); }
   .logitems .cgroup[open] { display:flex; flex-direction:column; gap:4px; padding-bottom:4px; }
@@ -3689,6 +3702,7 @@ function chatItemHtml(it, c) {
     (/^(Edit|MultiEdit|Write|NotebookEdit)$/.test(it.name) && it.sum && it.sum[0] !== '/' && c.p.pr
       ? '<button class="cjump" data-jump="' + escA(it.sum) + '" title="Open this file in Files changed">view in diff</button>' : '') + '</summary>' +
     (it.input ? '<pre>' + esc(it.input) + '</pre>' : '') + (it.out ? '<pre class="out">' + esc(it.out) + '</pre>' : '') + '</details>';
+  if (it.report) return '<details class="cnote report" data-i="' + it.i + '"' + open + '><summary>' + esc(it.text) + '</summary><div class="mdc">' + md(it.body) + '</div></details>';
   const err = it.err ? ' err' : '';
   return it.body ? '<details class="cnote' + err + '" data-i="' + it.i + '"' + open + '><summary>' + esc(it.text) + '</summary><pre>' + esc(it.body) + '</pre></details>'
     : '<div class="cnote' + err + '" data-i="' + it.i + '">' + esc(it.text) + '</div>';
