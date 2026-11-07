@@ -890,6 +890,22 @@ test('merge runs gh pr merge on the reviewed commit, deletes the remote branch, 
   assert.ok(existsSync(path.join(repo, 'later.txt')), 'the main checkout was pulled');
   assert.match((await post('/api/pull', { project: 'demo' })).output, /already up to date/);
   assert.equal((await post('/api/pull', { project: 'nope' })).error, 'bad project');
+
+  // a local commit that GitHub does not have: the merge still counts, the pull refuses and says what to do
+  writeFileSync(path.join(repo, 'local.txt'), 'l');
+  git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'local plan commit');
+  writeFileSync(path.join(other, 'remote.txt'), 'r');
+  git(other, 'add', '-A'); git(other, 'commit', '-qm', 'remote'); git(other, 'push', '-q');
+  const localHead = git(repo, 'rev-parse', 'HEAD');
+  const r3 = await act({ action: 'merge', method: 'merge', head });
+  assert.equal(r3.ok, true, JSON.stringify(r3));
+  assert.match(r3.notes.join(' '), /^Not pulled: git pull --ff-only failed in .* Pull by hand\.$/);
+  assert.doesNotMatch(r3.notes.join(' '), /hint:|origin\/main/, 'only the reason, no hints or fetch progress');
+  const refused = await post('/api/pull', { project: 'demo' });
+  assert.equal(refused.ok, false, JSON.stringify(refused));
+  assert.match(refused.output, /Pull by hand\.$/);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), localHead, 'a refused pull leaves the checkout alone');
+  git(repo, 'fetch', '-q'); git(repo, 'reset', '-q', '--hard', 'origin/main');
 });
 
 test('serves browser-usability-test reports read-only on their own port, with a list', async () => {

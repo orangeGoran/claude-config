@@ -1084,9 +1084,13 @@ const pullRoot = async (proj, base) => {
   const br = await gitIn(proj.root, ['rev-parse', '--abbrev-ref', 'HEAD']);
   if (!br.ok) return 'Not pulled: ' + where + ' is not a git repository.';
   if (!base || br.out !== base)
-    return 'Not pulled: ' + where + ' is on ' + br.out + ', not ' + (base || 'the base branch') + '.';
+    return 'Not pulled: ' + where + ' is on ' + br.out + ', not ' + (base || 'the base branch') + '. Pull by hand.';
   const r = await gitIn(proj.root, ['pull', '--ff-only']);
-  if (!r.ok) return 'Not pulled: git pull --ff-only failed in ' + where + ': ' + r.err.split('\n').slice(-2).join(' ');
+  if (!r.ok) {
+    // stderr also holds fetch progress and hints: keep git's own reason
+    const lines = r.err.split('\n'), why = lines.filter((l) => /^(fatal|error):/.test(l));
+    return 'Not pulled: git pull --ff-only failed in ' + where + ': ' + (why.length ? why : lines.slice(-1)).join(' ') + ' Pull by hand.';
+  }
   return 'Pulled ' + base + ' in ' + where + (/Already up to date/i.test(r.out) ? ' (it was already up to date).' : '.');
 };
 const prDetail = async (proj, number) => {
@@ -2583,6 +2587,7 @@ const PAGE = /* html */ `<!doctype html>
   .mergednote { border:1px solid var(--merge); border-radius:10px; padding:10px 14px; margin-bottom:16px; }
   .mergednote b { color:var(--merge); }
   .mergednote div { color:var(--dim); font-size:calc(12.5px * var(--fs)); }
+  .mergednote div.notpulled { color:var(--bad); font-weight:600; }
   /* chat panel: right of the page, beside the diff or the plan, its width dragged and remembered */
   #chat { flex:0 0 auto; width:calc(460px * var(--fs)); min-width:320px; max-width:70vw; padding:0; overflow:hidden;
           display:flex; flex-direction:column; background:var(--panel); border-left:1px solid var(--line); }
@@ -4019,6 +4024,12 @@ async function prAct(p, data) {
   if (byId('prbody')) drawPr(p);
   busy(false);
   refresh();
+  // the merge worked but the main checkout did not move: say so wherever you are now
+  const notPulled = (r.notes || []).find((n) => n.startsWith('Not pulled'));
+  if (notPulled) {
+    await alertUser('Merged, but not pulled', p.project + ' / ' + p.file, p.key, 'pr');
+    setTimeout(() => alert('⚠️ PR #' + p.pr.number + ' is merged. ' + notPulled), 100);   // after the merged page has painted
+  }
 }
 async function closePr(p) {
   const d = prData[p.key];
@@ -4067,7 +4078,7 @@ function drawPr(p) {
     (err ? '<div class="merr" role="alert"><b>GitHub refused' + (err.action === 'merge' ? ' the merge' : '') + ':</b> ' +
       esc(err.text) + '</div>' : '') +
     (d.state === 'MERGED' && notes ? '<div class="mergednote"><b>Merged into ' + esc(d.baseRefName) + '.</b>' +
-      notes.map((n) => '<div>' + esc(n) + '</div>').join('') + '</div>' : '') +
+      notes.map((n) => '<div' + (n.startsWith('Not pulled') ? ' class="notpulled"' : '') + '>' + esc(n) + '</div>').join('') + '</div>' : '') +
     '<div class="prhead">' +
     '<div class="row">' + prChip(d) + '<b class="prtitle">' + esc(d.title) + '</b><span class="dim">#' + d.number + '</span></div>' +
     '<div class="row dim"><span><code>' + esc(d.baseRefName) + '</code> ← <code>' + esc(d.headRefName) + '</code></span>' +
