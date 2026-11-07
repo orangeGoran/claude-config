@@ -593,15 +593,24 @@ const runLauncher = (proj, args, slugs) => {
   });
   closeSync(fd); // the child holds its own copy
   child.on('exit', (code) => {
-    if (code === 0) { for (const k of keys) launches.delete(k); return; }
-    // the launcher stopped early: keep what it printed, so the list can say why
-    let output = '';
-    try { output = readFileSync(logFile, 'utf8').slice(from).trim().split('\n').slice(-20).join('\n'); } catch {}
-    for (const k of keys)
-      launches.set(k, { state: 'failed', at: Date.now(), output: output || 'launcher exited with code ' + code });
+    // `from` counts bytes, so cut the bytes: the log holds multi-byte characters
+    let lines = [];
+    try { lines = readFileSync(logFile).subarray(from).toString('utf8').trim().split('\n'); } catch {}
+    for (const slug of slugs) {
+      const key = proj.name + '/' + slug;
+      // a launcher exits 0 even when it skipped a plan, and names the plan on the SKIP line
+      const skip = lines.find((l) => l.startsWith('SKIP:') && skipNames(l, slug));
+      if (skip) launches.set(key, { state: 'failed', at: Date.now(), output: skip });
+      else if (code === 0) launches.delete(key);
+      // the launcher stopped early: keep what it printed, so the list can say why
+      else launches.set(key, { state: 'failed', at: Date.now(),
+        output: lines.slice(-20).join('\n') || 'launcher exited with code ' + code });
+    }
   });
   child.unref();
 };
+// whole words only: a skip of plan "foo-2" says nothing about plan "foo"
+const skipNames = (line, slug) => line.split(/[\s/]+/).some((w) => w === slug || w === slug + '.md');
 // an unknown or missing mode id falls back to the project's default mode
 const modeFlag = (proj, id) => {
   const modes = pipelineModes(proj);

@@ -561,6 +561,26 @@ const pipeRepo = async (name, describe, plans) => {
 };
 const report = (root, slug, lines) =>
   writeFileSync(path.join(root, '.plans', 'auto-runs', slug + '.md'), '# Auto-run: ' + slug + '\n\n' + lines.join('\n') + '\n');
+
+test('a plan the launcher skips shows as failed with the reason, though the launcher exits 0', async () => {
+  const root = await pipeRepo('skip-pipe', null, ['skip-me', 'skip-me-too']);
+  // older output with multi-byte characters must not push the new output out of the slice
+  writeFileSync(path.join(root, '.plans', 'auto-runs', '_dashboard.log'), 'old — line\n'.repeat(200));
+  const reason = 'SKIP: plan not on origin/develop: .plans/skip-me-too.md — push it first';
+  writeFileSync(path.join(root, '.claude', 'scripts', 'auto-pipeline.sh'), `echo "${reason}"\nexit 0\n`);
+  const plans = async () => (await state()).find((p) => p.name === 'skip-pipe').plans;
+
+  assert.deepEqual(await post('/api/launch', { project: 'skip-pipe',
+    items: [{ slug: 'skip-me', mode: 'verify' }, { slug: 'skip-me-too', mode: 'verify' }] }), { ok: true });
+  const deadline = Date.now() + 10000;
+  let ps;
+  do { await sleep(100); ps = await plans(); } while (Date.now() < deadline && ps.some((p) => p.launch?.state === 'starting'));
+
+  const skipped = ps.find((p) => p.slug === 'skip-me-too');
+  assert.equal(skipped.launch.state, 'failed');
+  assert.equal(skipped.launch.output, reason);
+  assert.equal(ps.find((p) => p.slug === 'skip-me').launch, null, 'the other plan in the batch was not skipped');
+});
 // waits until the script has recorded `n` calls
 const argsLog = async (root, n) => {
   const f = path.join(root, '.claude', 'scripts', 'args.log');
