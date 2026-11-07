@@ -50,12 +50,13 @@ const id = r < 0 ? 'ses-probe' : a.includes('--fork-session') ? 'ses-copy' : a[r
 const dir = path.join(process.env.HOME, '.claude', 'projects', process.cwd().replace(/[^a-zA-Z0-9]/g, '-'));
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const log = (o) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(path.join(dir, id + '.jsonl'), JSON.stringify(o) + '\\n'); };
-let q = '', slow = null;
-let mode = a.includes('--permission-mode') ? a[a.indexOf('--permission-mode') + 1] : 'default';
+let q = '', slow = null, contextUsed = 150000;
+let mode =a.includes('--permission-mode') ? a[a.indexOf('--permission-mode') + 1] : 'default';
 const answer = (text) => {
   out({ type: 'stream_event', session_id: id, parent_tool_use_id: null, event: { type: 'message_start' } });
   out({ type: 'stream_event', session_id: id, parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } });
-  log({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } });
+  log({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }],
+    usage: { input_tokens: 2, cache_creation_input_tokens: 8, cache_read_input_tokens: 139990, output_tokens: 10000 } } });
   out({ type: 'assistant', session_id: id, parent_tool_use_id: null, message: { content: [{ type: 'text', text }] } });
   out({ type: 'result', subtype: 'success', is_error: false, session_id: id, total_cost_usd: 0.01 });
 };
@@ -67,7 +68,8 @@ const handle = (j) => {
   if (j.type === 'control_request') {
     note('control ' + j.request.subtype + ' ' + (j.request.mode || j.request.model || ''));
     if (j.request.subtype === 'set_permission_mode') mode = j.request.mode;
-    return out({ type: 'control_response', response: { subtype: 'success', request_id: j.request_id, response: {} } });
+    return out({ type: 'control_response', response: { subtype: 'success', request_id: j.request_id,
+      response: j.request.subtype === 'get_context_usage' ? { totalTokens: contextUsed, maxTokens: 200000 } : {} } });
   }
   if (j.type === 'control_response') {
     const res = j.response.response, ok = res.behavior === 'allow';
@@ -82,6 +84,22 @@ const handle = (j) => {
     if (slow) { slow.push(c[c.length - 1].text); return; }
     q = c[c.length - 1].text;
     out({ type: 'system', subtype: 'init', session_id: id, permissionMode: mode });
+    if (q === '/compact') {
+      contextUsed = 30000;
+      log({ type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted', compactMetadata: { trigger: 'manual', preTokens: 150000, postTokens: 8000 } });
+      log({ type: 'user', isCompactSummary: true, message: { role: 'user', content: 'The summary' } });
+      return out({ type: 'result', subtype: 'success', is_error: false, session_id: id, total_cost_usd: 0.01 });
+    }
+    // like claude after a long tool input: stdout says the text at once, the log has it later
+    if (/late/.test(q)) {
+      const text = 'answer: ' + q, msg = { id: 'msg-late', role: 'assistant', content: [{ type: 'text', text }] };
+      log({ type: 'user', message: { role: 'user', content: c } });
+      out({ type: 'stream_event', session_id: id, parent_tool_use_id: null, event: { type: 'message_start' } });
+      out({ type: 'stream_event', session_id: id, parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } });
+      out({ type: 'assistant', session_id: id, parent_tool_use_id: null, message: msg });
+      setTimeout(() => log({ type: 'assistant', message: msg }), 1500);
+      return setTimeout(() => out({ type: 'result', subtype: 'success', is_error: false, session_id: id, total_cost_usd: 0.01 }), 2500);
+    }
     if (/slow/.test(q)) {
       slow = [q];
       return setTimeout(() => { const all = slow; slow = null; log({ type: 'user', message: { role: 'user', content: c } }); answer('answer: ' + all.join(' + ')); }, 700);
@@ -369,6 +387,7 @@ test("the chat continues the plan's session live: history, permission prompts, s
   assert.equal(calls().filter((l) => l.startsWith('-p ') && !l.includes('--resume')).length, 1, 'one lookup for both pages');
   assert.deepEqual(meta.commands, [{ name: 'code-review', description: 'Review the diff', hint: '[level]' }]);
   assert.deepEqual(meta.models.map((m) => m.value), ['default', 'haiku']);
+  assert.equal(meta.contextMax, 200000, 'the window size is known before the first message');
   const ev = await get('/api/chat/events?' + q);
   const reader = ev.body.getReader();
   assert.match(new TextDecoder().decode((await reader.read()).value), /^event: state\ndata: \{"live":false/);
@@ -388,6 +407,28 @@ test("the chat continues the plan's session live: history, permission prompts, s
   // the same claude answers the next message, and asks before the merge
   await until(async () => !(await chat()).busy, 'the end of the turn');
   assert.equal((await chat()).live, true, 'the session stays open between messages');
+  // the open session reports its own context size
+  await until(async () => (await chat()).context?.used === 150000, 'the context size');
+  assert.deepEqual((await chat()).context, { used: 150000, max: 200000 });
+  // a finished answer stays in the live area until the log has it, and the log's copy comes by itself
+  const events = [];
+  const stream = (await get('/api/chat/events?' + q)).body.getReader();
+  (async () => { for (;;) { const { value, done } = await stream.read(); if (done) return;
+    for (const m of new TextDecoder().decode(value).matchAll(/^event: (\w+)\ndata: (.*)$/gm)) events.push([m[1], JSON.parse(m[2]), Date.now()]); } })().catch(() => {});
+  assert.deepEqual(await send({ text: 'late answer' }), { ok: true });
+  const waiting = await until(async () => { const s = await chat(); return s.landing.length && s; }, 'the finished answer');
+  const sentAt = Date.now(), lateItem = (r) => r.items.find((i) => i.text === 'answer: late answer');
+  assert.deepEqual([waiting.partial, waiting.landing[0].text], ['', 'answer: late answer']);
+  const early = await history();
+  assert.ok(!lateItem(early) && early.landed < waiting.landing[0].id, 'not in the log yet');
+  assert.ok(events.some(([e, d]) => e === 'delta' && d.reset && d.landing?.[0]?.text === 'answer: late answer'));
+  await until(async () => events.some(([e, , at]) => e === 'history' && at - sentAt > 1200), 'a look at the log once it has the answer');
+  const landed = await history();
+  assert.ok(lateItem(landed) && landed.landed >= waiting.landing[0].id, 'in the log, out of the live area');
+  assert.ok((await chat()).busy, 'the log told the page before the turn ended');
+  assert.deepEqual((await chat()).landing, []);
+  await until(async () => !(await chat()).busy, 'the end of the turn');
+  await stream.cancel();
   assert.deepEqual(await send({ text: 'merge main please', mode: 'acceptEdits' }), { ok: true });
   let st = await until(async () => { const s = await chat(); return s.waits.length && s; }, 'the permission card');
   assert.deepEqual(st.waits.map((w) => [w.tool, w.what, w.always]), [['Bash', 'git merge main', true]]);
@@ -434,6 +475,19 @@ test("the chat continues the plan's session live: history, permission prompts, s
   assert.deepEqual(await send({ text: 'what now?', mode: 'plan' }), { ok: true });
   await until(async () => !(await chat()).busy && (await history()).items.some((i) => i.text === 'answer: what now?'), 'the answer');
   assert.equal((await chat()).mode, 'plan');
+
+  // Closed, the size comes from the transcript's last answer; a compact makes that out of date,
+  // so the size claude reported after the compact is what stays
+  await until(async () => !(await chat()).busy, 'the end of the turn');
+  await post('/api/chat/fork', who);
+  await post('/api/chat/new', who);
+  assert.deepEqual((await chat()).context, { used: 150000, max: 200000 });
+  assert.deepEqual(await send({ text: '/compact' }), { ok: true });
+  await until(async () => (await chat()).context?.used === 30000, 'the size after the compact');
+  await post('/api/chat/new', who);
+  st = await chat();
+  assert.deepEqual([st.live, st.context], [false, { used: 30000, max: 200000 }]);
+  assert.ok((await history()).items.some((i) => i.text === 'The earlier conversation was compacted'));
 
   // Fork: the next message goes on in a copy, which is not one of the plan's sessions
   await until(async () => !(await chat()).busy, 'the end of the turn');

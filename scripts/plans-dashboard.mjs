@@ -1398,7 +1398,7 @@ const userItems = (t, j, cwd) => {
 };
 const assistantItems = (t, j, cwd) => {
   for (const b of j.message?.content || []) {
-    if (b.type === 'text' && b.text?.trim()) t.items.push({ k: 'agent', text: b.text.trim() });
+    if (b.type === 'text' && b.text?.trim()) t.items.push({ k: 'agent', text: b.text.trim(), mid: j.message.id });
     else if (b.type === 'thinking' && b.thinking?.trim()) t.items.push({ k: 'think', text: clip(b.thinking.trim(), 6000) });
     else if (b.type === 'tool_use') {
       const i = b.input || {};
@@ -1408,21 +1408,28 @@ const assistantItems = (t, j, cwd) => {
     }
   }
 };
+const usageTokens = (u) => u ? (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.output_tokens || 0) : 0;
 const transcriptLine = (t, line, cwd) => {
   // most lines are request copies and attachments; only messages are worth parsing, and
   // a slash command's output (/context, /cost) is a system line of its own, and a message
   // sent during a turn (or a background task's notice) is a queued_command attachment
-  if (!line.includes('"type":"user"') && !line.includes('"type":"assistant"')
+  if (!line.includes('"type":"user"') && !line.includes('"type":"assistant"') && !line.includes('"subtype":"compact_boundary"')
     && !line.includes('"subtype":"local_command"') && !line.includes('"type":"queued_command"')) return;
   let j;
   try { j = JSON.parse(line); } catch { return; }
   if (j.isSidechain) return;
   if (j.type === 'system' && j.subtype === 'local_command') userItems(t, { message: { content: j.content } }, cwd);
+  // t.used: the context size the last answer reported. A compact makes it out of date, and
+  // the transcript has no size to replace it: its post_tokens leaves out the system prompt and tools.
+  else if (j.type === 'system' && j.subtype === 'compact_boundary') t.used = null;
   else if (j.type === 'attachment' && j.attachment?.type === 'queued_command') {
     userItems(t, { message: { content: j.attachment.prompt }, timestamp: j.attachment.timestamp || j.timestamp }, cwd);
   }
   else if (j.type === 'user') userItems(t, j, cwd);
-  else if (j.type === 'assistant') assistantItems(t, j, cwd);
+  else if (j.type === 'assistant') {
+    t.used = usageTokens(j.message?.usage) || t.used;   // an API error's line reports zero tokens
+    assistantItems(t, j, cwd);
+  }
 };
 const readTranscript = (file, cwd, parseLine = transcriptLine) => {
   let st;
@@ -1466,8 +1473,11 @@ const itemsPage = (all, q) => {
 };
 const chatHistory = (proj, slug, q) => {
   const tr = chatTranscript(proj, slug);
-  if (!tr) return { session: null, total: 0, first: 0, items: [] };
-  return { session: tr.id, ...itemsPage(readTranscript(tr.file, tr.wtPath).items, q) };
+  if (!tr) return { session: null, total: 0, first: 0, items: [], landed: chatLandSeq };
+  const items = readTranscript(tr.file, tr.wtPath).items, ch = chats.get(proj.name + '/' + slug);
+  if (ch) chatLanded(ch, items);
+  // landed goes with these items: the page takes an answer out of the live area as it adds it to the list
+  return { session: tr.id, landed: ch ? ch.landed : chatLandSeq, ...itemsPage(items, q) };
 };
 
 // --- the live session ---
@@ -1488,7 +1498,31 @@ const chatEmitState = (proj, slug) => {
 // the transcript is written around the time stdout says so: look a little later, and again
 const chatHistorySoon = (ch) => {
   clearTimeout(ch.histTimer);
+  clearTimeout(ch.histAgain);
   ch.histTimer = setTimeout(() => chatEmit(ch.key, 'history', {}), 250);
+  ch.histAgain = setTimeout(() => chatEmit(ch.key, 'history', {}), 1000);
+};
+// claude prints a finished text block at once but logs it with the whole message, so after a
+// long tool input the log has it seconds later. Until then the block stays in the live area.
+// Ids grow across restarts, so a page never takes a new block for one that has landed.
+let chatLandSeq = Date.now();
+const chatLanded = (ch, items) => {
+  while (ch.landing.length) {
+    const l = ch.landing[0];
+    if (!items.some((it) => it.k === 'agent' && it.mid === l.mid && it.text === l.text)) return;
+    ch.landing.shift();
+    ch.landed = l.id;
+  }
+};
+const chatLandWatch = (ch) => {
+  if (ch.landTimer) return;
+  ch.landTimer = setInterval(() => {
+    const was = ch.landing.length;
+    const tr = was && chats.get(ch.key) === ch && chatTranscript(ch.proj, ch.slug);
+    if (tr) chatLanded(ch, readTranscript(tr.file, tr.wtPath).items);
+    if (ch.landing.length < was) chatEmit(ch.key, 'history', {});
+    if (!ch.landing.length || chats.get(ch.key) !== ch) { clearInterval(ch.landTimer); ch.landTimer = null; }
+  }, 200);
 };
 // closing marks the chat at once: a message sent before its exit opens a new session
 const chatKill = (ch) => { ch.closing = true; ch.child.kill('SIGTERM'); };
@@ -1510,7 +1544,31 @@ const applyModeModel = (ch, b, picked) => {
     chatControl(ch, { subtype: 'set_permission_mode', mode: b.mode });
   }
   const model = chatModel(b.model);
-  if (model !== ch.model) { ch.model = model; chatControl(ch, { subtype: 'set_model', model }); }
+  if (model !== ch.model) { ch.model = model; chatControl(ch, { subtype: 'set_model', model }).then(() => chatContextRefresh(ch)); }
+};
+// how full the session's context is, asked of claude itself: the count includes the system
+// prompt and tools. It is asked when the session opens, at the end of each turn (a /compact is
+// a turn), after a model change (the window can differ), and at most every CHAT_CONTEXT_MS
+// during a long turn. The last answer is saved for the time the session is closed.
+const CHAT_CONTEXT_MS = 15000;
+const chatContextRefresh = async (ch) => {
+  ch.contextAt = Date.now();
+  const r = await chatControl(ch, { subtype: 'get_context_usage' });
+  const u = r && r.subtype === 'success' && r.response;
+  if (!u || !Number.isFinite(u.totalTokens) || chats.get(ch.key) !== ch) return;
+  ch.context = { used: u.totalTokens, max: u.maxTokens || 0 };
+  const a = loadChat(ch.proj, ch.slug);
+  saveChat(ch.proj, ch.slug, { ...a, context: { ...ch.context, session: ch.session } });
+  chatEmitState(ch.proj, ch.slug);
+};
+// closed session: the last answer's size from the transcript, or after a compact the saved one
+const chatContext = (proj, slug, ch, a) => {
+  if (ch && ch.context) return ch.context;
+  const tr = chatTranscript(proj, slug);
+  if (!tr) return null;
+  const saved = a.context || {};
+  const used = readTranscript(tr.file, tr.wtPath).used || (saved.session === tr.id ? saved.used : 0);
+  return used ? { used, max: saved.max || 0 } : null;
 };
 // the commands, skills and models a session in that folder offers: from the open chat, or a
 // claude started only to answer the first question of the protocol (no message is sent)
@@ -1534,24 +1592,28 @@ const chatMetaProbe = async (wtPath) => {
   const child = spawn('claude', ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
     '--permission-prompt-tool', 'stdio'], { cwd: wtPath, env: ENV, stdio: ['pipe', 'pipe', 'ignore'] });
   const probe = { child, pending: new Map() };
-  const r = await new Promise((resolve) => {
-    let buf = '';
-    child.on('error', () => resolve(null));
-    child.on('exit', () => resolve(null));
-    child.stdout.on('data', (d) => {
-      buf += d;
-      let i;
-      while ((i = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, i); buf = buf.slice(i + 1);
-        try { const j = JSON.parse(line); if (j.type === 'control_response') resolve(j.response); } catch {}
-      }
-    });
-    child.stdin.on('error', () => {});
-    chatControl(probe, { subtype: 'initialize' }).then(resolve);
+  const ended = () => { for (const f of probe.pending.values()) f(null); probe.pending.clear(); };
+  child.on('error', ended);
+  child.on('exit', ended);
+  let buf = '';
+  child.stdout.on('data', (d) => {
+    buf += d;
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i); buf = buf.slice(i + 1);
+      try {
+        const j = JSON.parse(line), f = j.type === 'control_response' && probe.pending.get(j.response?.request_id);
+        if (f) { probe.pending.delete(j.response.request_id); f(j.response); }
+      } catch {}
+    }
   });
+  child.stdin.on('error', () => {});
+  const m = metaOf(await chatControl(probe, { subtype: 'initialize' }));
+  // the window size, so a session never chatted with can already show its percent
+  const u = m && await chatControl(probe, { subtype: 'get_context_usage' });
   child.kill('SIGTERM');
-  const m = metaOf(r);
   if (!m) return { ok: false, commands: [], models: [] };
+  m.contextMax = u?.response?.maxTokens || 0;
   chatMetaCache.set(wtPath, m);
   return { ok: true, ...m };
 };
@@ -1597,7 +1659,13 @@ const chatOnLine = (ch, j) => {
     const f = ch.pending.get(j.response?.request_id);
     if (f) { ch.pending.delete(j.response.request_id); f(j.response); }
   } else if (j.type === 'assistant' || j.type === 'user') {
-    if (!j.parent_tool_use_id) { ch.partial = ''; chatEmit(ch.key, 'delta', { reset: true }); }
+    if (!j.parent_tool_use_id) {
+      if (j.type === 'assistant') for (const b of j.message?.content || [])
+        if (b.type === 'text' && b.text?.trim()) ch.landing.push({ id: ++chatLandSeq, mid: j.message.id, text: b.text.trim() });
+      ch.partial = ''; chatEmit(ch.key, 'delta', { reset: true, landing: ch.landing });
+      if (ch.landing.length) chatLandWatch(ch);
+      if (Date.now() - (ch.contextAt || 0) > CHAT_CONTEXT_MS) chatContextRefresh(ch);
+    }
     chatHistorySoon(ch);
   } else if (j.type === 'result') {
     ch.busy = false;
@@ -1605,8 +1673,14 @@ const chatOnLine = (ch, j) => {
     ch.waits.clear();
     ch.last = { ok: !j.is_error && j.subtype === 'success', subtype: j.subtype, cost: j.total_cost_usd };
     chatEmitState(proj, slug);
+    chatContextRefresh(ch);
     chatHistorySoon(ch);
-    setTimeout(() => chatEmit(ch.key, 'history', {}), 1200);
+    const upTo = chatLandSeq;
+    setTimeout(() => {
+      // the turn is over and the log is written: a block still waiting will not come
+      if (ch.landing.some((l) => l.id <= upTo)) { ch.landing = ch.landing.filter((l) => l.id > upTo); ch.landed = Math.max(ch.landed, upTo); }
+      chatEmit(ch.key, 'history', {});
+    }, 1200);
     chatIdle(ch);
   }
 };
@@ -1630,7 +1704,7 @@ const chatStart = (proj, slug, b) => {
     ...(rules.length ? ['--allowedTools', ...rules] : [])],
   { cwd: wtPath, env: ENV, stdio: ['pipe', 'pipe', 'pipe'] });
   const ch = { key, proj, slug, child, session: fork ? null : id, fork, mode, model: model || 'default', busy: false,
-    closing: false, partial: '', waits: new Map(), pending: new Map(), err: '', last: null };
+    closing: false, partial: '', landing: [], landed: 0, waits: new Map(), pending: new Map(), err: '', last: null };
   chats.set(key, ch);
   chatNotes.delete(key);
   child.stdin.on('error', () => {});
@@ -1659,7 +1733,8 @@ const chatStart = (proj, slug, b) => {
   child.on('error', (e) => { ch.err = 'Could not start claude: ' + e.message; ch.busy = true; done(-1); });
   chatControl(ch, { subtype: 'initialize' }).then((r) => {
     const m = metaOf(r);
-    if (m) chatMetaCache.set(wtPath, m);
+    if (m) chatMetaCache.set(wtPath, { ...chatMetaCache.get(wtPath), ...m });
+    chatContextRefresh(ch);
   });
   chatIdle(ch);
   return ch;
@@ -1784,7 +1859,8 @@ const chatState = (proj, slug) => {
     session: ch && ch.session ? ch.session : a.current ? a.current.id : latest,
     current: a.current || null, latest, fork: !!a.fork,
     waits: ch ? [...ch.waits].map(([id, r]) => waitView(id, r)) : [],
-    partial: ch ? ch.partial : '', last: ch ? ch.last : null, error: chatNotes.get(key) || '',
+    partial: ch ? ch.partial : '', landing: ch ? ch.landing : [], last: ch ? ch.last : null, error: chatNotes.get(key) || '',
+    context: chatContext(proj, slug, ch, a),
   };
 };
 const chatEvents = (req, res, proj, slug) => {
@@ -2564,6 +2640,12 @@ const PAGE = /* html */ `<!doctype html>
   .cbox textarea { width:100%; resize:vertical; min-height:60px; background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:inherit; }
   .crow { display:flex; align-items:center; gap:8px; margin-top:6px; font-size:calc(12.5px * var(--fs)); flex-wrap:wrap; }
   .crow select { background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:7px; padding:3px 6px; max-width:48%; }
+  .cctx { display:inline-flex; align-items:center; gap:5px; color:var(--dim); white-space:nowrap; }
+  .cctx[hidden] { display:none; }
+  .cctxbar { width:44px; height:5px; border-radius:3px; background:var(--line); overflow:hidden; }
+  .cctxbar i { display:block; height:100%; background:var(--run); }
+  .cctx.warn .cctxbar i { background:var(--warn); } .cctx.warn { color:var(--warn); }
+  .cctx.bad .cctxbar i { background:var(--bad); } .cctx.bad { color:var(--bad); }
   .cchip { display:inline-flex; align-items:center; gap:4px; font:calc(11.5px * var(--fs)) ui-monospace,monospace; border:1px solid var(--line);
            border-radius:6px; padding:1px 6px; margin:0 4px 4px 0; background:var(--card); white-space:normal; }
   .cchip.csel { display:flex; margin:0 0 6px; } .cchip.csel b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
@@ -3431,6 +3513,7 @@ function chatBind(p) {
       '<div class="crow"><select id="cmode" aria-label="Permission mode" title="What the agent may do without asking (Shift+Tab switches)">' +
         CHAT_MODES.map(([v, l]) => '<option value="' + v + '"' + (v === chatMode ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
         '<select id="cmodel" aria-label="Model"><option value="">Model: default</option></select>' +
+        '<span class="cctx" id="cctx" hidden></span><button id="ccompact">Compact</button>' +
         '<span style="flex:1"></span><button id="cstop" hidden>Stop</button><button id="cgo" class="primary">Send</button></div></div>';
   const inp = byId('cin');
   inp.value = chatDraft[p.key] || '';
@@ -3439,7 +3522,8 @@ function chatBind(p) {
   inp.addEventListener('click', chatMenu);
   inp.addEventListener('keydown', chatKey);
   inp.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== inp) byId('cmenu').hidden = true; }, 150));
-  byId('cgo').addEventListener('click', chatSendMsg);
+  byId('cgo').addEventListener('click', () => chatSendMsg());
+  byId('ccompact').addEventListener('click', (e) => { e.target.disabled = true; chatSendMsg('/compact').finally(paintContext); });
   byId('cstop').addEventListener('click', () => post('/api/chat/stop', { project: c.p.project, slug: c.p.slug }));
   byId('cclose').addEventListener('click', () => toggleChat(false));
   byId('cfork').addEventListener('click', () => post('/api/chat/fork', { project: c.p.project, slug: c.p.slug }));
@@ -3473,6 +3557,7 @@ function chatBind(p) {
     if (ch !== c) return;
     const d = JSON.parse(e.data);
     c.st.partial = d.reset ? '' : (c.st.partial || '') + d.text;
+    if (d.landing) c.st.landing = d.landing;
     paintLive();
   });
 }
@@ -3489,6 +3574,25 @@ async function chatMetaLoad(p) {
     '<option value="' + escA(x.value === 'default' ? '' : x.value) + '" title="' + escA(x.description || '') + '">' + esc(x.name) + '</option>').join('');
   S.value = chatModel;
   if (S.value !== chatModel) S.value = '';
+  paintContext();
+}
+// the context meter beside the pickers. The window size comes from the session, or before its
+// first answer from the probe of that folder; without either it shows only the count.
+function paintContext() {
+  const c = ch, E = byId('cctx'), B = byId('ccompact');
+  if (!c || !E || !B) return;
+  B.disabled = !!c.st.busy;
+  B.title = c.st.busy ? 'Wait for the agent to finish this step' : 'Run /compact: replace the earlier conversation with a summary, to free up context';
+  const x = c.st.context, max = (x && x.max) || (chatMetas[c.p.project] || {}).contextMax || 0;
+  E.hidden = !x;
+  if (!x) return;
+  const tok = (n) => n >= 1e6 ? +(n / 1e6).toFixed(1) + 'M' : n >= 1000 ? Math.round(n / 1000) + 'k' : String(n);
+  const pct = max ? Math.round(x.used / max * 100) : null;
+  E.className = 'cctx' + (pct >= 90 ? ' bad' : pct >= 70 ? ' warn' : '');
+  E.title = 'Context used: ' + x.used.toLocaleString() + (max ? ' of ' + max.toLocaleString() : '') + ' tokens';
+  E.setAttribute('aria-label', E.title);
+  E.innerHTML = pct == null ? esc(tok(x.used)) + ' used'
+    : '<span class="cctxbar"><i style="width:' + Math.min(pct, 100) + '%"></i></span>' + pct + '% of ' + esc(tok(max));
 }
 function chatSetMode(mode, model) {
   chatMode = mode; chatModel = model;
@@ -3527,6 +3631,7 @@ async function chatLoadEnd(c, how) {
   if (ch !== c || !r) return;
   if (how !== 'init' && r.session !== c.session) { if (how === 'old') chatLoad('init'); else c.again = 'init'; return; }
   if (how === 'old' && (c.first !== was.first || c.session !== was.session)) return;   // the list was redrawn meanwhile
+  c.landed = Math.max(c.landed || 0, r.landed || 0);
   const L = byId('clog'), box = byId('citems');
   const atEnd = L.scrollHeight - L.scrollTop - L.clientHeight < 80;
   const html = (list) => list.map((it) => { c.items[it.i] = it; return chatItemHtml(it, c); }).join('');
@@ -3596,6 +3701,7 @@ function chatState(st) {
   if (st.session !== c.session && c.session != null) chatLoad('init');
   else if (was.busy && !st.busy) chatLoad('new');
   paintLive();
+  paintContext();
   paintWaits(st.waits || []);
   if (c.p) { const p = find(c.key); if (p) p.chatWaits = (st.waits || []).length; }
 }
@@ -3603,7 +3709,8 @@ function paintLive() {
   const c = ch, st = c.st, V = byId('clive');
   if (!V) return;
   const L = byId('clog'), atEnd = L.scrollHeight - L.scrollTop - L.clientHeight < 80;
-  V.innerHTML = (st.partial ? '<div class="amsg agent mdc live">' + mdLive(st.partial) + '</div>' : '') +
+  V.innerHTML = (st.landing || []).filter((l) => l.id > (c.landed || 0)).map((l) => '<div class="amsg agent mdc live">' + md(l.text) + '</div>').join('') +
+    (st.partial ? '<div class="amsg agent mdc live">' + mdLive(st.partial) + '</div>' : '') +
     c.sent.map((s) => chatItemHtml({ k: 'you', i: '', text: s.text, sel: s.sel }, c)
       .replace('>', '><div class="ctime">' + (!s.ok ? 'sending…' : s.queued ? 'queued: the agent reads it after this step' : 'sent') + '</div>')).join('') +
     (st.busy && !(st.waits || []).length ? '<div class="aend cwork">working…</div>' : '') +
@@ -3635,11 +3742,12 @@ function paintWaits(waits) {
   }));
   if (waits.length) byId('clog').scrollTop = byId('clog').scrollHeight;
 }
-async function chatSendMsg() {
-  const c = ch, inp = byId('cin'), text = inp.value.trim();
+// a command from a button goes as it is: the draft and the selected lines stay for the next message
+async function chatSendMsg(command) {
+  const c = ch, inp = byId('cin'), text = command || inp.value.trim();
   if (!c || !text) return;
   byId('cmenu').hidden = true;
-  const s = chatSel;
+  const s = command ? null : chatSel;
   // shown at once; the session log has it only when the agent reads it
   const mine = { text, from: c.total, queued: !!c.st.busy,
     sel: s ? [(s.file ? s.file.slice(s.file.lastIndexOf('/') + 1) : 'selected text') +
@@ -3653,9 +3761,11 @@ async function chatSendMsg() {
   else mine.ok = true;
   if (ch === c) paintLive();
   if (!r.ok || ch !== c) return;
-  chatHistPush(text);
-  inp.value = ''; delete chatDraft[c.key];
-  setChatSel(null);
+  if (!command) {
+    chatHistPush(text);
+    inp.value = ''; delete chatDraft[c.key];
+    setChatSel(null);
+  }
   c.st.partial = ''; c.st.busy = true; c.st.error = '';
   paintLive();
 }
