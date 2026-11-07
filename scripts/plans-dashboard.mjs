@@ -1668,6 +1668,7 @@ const chatOnLine = (ch, j) => {
     }
     chatHistorySoon(ch);
   } else if (j.type === 'result') {
+    ch.turnsEnded++;
     ch.busy = false;
     ch.partial = '';
     ch.waits.clear();
@@ -1704,7 +1705,7 @@ const chatStart = (proj, slug, b) => {
     ...(rules.length ? ['--allowedTools', ...rules] : [])],
   { cwd: wtPath, env: ENV, stdio: ['pipe', 'pipe', 'pipe'] });
   const ch = { key, proj, slug, child, session: fork ? null : id, fork, mode, model: model || 'default', busy: false,
-    closing: false, partial: '', landing: [], landed: 0, waits: new Map(), pending: new Map(), err: '', last: null };
+    closing: false, turnsEnded: 0, partial: '', landing: [], landed: 0, waits: new Map(), pending: new Map(), err: '', last: null };
   chats.set(key, ch);
   chatNotes.delete(key);
   child.stdin.on('error', () => {});
@@ -1811,8 +1812,10 @@ const chatStop = (proj, slug) => {
       response: { behavior: 'deny', message: 'The user stopped this.', interrupt: true } } });
   ch.waits.clear();
   chatControl(ch, { subtype: 'interrupt' });
-  // a turn that does not end on the interrupt ends with the process
-  setTimeout(() => { if (chats.get(ch.key) === ch && ch.busy) chatKill(ch); }, 8000);
+  // a turn that does not end on the interrupt ends with the process. A turn that did end may
+  // be followed at once by a new one for the queued messages, and that one stays.
+  const turns = ch.turnsEnded;
+  setTimeout(() => { if (chats.get(ch.key) === ch && ch.busy && ch.turnsEnded === turns) chatKill(ch); }, 8000);
   return { ok: true };
 };
 // a run is starting in this folder: the chat gives way (its transcript stays)

@@ -50,7 +50,7 @@ const id = r < 0 ? 'ses-probe' : a.includes('--fork-session') ? 'ses-copy' : a[r
 const dir = path.join(process.env.HOME, '.claude', 'projects', process.cwd().replace(/[^a-zA-Z0-9]/g, '-'));
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const log = (o) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(path.join(dir, id + '.jsonl'), JSON.stringify(o) + '\\n'); };
-let q = '', slow = null, contextUsed = 150000;
+let q = '', slow = null, held = null, contextUsed = 150000;
 let mode =a.includes('--permission-mode') ? a[a.indexOf('--permission-mode') + 1] : 'default';
 const answer = (text) => {
   out({ type: 'stream_event', session_id: id, parent_tool_use_id: null, event: { type: 'message_start' } });
@@ -65,6 +65,14 @@ const handle = (j) => {
     return out({ type: 'control_response', response: { subtype: 'success', request_id: j.request_id, response: {
       commands: [{ name: 'code-review', description: 'Review the diff', argumentHint: '[level]' }],
       models: [{ value: 'default', displayName: 'Default' }, { value: 'haiku', displayName: 'Haiku' }] } } });
+  // like claude, an interrupt ends the turn, and the messages queued in it start the next turn at once
+  if (j.type === 'control_request' && j.request.subtype === 'interrupt' && held) {
+    const queued = held;
+    held = null;
+    out({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: id });
+    out({ type: 'stream_event', session_id: id, parent_tool_use_id: null, event: { type: 'message_start' } });
+    setTimeout(() => answer('answer: ' + queued.join(' + ')), 9500);
+  }
   if (j.type === 'control_request') {
     note('control ' + j.request.subtype + ' ' + (j.request.mode || j.request.model || ''));
     if (j.request.subtype === 'set_permission_mode') mode = j.request.mode;
@@ -82,7 +90,10 @@ const handle = (j) => {
     const c = j.message.content;
     // like claude, a message that comes during a turn is answered in that turn: one result for both
     if (slow) { slow.push(c[c.length - 1].text); return; }
+    if (held) { held.push(c[c.length - 1].text); return; }
     q = c[c.length - 1].text;
+    if (/^hold/.test(q)) { held = []; return; }
+    if (/^hang/.test(q)) return;   // a turn that never ends, even on an interrupt
     out({ type: 'system', subtype: 'init', session_id: id, permissionMode: mode });
     if (q === '/compact') {
       contextUsed = 30000;
@@ -507,6 +518,32 @@ test("the chat continues the plan's session live: history, permission prompts, s
   assert.deepEqual([st.live, st.session], [false, 'ses-mine']);
   assert.equal((await onlyPlan()).asked, true);
   assert.equal((await send({ text: '  ' })).ok, false);
+});
+
+test('Stop ends the running turn only: the turn its queued messages start stays alive', async () => {
+  const q = 'project=demo&slug=demo-plan', who = { project: 'demo', slug: 'demo-plan' };
+  const chat = async () => (await get('/api/chat?' + q)).json();
+  const history = async () => (await get('/api/chat/history?' + q)).json();
+  const until = async (fn, what) => {
+    const deadline = Date.now() + 12000;
+    while (Date.now() < deadline) { const v = await fn(); if (v) return v; await sleep(100); }
+    assert.fail('timed out waiting for ' + what);
+  };
+
+  assert.deepEqual(await post('/api/chat/send', { ...who, text: 'hold this turn' }), { ok: true });
+  assert.deepEqual(await post('/api/chat/send', { ...who, text: 'queued note' }), { ok: true });
+  assert.deepEqual(await post('/api/chat/stop', who), { ok: true });
+  await sleep(8500);   // past the wait for a turn that does not end on the interrupt
+  const st = await chat();
+  assert.deepEqual([st.live, st.busy, st.error], [true, true, ''], 'the new turn is still working');
+  await until(async () => (await history()).items.some((i) => i.text === 'answer: queued note'), 'the answer to the queued message');
+  await until(async () => !(await chat()).busy, 'the end of the turn');
+
+  // a turn that ignores the interrupt still ends with the process
+  assert.deepEqual(await post('/api/chat/send', { ...who, text: 'hang here' }), { ok: true });
+  assert.deepEqual(await post('/api/chat/stop', who), { ok: true });
+  await until(async () => !(await chat()).live, 'the process to be closed');
+  assert.deepEqual(await post('/api/chat/new', who), { ok: true });
 });
 
 test('archives a plan and puts it back', async () => {
