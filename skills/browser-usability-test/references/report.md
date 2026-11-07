@@ -53,4 +53,11 @@ Compared with: <sibling 1 (file:line)>, <sibling 2 (file:line)> — or "not test
 2. ...
 
 Want me to apply the small, safe ones (#…)? After any change — mine or yours — I retake the finding screenshots and update the same report page with before and after.
+
+### Upload evidence to GitHub
+
+Upload evidence to <repo>#<number>? I would post these pairs, old code against new code:
+
+1. <view>: <what before shows> → <what after shows>
+2. ...
 ````

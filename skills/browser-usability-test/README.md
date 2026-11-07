@@ -1,6 +1,6 @@
 # browser-usability-test
 
-Claude Code skill: usability-test a page of a locally running web app in headless Chromium and report what works, what's broken and what the backend is missing. Ask Claude e.g. "usability test /admin/knowledge as a Leader". Works from any repo of a project (frontend, backend, worktree) and across projects. Local development only: the scripts refuse non-local URLs.
+Claude Code skill: usability-test a page of a locally running web app in headless Chromium and report what works, what's broken and what the backend is missing. Ask Claude e.g. "usability test /admin/knowledge as a Leader". Works from any repo of a project (frontend, backend, worktree) and across projects. Local development only: the scripts refuse non-local URLs. At the end of a run, Claude asks whether to post before/after pictures of the biggest changes on the GitHub ticket (needs `gh` with `--attach`).
 
 ## Setup
 

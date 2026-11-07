@@ -1,6 +1,6 @@
 ---
 name: browser-usability-test
-description: Usability-test a page or feature of a locally running web app in a real headless Chromium — sign in as a test account, click through it like a person, compare the screen with the API and the local database, compare a new feature with similar features already in the app, run axe and responsive checks, and return one report with findings, frontend file:line causes, a copy-paste block for the backend team and a fix list. Works from any repo of a project (frontend, backend, worktree) and across projects; links, database access and test accounts are saved per project in the home folder and asked for once when missing. Credentials can be given in the call. With no route given, it tests the pages touched by the current changes (uncommitted + branch), and asks only when there are none. Local development only. Use whenever the user asks to QA, usability-test, smoke-test, click through, "try out", check in the browser, find bugs, or check that a new feature matches the rest of the app on a route or feature (e.g. /dashboard, /admin/users, /cases/:id) — even if they don't say "Playwright" or "usability".
+description: Usability-test a page or feature of a locally running web app in a real headless Chromium — sign in as a test account, click through it like a person, compare the screen with the API and the local database, compare a new feature with similar features already in the app, run axe and responsive checks, and return one report with findings, frontend file:line causes, a copy-paste block for the backend team and a fix list, then offer to post before/after pictures of the biggest changes on the GitHub ticket. Works from any repo of a project (frontend, backend, worktree) and across projects; links, database access and test accounts are saved per project in the home folder and asked for once when missing. Credentials can be given in the call. With no route given, it tests the pages touched by the current changes (uncommitted + branch), and asks only when there are none. Local development only. Use whenever the user asks to QA, usability-test, smoke-test, click through, "try out", check in the browser, find bugs, or check that a new feature matches the rest of the app on a route or feature (e.g. /dashboard, /admin/users, /cases/:id) — even if they don't say "Playwright" or "usability".
 ---
 
 # Browser usability test
@@ -121,7 +121,7 @@ Before writing anything about authorization, read the guard/middleware code that
 
 ## 7. Report
 
-Use `references/report.md` exactly. When running as a subagent, return the report as text (the harness may refuse report files); evidence files are fine. On the Evidence line, link the key evidence files with plain absolute paths (`[d4-gate-before.png](/abs/path/d4-gate-before.png)`, no `file://`): the VS Code chat opens them in the editor. A `file://` link does nothing there. Every finding needs a concrete example and evidence; for frontend causes, give `file:line` you actually read. Put backend gaps in one fenced, copy-paste block written for the backend team. Close by asking before fixing anything, and say which fixes are small and safe. Don't fix code during the test run — the user decides what to change. Asking doesn't hold the report back: the page below is written first.
+Use `references/report.md` exactly. When running as a subagent, return the report as text (the harness may refuse report files); evidence files are fine. On the Evidence line, link the key evidence files with plain absolute paths (`[d4-gate-before.png](/abs/path/d4-gate-before.png)`, no `file://`): the VS Code chat opens them in the editor. A `file://` link does nothing there. Every finding needs a concrete example and evidence; for frontend causes, give `file:line` you actually read. Put backend gaps in one fenced, copy-paste block written for the backend team. Close by asking before fixing anything, and say which fixes are small and safe. Don't fix code during the test run — the user decides what to change. Then ask whether to upload evidence to GitHub (section 9). Asking doesn't hold the report back: the page below is written first.
 
 **The report page comes first, without waiting for any answer.** As soon as the findings are known, write one HTML report and give its link at the top of the chat report. The run is not finished until that page exists. Its questions are for the user to answer when they like; nothing waits for them.
 
@@ -139,8 +139,41 @@ The report is one file for the whole test run. Update it, and say what changed i
 2. Run the scripts that took the shots of the findings the change touches, with the same account and `QA_DIR`, and with `QA_PHASE=after`. Do not log in again when the saved session still works. Open every "after" shot with the Read tool and decide per finding: `fixed`, `partly` or `not-fixed`. For a non-visual finding (API value, SQL count), run the check again and note both values (`afterText`).
 3. Update the same `items.json`: set `result` on each finding you rechecked, `after` (the version: commit, "working tree"), and the `summary` (what works now, what is still open). Add `references` with sibling screenshots when the fix was about consistency, and `dirs` when the shots come from more than one account. A finding with a `result` shows before and after; the rest stay open.
 4. Run `compare.mjs` again. It rewrites the same `<date>-<route>-report.html` and keeps the old page as a version (it prints `"updated": true` and the `version`). Fix every warning (a missing "after" shot, one taken at another width, theme, route or account) and run it again.
-5. Give the user the link again and one line per finding that changed. Do not publish the page or send it anywhere. The user shares it.
+5. Give the user the link again and one line per finding that changed. Do not publish the page or send it anywhere. The user shares it. Only section 9 sends pictures out, and only after the user's yes.
 
 **Questions.** You decide what to ask, and whom it is for. Ask only what you can't settle from the code, a spec or the test itself: a product decision for the PO, a design choice, a fix that needs a sign-off, a check only a person can make. No question is required, and none is added by default. Ready-made sign-offs, for when they fit or the user asks for them: `review: true` on one item asks "Should I apply this fix?" while it is open and "Is this fix good?" once it has a `result`; `reviewEachFix: true` does that on every finding, only when the user wants to sign off each one. For anything else write your own question with the words and options the decision needs. Write each question in plain words, give the facts in `why`, and mark one option `recommended`. Never ask what the code or a spec already decides. A question with `finding` appears inside that finding, under its pictures; one with `change` (the change's `id`, title or 1-based number) appears under that change's Original/Current pictures, for example "is this view good?" on a redesign or proposal. Keep only general questions without either (they go at the end). For a proposal made of mockups, set `changeTags` (`{ "old": "Today", "new": "Proposal" }`) and `changesLead`, so the page doesn't call a mockup "Current". `radio` for one choice, `checkbox` for "all that apply", `text` for free answers, `other: true` when the options may not cover it. Every choice question gets a free comment field. Typical cases: an open design decision (siblings disagree), a `partly` result that needs a choice. The page has a **Copy answers** button: the reader sends back a text that starts with `Short: 1A, 2A+C, …`, numbered in page order, with `[#finding]` on each answer.
 
 When the user pastes answers back (`Answers to "…"` with a `Short:` line), act on them: apply the chosen options, save design standards in `notes.md`, update the report as above, and say which answers need more work.
+
+## 9. Upload evidence to GitHub
+
+When the run tests a change, end the chat report with one question: "Upload evidence to <repo>#<number>?", followed by the 1–3 pairs you would post and their captions. Ask in a plain chat message. Ask for the ticket when `issues` is empty, and ask which one when it has several. Nothing waits for the answer. A no ends this section for the run. When findings are still open, the user can say "later": ask again after the last fix is rechecked. A yes covers this one comment. Don't post without it.
+
+1. **Choose the pairs.** Take 1–3 views that show the biggest change a user sees in the commit, biggest first. Choose by what the ticket is for, not by how many lines changed.
+2. **Take "before" from the old code.** The "before" is the app without the commit: the commit's parent, or `HEAD` when the change isn't committed yet. Reuse `changeShot` pairs from this run when they show the chosen view. Otherwise take them with the steps in "Old vs new" (section 3), plus the project's `notes.md` for running an old version next to the new one. Never use a `beforeAfterShot` "before" here: it can show a bug in code that never shipped.
+3. **Take "after" from the current code.** Retake it when the code changed after the shot. Both sides use the same account, record, width and theme. Use one desktop width and a viewport or element shot that is readable in a comment.
+4. **Check the pictures.** Open every picture with the Read tool. It must show the change and must not show secrets, tokens or real customer data. If it does, retake it with test data or tell the user.
+5. **Write the comment.** Put `body.md` and the pictures in one scratchpad folder, as `1-before.png`, `1-after.png`, and so on. Use this format, in plain words and with the real values on the screen:
+
+   ```markdown
+   **<What is different for the user, in one sentence.>**
+
+   <Which record and which user both pictures show, how the test data was made, and that it comes from a local test.> Commit: <short hash>.
+
+   **Before:** <what the user sees, with the exact text on the screen.>
+
+   ![Before: <what the picture shows>](./1-before.png)
+
+   **After:** <what the user sees now.>
+
+   ![After: <what the picture shows>](./1-after.png)
+   ```
+
+   State only what really happened. If a script added the data through the API, say so. When the change isn't committed yet, leave the commit out and say so to the user. If the old page breaks because the backend changed too, say that in the comment.
+6. **Post it** with [`--attach`](https://cli.github.com/manual/gh_issue_comment), which uploads each file and rewrites its `./` reference in the body. A reference is relative to the folder of `body.md`. Use `gh pr comment` for a PR. If `gh` has no `--attach` flag (`gh issue comment --help`), tell the user to update `gh`.
+
+   ```bash
+   gh issue comment 420 -R <org>/<repo> -F body.md --attach ./1-before.png --attach ./1-after.png
+   ```
+
+7. **Verify and finish.** Read the comment back with `gh api repos/<org>/<repo>/issues/comments/<id> --jq .body`. It must have one `user-attachments` link per picture and no `./` left. Stop the old servers and remove the worktree. Give the user the comment link, what each picture shows and the two versions compared. Say that you checked the links, not how the comment looks in a browser.
