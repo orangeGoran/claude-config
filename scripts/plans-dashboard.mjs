@@ -2100,21 +2100,6 @@ const server = http.createServer(async (req, res) => {
           output: warnings.length ? warnings.join('\n') : 'Settings saved — ' + cleaned.length + ' project(s).' });
       }
       if (url.pathname === '/api/add-project') return json(res, 200, addProject(b));
-      // 🎨 swatch on a project header: set or clear that project's color / tag only
-      if (url.pathname === '/api/project-look') {
-        const reg = loadRegistry();
-        const e = reg.find((x) => x.name === b.name);
-        if (!e) return json(res, 400, { error: 'bad project' });
-        for (const k of ['color', 'short']) {
-          if (!(k in b)) continue;
-          if (!b[k]) delete e[k];
-          else if (k === 'color' && /^#[0-9a-f]{3,8}$/i.test(b.color)) e.color = b.color;
-          else if (k === 'short') e.short = String(b.short).trim().slice(0, 12);
-          else return json(res, 400, { error: 'bad color' });
-        }
-        saveRegistry(reg);
-        return json(res, 200, { ok: true });
-      }
       if (url.pathname === '/api/launchers') {
         if (!proj) return json(res, 400, { error: 'bad project' });
         return json(res, 200, saveLaunchers(proj.name, Array.isArray(b.launchers) ? b.launchers : []));
@@ -2288,10 +2273,6 @@ const PAGE = /* html */ `<!doctype html>
            white-space:nowrap; word-break:normal; }
   .runstrip .rp.pcx, .runstrip .rp.pcx.sel, .runstrip .rp.pcx.sel:hover { border-left:4px solid var(--pc); }
   .phead.pcx { border-left:4px solid var(--pc); }
-  .phead .pswatch { width:16px; height:16px; padding:0; border:1px solid var(--line); border-radius:50%;
-                    background:none; cursor:pointer; flex-shrink:0; overflow:hidden; }
-  .phead .pswatch::-webkit-color-swatch-wrapper { padding:0; }
-  .phead .pswatch::-webkit-color-swatch { border:none; border-radius:50%; }
   section#detail.pcx { border-top:3px solid var(--pc); }
   .openmk { display:inline-block; font:700 calc(10px * var(--fs))/1.5 system-ui,sans-serif; letter-spacing:.06em;
             padding:0 7px; border-radius:99px; background:var(--accent); color:var(--accentfg); margin-right:5px;
@@ -3216,9 +3197,7 @@ function renderList() {
         (liveN ? '<span class="chip live">● ' + liveN + ' running</span>' : '') +
         (flightN ? '<span class="chip warn">⏳ ' + flightN + '</span>' : '');
       return '<div class="phead pcx" data-toggle="' + esc(pr) + '"' + projStyle(pr) + '><span class="chev">' +
-        (closed ? '▸' : '▾') + '</span><input type="color" class="pswatch" data-swatch="' + escA(pr) + '" value="' +
-          escA(sp.color || projAutoHex(pr)) + '" title="project color — click to change (tag and reset: ⚙ Settings)"' +
-          ' aria-label="color of ' + escA(pr) + '">' + esc(pr) +
+        (closed ? '▸' : '▾') + '</span>' + esc(pr) +
         (hasLanes ? '<button class="pbtn" data-suggest="' + esc(pr) +
           '" title="suggest a parallel launch batch">🧭 Suggest</button>' : '') +
         '<button class="pbtn" data-pull="' + esc(pr) + '" title="git pull --ff-only in ' + escA(sp.root) +
@@ -3251,13 +3230,6 @@ function renderList() {
   byId('collapseAll').textContent =
     allProjNames.length && allProjNames.every((n) => collapsedProjects.has(n))
       ? 'Expand all' : 'Collapse all';
-  byId('side').querySelectorAll('input[data-swatch]').forEach((el) => {
-    el.addEventListener('click', (e) => e.stopPropagation());
-    el.addEventListener('change', async () => {
-      const r = await post('/api/project-look', { name: el.dataset.swatch, color: el.value });
-      if (r.ok) refresh();
-    });
-  });
   byId('side').querySelectorAll('.phead[data-toggle]').forEach((el) =>
     el.addEventListener('click', () => {
       const pr = el.dataset.toggle;
