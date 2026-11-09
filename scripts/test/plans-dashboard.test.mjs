@@ -94,6 +94,11 @@ const handle = (j) => {
     q = c[c.length - 1].text;
     if (/^hold/.test(q)) { held = []; return; }
     if (/^hang/.test(q)) return;   // a turn that never ends, even on an interrupt
+    // a new step starts streaming and nothing else happens for a while
+    if (/^step/.test(q)) {
+      out({ type: 'stream_event', session_id: id, parent_tool_use_id: null, event: { type: 'message_start' } });
+      return setTimeout(() => out({ type: 'result', subtype: 'success', is_error: false, session_id: id, total_cost_usd: 0.01 }), 2000);
+    }
     out({ type: 'system', subtype: 'init', session_id: id, permissionMode: mode });
     if (q === '/compact') {
       contextUsed = 30000;
@@ -544,6 +549,24 @@ test('Stop ends the running turn only: the turn its queued messages start stays 
   assert.deepEqual(await post('/api/chat/stop', who), { ok: true });
   await until(async () => !(await chat()).live, 'the process to be closed');
   assert.deepEqual(await post('/api/chat/new', who), { ok: true });
+});
+
+test('a new step refreshes the log, so a queued message the agent has read moves above the step', async () => {
+  const q = 'project=demo&slug=demo-plan', who = { project: 'demo', slug: 'demo-plan' };
+  await sleep(1500);   // the last turn's own late history events are over
+  const ctl = new AbortController();
+  const ev = await fetch(`http://127.0.0.1:${port}/api/chat/events?${q}`, { signal: ctl.signal });
+  let text = '';
+  const read = (async () => { for await (const c of ev.body) text += Buffer.from(c).toString(); })().catch(() => {});
+  assert.deepEqual(await post('/api/chat/send', { ...who, text: 'step only' }), { ok: true });
+  const afterStep = () => { const at = text.indexOf('"reset":true'); return at < 0 ? '' : text.slice(at); };
+  const deadline = Date.now() + 1500;
+  while (Date.now() < deadline && !afterStep().includes('event: history')) await sleep(50);
+  ctl.abort();
+  await read;
+  assert.match(afterStep(), /event: history/);
+  const until = Date.now() + 5000;
+  while (Date.now() < until && (await (await get('/api/chat?' + q)).json()).busy) await sleep(100);
 });
 
 test("the chat shows a subagent's report as one folded row, whichever way it arrived", async () => {

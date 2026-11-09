@@ -1660,7 +1660,10 @@ const chatOnLine = (ch, j) => {
   if (j.type === 'stream_event') {
     if (j.parent_tool_use_id) return;   // a subagent's words: its tool line says enough
     const e = j.event || {};
-    if (e.type === 'message_start') { ch.partial = ''; chatEmit(ch.key, 'delta', { reset: true }); }
+    if (e.type === 'message_start') {
+      ch.partial = ''; chatEmit(ch.key, 'delta', { reset: true });
+      chatHistorySoon(ch);   // a queued message the agent has just read moves up, above this new step
+    }
     else if (e.type === 'content_block_delta' && e.delta?.type === 'text_delta') {
       ch.partial += e.delta.text;
       chatEmit(ch.key, 'delta', { text: e.delta.text });
@@ -3731,10 +3734,14 @@ function paintLive() {
   const c = ch, st = c.st, V = byId('clive');
   if (!V) return;
   const L = byId('clog'), atEnd = L.scrollHeight - L.scrollTop - L.clientHeight < 80;
-  V.innerHTML = (st.landing || []).filter((l) => l.id > (c.landed || 0)).map((l) => '<div class="amsg agent mdc live">' + md(l.text) + '</div>').join('') +
+  const sentHtml = (list) => list.map((s) => chatItemHtml({ k: 'you', i: '', text: s.text, sel: s.sel }, c)
+    .replace('>', '><div class="ctime">' + (!s.ok ? 'sending…' : s.queued ? 'queued: the agent reads it after this step' : 'sent') + '</div>')).join('');
+  // the answer being written comes after a message sent to an idle agent, and before one that waits in the queue
+  const cut = c.sent.findLastIndex((s) => !s.queued) + 1;
+  V.innerHTML = sentHtml(c.sent.slice(0, cut)) +
+    (st.landing || []).filter((l) => l.id > (c.landed || 0)).map((l) => '<div class="amsg agent mdc live">' + md(l.text) + '</div>').join('') +
     (st.partial ? '<div class="amsg agent mdc live">' + mdLive(st.partial) + '</div>' : '') +
-    c.sent.map((s) => chatItemHtml({ k: 'you', i: '', text: s.text, sel: s.sel }, c)
-      .replace('>', '><div class="ctime">' + (!s.ok ? 'sending…' : s.queued ? 'queued: the agent reads it after this step' : 'sent') + '</div>')).join('') +
+    sentHtml(c.sent.slice(cut)) +
     (st.busy && !(st.waits || []).length ? '<div class="aend cwork">working…</div>' : '') +
     (st.error ? '<div class="aend bad">' + esc(st.error) + '</div>' : '') +
     (!st.busy && st.last && !st.last.ok ? '<div class="aend bad">' + (st.last.subtype === 'error_during_execution' ? 'Stopped'
@@ -4241,10 +4248,11 @@ function diffHtml(f) {
 }
 // Two dividers in Files changed, both dragged, both remembered in this browser: the file
 // list's right edge (its width in px) and the line between the two sides of a diff (the
-// share of the width the old side gets). A fixed-layout table ignores a calc() column
+// share of the width the old side gets, in Monaco and in the table). A fixed-layout table ignores a calc() column
 // width, so the diff's columns are sized in px here and again whenever its box resizes.
 let diffRatio = 0.5, treeWidth = 0;
-try { diffRatio = Math.min(0.85, Math.max(0.15, +localStorage.getItem('dash-diff-ratio') || 0.5)); } catch {}
+const clampRatio = (r) => Math.min(0.9, Math.max(0.1, r));   // the range Monaco accepts
+try { diffRatio = clampRatio(+localStorage.getItem('dash-diff-ratio') || 0.5); } catch {}
 try { treeWidth = +localStorage.getItem('dash-tree-w') || 0; } catch {}
 const layoutSplit = (w) => {
   const ln = w.querySelector('td.ln'), col = w.querySelector('col.dlc'), bar = w.querySelector('.dsplit');
@@ -4258,7 +4266,7 @@ new MutationObserver(() => document.querySelectorAll('.dwrap:not([data-obs])').f
   w.dataset.obs = '1'; splitObs.observe(w);
 })).observe(document.body, { childList: true, subtree: true });
 const setDiffRatio = (r, save) => {
-  diffRatio = Math.round(Math.min(0.85, Math.max(0.15, r)) * 1000) / 1000;
+  diffRatio = Math.round(clampRatio(r) * 1000) / 1000;
   document.querySelectorAll('.dwrap').forEach(layoutSplit);
   if (save) try { localStorage.setItem('dash-diff-ratio', diffRatio); } catch {}
 };
@@ -4442,7 +4450,7 @@ async function localAct(p, what, btn, label) {
 let localTicking = false, localTimer = null;
 async function localTick() {
   const p = selected && find(selected), v = byId('prview');
-  if (localTicking || document.hidden || !p || !p.worktree || !p.pr || prTab[p.key] !== 'files'
+  if (localTicking || monoDragging || document.hidden || !p || !p.worktree || !p.pr || prTab[p.key] !== 'files'
     || !v || !v.classList.contains('pvfiles') || selectionLive()) return;
   localTicking = true;
   try {
@@ -4465,7 +4473,7 @@ function chatJump(p, file) {
 // Files changed opens. It gets the whole file at both sides, rebuilt from the head version and
 // the diff (fullHunks), so no second gh call. Offline it fails once and the table above stays.
 const MONACO = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min';
-let monaco = null, monacoLoad = null, monacoFailed = false, monoEd = null;
+let monaco = null, monacoLoad = null, monacoFailed = false, monoEd = null, monoDragging = false;
 function loadMonaco() {
   if (monacoLoad) return monacoLoad;
   // the workers come from the CDN too; a data: URL lets them start from this page's origin
@@ -4513,13 +4521,32 @@ function mountMonaco(cur, keepTop) {
   const models = [monaco.editor.createModel(text('+'), lang), monaco.editor.createModel(text('-'), lang)];
   const fs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fs')) || 1;
   const ed = monaco.editor.createDiffEditor(byId('mono'), {
-    readOnly: true, originalEditable: false, automaticLayout: true, renderSideBySide: diffSplit,
+    readOnly: true, originalEditable: false, automaticLayout: true, renderSideBySide: diffSplit, splitViewDefaultRatio: diffRatio,
     useInlineViewWhenSpaceIsLimited: false, hideUnchangedRegions: { enabled: !diffFull },
     wordWrap: 'on', diffWordWrap: 'on', scrollBeyondLastLine: false, fontSize: Math.round(12 * fs),
     minimap: { enabled: true }, renderOverviewRuler: true, ignoreTrimWhitespace: false,
   });
   ed.setModel({ original: models[0], modified: models[1] });
   monoEd = { dispose: () => ed.dispose(), models, getModifiedEditor: () => ed.getModifiedEditor() };
+  // a repaint builds a new editor: the line dragged between the two sides is kept in diffRatio,
+  // which the next editor opens with. Monaco's double-click goes back to the ratio it opened with,
+  // so double-click is told to mean equal halves, as on the table's divider.
+  const onSash = (e) => e.target.closest && e.target.closest('.monaco-sash.vertical');
+  byId('mono').addEventListener('pointerdown', (e) => {
+    if (!onSash(e)) return;
+    monoDragging = true;
+    window.addEventListener('pointerup', () => requestAnimationFrame(() => {
+      monoDragging = false;
+      const box = ed.getModifiedEditor().getContainerDomNode().getBoundingClientRect();
+      const left = box.left - byId('mono')?.getBoundingClientRect().left;
+      if (box.width && left > 0) setDiffRatio(left / (left + box.width), true);
+    }), { capture: true, once: true });
+  }, true);
+  byId('mono').addEventListener('dblclick', (e) => {
+    if (!onSash(e)) return;
+    setDiffRatio(0.5, true);
+    ed.updateOptions({ splitViewDefaultRatio: 0.5 });
+  }, true);
   // lines selected on either side go with the next chat message, as in the VS Code extension
   for (const [e, side] of [[ed.getModifiedEditor(), 'new'], [ed.getOriginalEditor(), 'old']])
     e.onDidChangeCursorSelection((ev) => chatPickFromEditor(e, side, cur.path, ev.selection));
@@ -4536,6 +4563,7 @@ function mountMonaco(cur, keepTop) {
 // removed (left half) and added (right half) lines at its place in the file, and a box for
 // the part on screen. Click or drag on it to scroll there.
 const diffShown = {};   // plan key -> the file and layout last opened, so a repaint keeps the scroll
+const diffHeld = {};    // plan key -> { view, top }: the place kept while the whole file is read again
 const rulerObs = new ResizeObserver((es) => es.forEach((e) => e.target._ruler && e.target._ruler()));
 function bindRuler(body, ruler) {
   const tab = body.querySelector('.dtab');
@@ -4688,8 +4716,13 @@ function drawFilesView(p) {
   // a repaint of the same view keeps the diff where it was; a new file opens at its first change
   const view = cur.path + '|' + diffSplit + '|' + (wantFull && !!cur.full) + '|' + diffFull;
   const oldBody = v.querySelector('.pdbody');
-  const keepTop = diffShown[p.key] !== view ? null : monoEd ? monoEd.getModifiedEditor().getScrollTop()
-    : oldBody ? oldBody.scrollTop : null;
+  const topNow = monoEd ? monoEd.getModifiedEditor().getScrollTop() : oldBody ? oldBody.scrollTop : null;
+  // the PR moved, so the whole file is read again: the Loading paint must not lose the place
+  const loadingFull = wantFull && cur.full === undefined, fullView = cur.path + '|' + diffSplit + '|true|' + diffFull;
+  const held = diffHeld[p.key];
+  if (!loadingFull) delete diffHeld[p.key];
+  else if (diffShown[p.key] === fullView && !(held && held.view === fullView)) diffHeld[p.key] = { view: fullView, top: topNow };
+  const keepTop = held && held.view === view ? held.top : diffShown[p.key] !== view ? null : topNow;
   const showMono = mono && monaco && !(wantFull && cur.full === undefined);
   const rowKey = (r) => r.dataset.file || r.dataset.dir || r.dataset.grp;
   const focusKey = document.activeElement && document.activeElement.closest && document.activeElement.closest('.pf')
