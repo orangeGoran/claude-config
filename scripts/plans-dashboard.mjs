@@ -2241,6 +2241,8 @@ const PAGE = /* html */ `<!doctype html>
   .dot { width:9px; height:9px; border-radius:50%; background:var(--dot); flex-shrink:0; margin-top:5px; }
   @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.3 } }
   .dot.live { background:var(--run); box-shadow:0 0 7px var(--run); animation:pulse 1.5s ease-in-out infinite; }
+  .chip.cwk { animation:pulse 1.5s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .chip.cwk { animation:none; } }
   .item.live { border-left:3px solid var(--run); background:color-mix(in srgb, var(--run) 8%, transparent); }
   .item.bad { border-left:3px solid var(--bad); }
   .item.ok { border-left:3px solid var(--ok); background:color-mix(in srgb, var(--ok) 6%, transparent); }
@@ -2987,8 +2989,21 @@ const dotClass = (p) => p.live ? 'live'
   : starting(p) ? 'warn' : notStarted(p) ? 'bad'
   : !p.run ? '' : OUT_CLASS[outOf(p)];
 
+// chats whose agent answered while you looked elsewhere; the mark stays until you open that chat
+const chatAnswered = new Set();
+try { for (const k of JSON.parse(localStorage.getItem('dash-chat-answered') || '[]')) chatAnswered.add(k); } catch {}
+function markAnswered(key, on) {
+  if (chatAnswered.has(key) === on) return;
+  on ? chatAnswered.add(key) : chatAnswered.delete(key);
+  try { localStorage.setItem('dash-chat-answered', JSON.stringify([...chatAnswered])); } catch {}
+}
+// what the plan's chat is doing, for the sidebar rows: asking beats working beats answered
+const chatChip = (p) => p.chatWaits ? '<span class="chip bad" title="The agent waits for your permission">🔐 asks you</span>'
+  : p.chatting ? '<span class="chip live cwk" title="The agent is working on your message">💬 working…</span>'
+  : chatAnswered.has(p.key) ? '<span class="chip ok" title="The agent answered. Open the chat to read it.">💬 answered</span>' : '';
+
 const autoChips = (p) => {
-  let c = '';
+  let c = chatChip(p);
   if (p.live) c += '<span class="chip live">● running</span>';
   else if (starting(p)) c += '<span class="chip warn">⏳ starting…</span>';
   else if (notStarted(p)) c += '<span class="chip bad">⚠ didn’t start</span>';
@@ -3124,7 +3139,7 @@ function renderList() {
   rs.className = 'runstrip' +
     (live.length || inflight.length || ready.length || bad.length || launching.length || failed.length ? ' on' : '');
   let sh = '';
-  const stripName = (p) => (p.key === selected ? openMark : '') + projPill(p.project) + p.file;
+  const stripName = (p) => (p.key === selected ? openMark : '') + projPill(p.project) + p.file + chatChip(p);
   if (failed.length) sh += '<div class="cap bc">⚠ DIDN’T START — ' + failed.length + '</div>' +
     failed.map((p) => '<div class="rp bp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot bad"></span><span class="n">' +
       stripName(p) + '</span><button class="mini" data-why="' + p.key + '">why?</button></div>').join('');
@@ -3643,6 +3658,7 @@ function holdChatLock() {
 function chatBind(p) {
   if (ch) ch.es.close();
   const c = ch = { p, key: p.key, items: {}, first: 0, total: 0, session: null, st: {}, open: new Set(), sent: [] };
+  if (chatAnswered.has(p.key)) { markAnswered(p.key, false); renderList(); }
   const C = byId('chat');
   if (chatW) C.style.width = chatW + 'px';
   C.innerHTML =
@@ -5981,7 +5997,11 @@ function checkAlerts() {
       alertUser(o === 'failed' ? 'Run failed' : o === 'needs-you' ? 'Run needs you' : 'Run finished',
         p.project + ' / ' + p.file, p.key);
     }
-    if (was && was.ask && !ask) alertUser('The agent answered', p.project + ' / ' + p.file, p.key, 'chat');
+    if (was && was.ask && !ask) {
+      alertUser('The agent answered', p.project + ' / ' + p.file, p.key, 'chat');
+      if (!(ch && ch.key === p.key)) markAnswered(p.key, true);   // not marked when its chat is on screen
+    }
+    if (ask) markAnswered(p.key, false);
     if (was && waits > was.waits) alertUser('The agent asks for permission', p.project + ' / ' + p.file, p.key, 'chat');
     wasBusy[p.key] = { run, ask, waits };
   }
