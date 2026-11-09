@@ -1113,7 +1113,11 @@ const prDetail = async (proj, number) => {
     else checks[st]++;
   }
   const { statusCheckRollup, commits, ...rest } = pr;
-  return { ok: true, pr: { ...rest, commits: (commits || []).length, checks, merge: await mergeSettings(proj) } };
+  // commits on the base that the PR does not have yet: the "Merge <base> in" button shows when > 0
+  const [merge, behind] = await Promise.all([mergeSettings(proj), pr.state !== 'OPEN' ? null
+    : gh(proj, ['api', 'repos/{owner}/{repo}/compare/' + pr.headRefOid + '...' + pr.baseRefName, '--jq', '.ahead_by'])]);
+  const behindBy = behind && behind.ok ? (parseInt(behind.out, 10) || 0) : null;
+  return { ok: true, pr: { ...rest, commits: (commits || []).length, checks, merge, behindBy } };
 };
 // task-list boxes ("- [ ] …") in order, skipping fenced code — the same ones the page draws
 const taskLines = (body) => {
@@ -3655,6 +3659,7 @@ function chatBind(p) {
         CHAT_MODES.map(([v, l]) => '<option value="' + v + '"' + (v === chatMode ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
         '<select id="cmodel" aria-label="Model"><option value="">Model: default</option></select>' +
         '<span class="cctx" id="cctx" hidden></span><span class="cidle" id="cidle" hidden></span><button id="ccompact">Compact</button>' +
+        '<button id="csync" hidden>Fix conflicts</button>' +
         '<span style="flex:1"></span><button id="cstop" hidden>Stop</button><button id="cgo" class="primary">Send</button></div></div>';
   const inp = byId('cin');
   inp.value = chatDraft[p.key] || '';
@@ -3664,7 +3669,17 @@ function chatBind(p) {
   inp.addEventListener('keydown', chatKey);
   inp.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== inp) byId('cmenu').hidden = true; }, 150));
   byId('cgo').addEventListener('click', () => chatSendMsg());
-  byId('ccompact').addEventListener('click', (e) => { e.target.disabled = true; chatSendMsg('/compact').finally(paintContext); });
+  byId('ccompact').addEventListener('click', (e) => {
+    if (!confirm('Compact this chat?\\n\\nThe agent replaces the conversation so far with a summary. Details of earlier messages are lost to it.')) return;
+    e.target.disabled = true; chatSendMsg('/compact').finally(paintContext);
+  });
+  byId('csync').addEventListener('click', (e) => {
+    const d = prData[c.key];
+    if (!d || !d.baseRefName) return;
+    e.target.disabled = true;
+    chatSendMsg('/update-branch ' + d.baseRefName);
+  });
+  paintSync();
   byId('cstop').addEventListener('click', () => post('/api/chat/stop', { project: c.p.project, slug: c.p.slug }));
   byId('cclose').addEventListener('click', () => toggleChat(false));
   byId('cfork').addEventListener('click', () => post('/api/chat/fork', { project: c.p.project, slug: c.p.slug }));
@@ -3754,6 +3769,19 @@ function paintIdle() {
   E.setAttribute('aria-label', E.title);
 }
 setInterval(paintIdle, 30000);
+// "Fix conflicts" in the chat row: shown when the PR's base has commits the PR lacks, or GitHub
+// reports conflicts. It sends /update-branch <base>: merge the base in, fix, check, push.
+function paintSync() {
+  const B = byId('csync'), d = ch && prData[ch.key];
+  if (!B) return;
+  const conflicts = d && d.mergeable === 'CONFLICTING';
+  B.hidden = !(d && d.state === 'OPEN' && d.baseRefName && (conflicts || d.behindBy > 0));
+  if (B.hidden) return;
+  B.disabled = false;
+  B.title = (conflicts ? 'Conflicts with ' + d.baseRefName + '. ' : '') +
+    (d.behindBy > 0 ? d.baseRefName + ' has ' + d.behindBy + ' commit' + (d.behindBy > 1 ? 's' : '') + ' this branch does not have. ' : '') +
+    'Sends /update-branch ' + d.baseRefName + ': the agent merges it in, fixes the conflicts, runs the checks and pushes.';
+}
 function chatSetMode(mode, model) {
   chatMode = mode; chatModel = model;
   try { localStorage.setItem('dash-chat-mode', mode); localStorage.setItem('dash-chat-model', model); } catch {}
@@ -4071,6 +4099,7 @@ byId('csplit').addEventListener('keydown', (e) => {
 async function loadPr(p) {
   const r = await (await fetch('/api/pr?project=' + p.project + '&number=' + p.pr.number)).json();
   prData[p.key] = r.ok ? { ...r.pr, from: JSON.stringify(p.pr) } : { error: r.output || r.error, from: JSON.stringify(p.pr) };
+  paintSync();
 }
 async function renderPrTab(p, tab, force) {
   // a new PR or a new commit redraws the tab; a state change (draft, ready, merged) only the bar
@@ -4223,13 +4252,6 @@ function splitPrBody(body) {
 }
 // PR tab: what was unfolded, kept across repaints (plan key -> open)
 const prMoreOpen = {}, prStatusOpen = new Set();
-// the chat box gets the request; you read it and press Enter
-function askAgent(p, text) {
-  chatDraft[p.key] = text;
-  if (!chatOn) return toggleChat(true);
-  const inp = byId('cin');
-  if (inp) { inp.value = text; inp.focus(); }
-}
 function drawPr(p) {
   const d = prData[p.key], v = byId('prview');
   if (!v) return;
@@ -4277,7 +4299,6 @@ function drawPr(p) {
     ? (why.length ? ['warn', '!', '<b>Ready to merge</b> <span class="dim">· ' + esc(why.join(' · ')) + '</span>']
       : ['ok', '✓', '<b>Ready to merge</b>'])
     : ['bad', '✕', '<b>Not ready to merge:</b> ' + esc(why.join(' · '))];
-  const fix = open && d.mergeable === 'CONFLICTING' && hasChat(p);
   const parts = splitPrBody(d.body || '');
   const moreOpen = prMoreOpen[p.key] != null ? prMoreOpen[p.key] : !parts.dec;
   v.innerHTML =
@@ -4287,8 +4308,7 @@ function drawPr(p) {
       notes.map((n) => '<div' + (n.startsWith('Not pulled') ? ' class="notpulled"' : '') + '>' + esc(n) + '</div>').join('') + '</div>' : '') +
     (open ? '<div class="mbox" id="mbox"><details id="mstat"' + (prStatusOpen.has(p.key) ? ' open' : '') + '>' +
       '<summary class="mline mhead ' + head[0] + '"><span class="ic">' + head[1] + '</span><span>' + head[2] + '</span>' +
-        '<span style="flex:1"></span>' + (fix ? '<button id="mfix" title="Puts the request in the chat box. You read it and press Enter.">Ask the agent to fix</button>' : '') +
-        '<span class="dim mtoggle">details</span></summary>' + lines.join('') + '</details>' +
+        '<span style="flex:1"></span><span class="dim mtoggle">details</span></summary>' + lines.join('') + '</details>' +
       (canMerge ? '<div class="mfoot">' +
         '<select id="mmethod" aria-label="merge method">' + methods.map((m) => '<option value="' + m + '"' + (m === pick ? ' selected' : '') + '>' + LABEL[m] + '</option>').join('') + '</select>' +
         '<label><input type="checkbox" id="mdel" checked> Delete the branch on GitHub</label><span style="flex:1"></span>' +
@@ -4306,10 +4326,6 @@ function drawPr(p) {
       '<div class="mdc prbody" id="prbody"></div></details>';
   byId('mstat')?.addEventListener('toggle', (e) => e.target.open ? prStatusOpen.add(p.key) : prStatusOpen.delete(p.key));
   byId('prmore').addEventListener('toggle', (e) => { prMoreOpen[p.key] = e.target.open; });
-  byId('mfix')?.addEventListener('click', (e) => {
-    e.preventDefault(); e.stopPropagation();   // not a click on the status line: it stays as it is
-    askAgent(p, 'Merge ' + d.baseRefName + ' into this branch, fix the conflicts, run the tests and push.');
-  });
   const A = byId('practs');
   if (open) {
     const btn = (label, fn, cls) => {
