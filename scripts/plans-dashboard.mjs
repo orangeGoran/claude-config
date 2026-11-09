@@ -1370,6 +1370,9 @@ const selLabel = (t, cwd) => {
   const name = f.slice(f.lastIndexOf('/') + 1) || 'selected text';
   return name + (m[1] ? ':' + m[1] + (m[2] !== m[1] ? '-' + m[2] : '') : '') + (t.includes('before this pull request') ? ' (before)' : '');
 };
+// the selected text itself, so a click on the chip shows what went with the message
+const selBody = (t) => clip(t.slice((SEL_RE.exec(t) || [''])[0].length)
+  .replace(/(?:\n\nThis may or may not be related to the current task\.)?<\/ide_selection>\s*$/, ''), 20000);
 const tagText = (s, tag) => ((s.match(new RegExp('<' + tag + '>([\\s\\S]*?)</' + tag + '>')) || [])[1] || '').trim();
 // A subagent's report reaches the session as a message: queued during a turn, or as a meta line
 // between turns. The frame is for the model, and the harness indents each line of the report.
@@ -1384,7 +1387,7 @@ const handBackItem = (s) => {
 const userItems = (t, j, cwd) => {
   const c = j.message?.content;
   const blocks = typeof c === 'string' ? [{ type: 'text', text: c }] : Array.isArray(c) ? c : [];
-  const you = [], sel = [];
+  const you = [], sel = [], selText = [];
   for (const b of blocks) {
     if (b.type === 'tool_result') {
       const it = t.tools.get(b.tool_use_id);
@@ -1394,7 +1397,7 @@ const userItems = (t, j, cwd) => {
     if (b.type === 'image') { you.push('[image]'); continue; }
     if (b.type !== 'text' || !b.text) continue;
     const s = b.text;
-    if (s.startsWith('<ide_selection>')) { const l = selLabel(s, cwd); if (l) sel.push(l); continue; }
+    if (s.startsWith('<ide_selection>')) { const l = selLabel(s, cwd); if (l) { sel.push(l); selText.push(selBody(s)); } continue; }
     if (s.startsWith('<ide_opened_file>') || s.includes('<local-command-caveat>')) continue;
     if (j.isCompactSummary) { t.items.push({ k: 'note', text: 'The earlier conversation was compacted', body: clip(s, 6000) }); continue; }
     const report = handBackItem(s);
@@ -1420,7 +1423,7 @@ const userItems = (t, j, cwd) => {
     if (/^\[Request interrupted by user/.test(s)) { t.items.push({ k: 'note', text: 'Stopped' }); continue; }
     you.push(s);
   }
-  if (you.length || sel.length) t.items.push({ k: 'you', text: you.join('\n\n'), sel, at: j.timestamp });
+  if (you.length || sel.length) t.items.push({ k: 'you', text: you.join('\n\n'), sel, selText, at: j.timestamp });
 };
 const assistantItems = (t, j, cwd) => {
   for (const b of j.message?.content || []) {
@@ -2725,6 +2728,15 @@ const PAGE = /* html */ `<!doctype html>
            border-radius:6px; padding:1px 6px; margin:0 4px 4px 0; background:var(--card); white-space:normal; }
   .cchip.csel { display:flex; margin:0 0 6px; } .cchip.csel b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
   .cchip.csel .dim { margin-left:auto; white-space:nowrap; }
+  .cchip.cview { cursor:pointer; color:inherit; } .cchip.cview:hover { border-color:var(--accent); }
+  #seldlg { width:min(760px,calc(100vw - 32px)); max-height:min(80vh,700px); padding:0; background:var(--panel); color:var(--fg);
+            border:1px solid var(--line); border-radius:12px; box-shadow:0 24px 70px rgba(0,0,0,.45); }
+  #seldlg[open] { display:flex; flex-direction:column; }
+  #seldlg::backdrop { background:rgba(5,7,12,.5); }
+  .seldlg-top { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); }
+  .seldlg-top .ccopy { position:static; opacity:1; }
+  #seldlgbody { margin:0; padding:12px 14px; overflow:auto; white-space:pre-wrap; word-break:break-word;
+                font:calc(12px * var(--fs)) ui-monospace,monospace; background:var(--codebg); }
   .cchip button { border:0; background:none; padding:0 2px; color:var(--dim); cursor:pointer; }
   .cmenu { position:absolute; left:10px; right:10px; bottom:100%; max-height:300px; overflow:auto; background:var(--panel);
            border:1px solid var(--line); border-radius:8px; box-shadow:0 -6px 20px rgba(0,0,0,.25); z-index:5; }
@@ -2814,6 +2826,8 @@ const PAGE = /* html */ `<!doctype html>
       <button class="primary" id="onbnext">Continue</button></div>
   </div>
 </div>
+<dialog id="seldlg" aria-labelledby="seldlgt"><div class="seldlg-top"><b id="seldlgt"></b><span style="flex:1"></span>
+  <button class="ccopy" id="seldlgcopy">Copy</button><button class="onb-x" id="seldlgx" title="Close (Esc)">✕</button></div><pre id="seldlgbody"></pre></dialog>
 <div id="tour"><div id="tourblock"></div><div id="tourhole"></div>
   <div id="tourpop" role="dialog" aria-live="polite"></div></div>
 <script>
@@ -2881,6 +2895,23 @@ const selectionLive = () =>
 // navigator.clipboard exists only in a secure context. 127.0.0.1 and *.localhost
 // qualify; a vanity domain like http://plans.test does not — and that is the URL
 // this server prefers when /etc/hosts has it. Fall back to the legacy path there.
+// the text a chat chip stands for: the selected lines that went (or go) with a message
+document.addEventListener('click', (e) => {
+  const chip = e.target.closest && e.target.closest('.cview[data-seltext]');
+  if (!chip) return;
+  e.preventDefault();
+  const D = byId('seldlg');
+  byId('seldlgt').textContent = (chip.querySelector('b') || chip).textContent.replace(/^⧉\s*/, '').trim();
+  byId('seldlgbody').textContent = chip.dataset.seltext;
+  D.showModal();
+});
+byId('seldlgx').addEventListener('click', () => byId('seldlg').close());
+byId('seldlg').addEventListener('click', (e) => { if (e.target.id === 'seldlg') e.currentTarget.close(); });
+byId('seldlgcopy').addEventListener('click', async (e) => {
+  const b = e.currentTarget, ok = await copyText(byId('seldlgbody').textContent);
+  b.textContent = ok ? 'Copied' : 'Copy failed';
+  setTimeout(() => { b.textContent = 'Copy'; }, 1400);
+});
 async function copyText(text) {
   try {
     if (window.isSecureContext && navigator.clipboard) {
@@ -3872,10 +3903,14 @@ async function chatLoadEnd(c, how) {
   paintLive();
 }
 const chatTime = (at) => at ? new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+// a click on the chip opens the text that went with the message
+const selChip = (label, text) => text
+  ? '<button type="button" class="cchip cview" data-seltext="' + escA(text) + '" title="Show the text that went with this message">⧉ ' + esc(label) + '</button>'
+  : '<span class="cchip">⧉ ' + esc(label) + '</span>';
 function chatItemHtml(it, c) {
   const open = c.open.has(it.i) ? ' open' : '';
   if (it.k === 'you') return '<div class="cyou" data-i="' + it.i + '">' + (it.at ? '<div class="ctime">' + esc(chatTime(it.at)) + '</div>' : '') +
-    '<div class="amsg you">' + (it.sel || []).map((s) => '<span class="cchip">⧉ ' + esc(s) + '</span>').join('') +
+    '<div class="amsg you">' + (it.sel || []).map((s, n) => selChip(s, (it.selText || [])[n])).join('') +
     (it.text ? (/^\\/[\\w:-]+/.test(it.text) ? '<code>' + esc(it.text.split(' ')[0]) + '</code> ' + esc(it.text.split(' ').slice(1).join(' ')) : esc(it.text)) : '') + '</div></div>';
   if (it.k === 'agent') return '<div class="amsg agent mdc" data-i="' + it.i + '">' + md(it.text) +
     '<button class="ccopy cmsg" data-copymsg="' + it.i + '" title="Copy the whole answer as Markdown">Copy</button></div>';
@@ -3915,7 +3950,7 @@ function paintLive() {
   const c = ch, st = c.st, V = byId('clive');
   if (!V) return;
   const L = byId('clog'), atEnd = L.scrollHeight - L.scrollTop - L.clientHeight < 80;
-  const sentHtml = (list) => list.map((s) => chatItemHtml({ k: 'you', i: '', text: s.text, sel: s.sel }, c)
+  const sentHtml = (list) => list.map((s) => chatItemHtml({ k: 'you', i: '', text: s.text, sel: s.sel, selText: s.selText }, c)
     .replace('>', '><div class="ctime">' + (!s.ok ? 'sending…' : s.queued ? 'queued: the agent reads it after this step' : 'sent') + '</div>')).join('');
   // the answer being written comes after a message sent to an idle agent, and before one that waits in the queue
   const cut = c.sent.findLastIndex((s) => !s.queued) + 1;
@@ -3961,7 +3996,8 @@ async function chatSendMsg(command) {
   // shown at once; the session log has it only when the agent reads it
   const mine = { text, from: c.total, queued: !!c.st.busy,
     sel: s ? [(s.file ? s.file.slice(s.file.lastIndexOf('/') + 1) : 'selected text') +
-      (s.start ? ':' + s.start + (s.end > s.start ? '-' + s.end : '') : '') + (s.side === 'old' ? ' (before)' : '')] : [] };
+      (s.start ? ':' + s.start + (s.end > s.start ? '-' + s.end : '') : '') + (s.side === 'old' ? ' (before)' : '')] : [],
+    selText: s ? [s.text] : [] };
   c.sent.push(mine);
   paintLive();
   byId('clog').scrollTop = byId('clog').scrollHeight;
@@ -4071,11 +4107,11 @@ function paintSel() {
   if (!s) { S.innerHTML = ''; return; }
   const name = s.file ? s.file.slice(s.file.lastIndexOf('/') + 1) : 'selected text';
   const n = s.start ? s.end - s.start + 1 : s.text.split('\\n').length;
-  S.innerHTML = '<span class="cchip csel" title="Goes with the next message:\\n' + escA(s.text.slice(0, 600)) + '">⧉ <b>' + esc(name) +
+  S.innerHTML = '<span class="cchip csel cview" data-seltext="' + escA(s.text) + '" title="Goes with the next message. Click to see all of it.">⧉ <b>' + esc(name) +
     (s.start ? ':' + s.start + (s.end > s.start ? '-' + s.end : '') : '') + '</b>' + (s.side === 'old' ? ' (before)' : '') +
     '<span class="dim">' + n + ' line' + (n === 1 ? '' : 's') + ' selected</span>' +
     '<button id="cselx" aria-label="Do not send the selected lines" title="Do not send the selected lines">✕</button></span>';
-  byId('cselx').addEventListener('click', () => setChatSel(null));
+  byId('cselx').addEventListener('click', (e) => { e.stopPropagation(); setChatSel(null); });
 }
 function chatPickFromEditor(e, side, file, s) {
   if (s.isEmpty()) { if (chatSel && chatSel.from === 'mono') setChatSel(null); return; }

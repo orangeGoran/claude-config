@@ -415,6 +415,7 @@ test("the chat continues the plan's session live: history, permission prompts, s
   assert.equal(h.session, 'ses-mine');
   assert.deepEqual(h.items.map((i) => i.k + ':' + i.text), ['you:why the service?', 'agent:answer: why the service?']);
   assert.deepEqual(h.items[0].sel, ['a.ts:3-4']);
+  assert.deepEqual(h.items[0].selText, ['x\ny'], 'the chip can show the text that went with the message');
   assert.match(readFileSync(path.join(home, '.claude', 'projects', repo.replace(/[^a-zA-Z0-9]/g, '-'), 'ses-mine.jsonl'), 'utf8'),
     /<ide_selection>The user selected the lines 3 to 4 from [^:]*\/src\/a\.ts:\\nx\\ny/);
   assert.equal(spawns().length, 1);
