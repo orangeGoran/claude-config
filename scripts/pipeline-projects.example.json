@@ -13,6 +13,8 @@
       "root": "~/Workspace/acme/docs-site",
       "plansDir": "~/Workspace/acme/wiki/plans",
       "doneDir": "~/Workspace/acme/wiki/plans/done",
+      "color": "#d08770",
+      "short": "docs",
       "launchers": [
         {
           "label": "Implement only",

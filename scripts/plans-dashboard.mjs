@@ -186,6 +186,7 @@ const resolveProject = (p) => {
   const launcherScript = path.join(root, '.claude/scripts/auto-pipeline.sh');
   return {
     name: p.name, client: p.client || 'Default', root, plansDir,
+    color: /^#[0-9a-f]{3,8}$/i.test(p.color || '') ? p.color : '', short: p.short ? String(p.short).slice(0, 12) : '',
     launchers: Array.isArray(p.launchers) ? p.launchers : [],
     hasPipeline: existsSync(launcherScript), launcherScript,
     hasLanes: existsSync(path.join(root, '.claude/scripts/plan-lanes.mjs')),
@@ -499,6 +500,7 @@ const fullState = async () => {
     const proj = resolveProject(entry);
     out.push({
       name: proj.name, client: proj.client, root: proj.root, plansDir: proj.plansDir,
+      color: proj.color, short: proj.short,
       hasPipeline: proj.hasPipeline, hasLanes: proj.hasLanes,
       modes: pipelineModes(proj).map(({ flag, ...m }) => m),
       launchers: proj.launchers, issuesUrl: proj.issuesUrl,
@@ -743,6 +745,9 @@ const cleanEntry = (e) => {
   };
   if (e.plansDir && String(e.plansDir).trim()) entry.plansDir = String(e.plansDir).slice(0, 500);
   if (e.doneDir && String(e.doneDir).trim()) entry.doneDir = String(e.doneDir).slice(0, 500);
+  // optional look: a CSS hex color and a short tag; without them the dashboard picks both
+  if (/^#[0-9a-f]{3,8}$/i.test(e.color || '')) entry.color = e.color;
+  if (e.short && String(e.short).trim()) entry.short = String(e.short).trim().slice(0, 12);
   let warning;
   if (!existsSync(expand(entry.root)))
     warning = entry.name + ': root does not exist: ' + entry.root;
@@ -967,6 +972,7 @@ const addProject = (b) => {
   const { entry, warning } = cleanEntry({
     name: b.name, client: b.client, root: tilde(root),
     plansDir: b.plansDir ? tilde(expand(b.plansDir)) : undefined,
+    color: b.color, short: b.short,
     launchers: existsSync(path.join(root, '.claude/scripts/run-skill.sh'))
       && !existsSync(path.join(root, '.claude/scripts/auto-pipeline.sh')) ? [WRAPPER_LAUNCHER] : [],
   });
@@ -2087,6 +2093,21 @@ const server = http.createServer(async (req, res) => {
           output: warnings.length ? warnings.join('\n') : 'Settings saved — ' + cleaned.length + ' project(s).' });
       }
       if (url.pathname === '/api/add-project') return json(res, 200, addProject(b));
+      // 🎨 swatch on a project header: set or clear that project's color / tag only
+      if (url.pathname === '/api/project-look') {
+        const reg = loadRegistry();
+        const e = reg.find((x) => x.name === b.name);
+        if (!e) return json(res, 400, { error: 'bad project' });
+        for (const k of ['color', 'short']) {
+          if (!(k in b)) continue;
+          if (!b[k]) delete e[k];
+          else if (k === 'color' && /^#[0-9a-f]{3,8}$/i.test(b.color)) e.color = b.color;
+          else if (k === 'short') e.short = String(b.short).trim().slice(0, 12);
+          else return json(res, 400, { error: 'bad color' });
+        }
+        saveRegistry(reg);
+        return json(res, 200, { ok: true });
+      }
       if (url.pathname === '/api/launchers') {
         if (!proj) return json(res, 400, { error: 'bad project' });
         return json(res, 200, saveLaunchers(proj.name, Array.isArray(b.launchers) ? b.launchers : []));
@@ -2238,7 +2259,6 @@ const PAGE = /* html */ `<!doctype html>
   .runstrip .rp .n { font:600 calc(12px * var(--fs))/1.4 ui-monospace,monospace; word-break:break-all; flex:1 1 170px; min-width:0; }
   .runstrip .rp .n .rst { display:block; font:400 calc(11px * var(--fs))/1.4 system-ui,sans-serif; color:var(--dim);
     word-break:normal; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .runstrip .rp .n .pfx { color:var(--dim); font-weight:400; }
   .runstrip .rp .mini { padding:3px 9px; font-size:calc(11px * var(--fs)); flex-shrink:0; }
   .runstrip .rp .acts { display:flex; gap:6px; margin-left:auto; }
   .runstrip .cap.okc { color:var(--ok); margin-top:8px; }
@@ -2251,7 +2271,24 @@ const PAGE = /* html */ `<!doctype html>
   .runstrip .cap:first-child { margin-top:0; }
   .runstrip .rp.bp { border-color:var(--bad); background:color-mix(in srgb, var(--bad) 10%, transparent); }
   .runstrip .rp.bp:hover { background:color-mix(in srgb, var(--bad) 18%, transparent); }
-  .runstrip .rp.sel, .runstrip .rp.sel:hover { background:var(--sel); border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  .runstrip .rp.sel, .runstrip .rp.sel:hover { background:var(--panel); border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  /* project look: --ph (hue) or an inline --pc from the registry; status keeps the other borders */
+  .pcx { --pc:hsl(var(--ph, 210) 40% 66%); }
+  :root[data-theme="light"] .pcx { --pc:hsl(var(--ph, 210) 45% 48%); }
+  .ppill { display:inline-block; font:700 calc(10.5px * var(--fs))/1.5 system-ui,sans-serif; padding:0 7px;
+           border-radius:99px; color:var(--pc); background:color-mix(in srgb, var(--pc) 12%, transparent);
+           border:1px solid color-mix(in srgb, var(--pc) 35%, transparent); vertical-align:1px; margin-right:5px;
+           white-space:nowrap; word-break:normal; }
+  .runstrip .rp.pcx, .runstrip .rp.pcx.sel, .runstrip .rp.pcx.sel:hover { border-left:4px solid var(--pc); }
+  .phead.pcx { border-left:4px solid var(--pc); }
+  .phead .pswatch { width:16px; height:16px; padding:0; border:1px solid var(--line); border-radius:50%;
+                    background:none; cursor:pointer; flex-shrink:0; overflow:hidden; }
+  .phead .pswatch::-webkit-color-swatch-wrapper { padding:0; }
+  .phead .pswatch::-webkit-color-swatch { border:none; border-radius:50%; }
+  section#detail.pcx { border-top:3px solid var(--pc); }
+  .openmk { display:inline-block; font:700 calc(10px * var(--fs))/1.5 system-ui,sans-serif; letter-spacing:.06em;
+            padding:0 7px; border-radius:99px; background:var(--accent); color:var(--accentfg); margin-right:5px;
+            vertical-align:1px; white-space:nowrap; word-break:normal; }
   .hdok { font-size:calc(12px * var(--fs)); color:var(--ok); border:1px solid var(--ok); border-radius:99px;
           padding:2px 11px; font-weight:600; }
   .hdrun { font-size:calc(12px * var(--fs)); color:var(--run); border:1px solid var(--run); border-radius:99px;
@@ -2343,6 +2380,10 @@ const PAGE = /* html */ `<!doctype html>
              border-radius:8px; padding:7px 10px; font-size:calc(13px * var(--fs)); color:var(--fg); }
   .pcard-head input[type=text] { width:auto; }
   .pcard input.mono { font:calc(12px * var(--fs))/1.4 ui-monospace,monospace; }
+  .pcard .plook { display:flex; align-items:center; gap:8px; }
+  .pcard .plook input[type=color] { width:34px; height:30px; padding:2px; border:1px solid var(--line);
+             border-radius:8px; background:var(--input); cursor:pointer; flex-shrink:0; }
+  .pcard .plook input[type=text] { width:9em; }
   .pcard-foot { padding:8px 14px 12px; font-size:calc(11px * var(--fs)); color:var(--dim); }
   .rmbtn { margin-left:auto; background:none; border:none; color:var(--dim); font-size:calc(12px * var(--fs));
              cursor:pointer; padding:4px 10px; border-radius:7px; }
@@ -2465,6 +2506,7 @@ const PAGE = /* html */ `<!doctype html>
   .prow-state.green { color:var(--ok); } .prow-state.amber { color:var(--warn); } .prow-state.red { color:var(--bad); }
   .prow-body { padding:0 14px 12px 14px; border-top:1px solid var(--line); }
   .prow-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding-top:10px; }
+  .prow-actions input[type=color] { width:34px; height:30px; padding:2px; cursor:pointer; flex-shrink:0; }
   .prow-actions input { background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:6px;
                         padding:4px 8px; font-size:calc(12px * var(--fs)); width:150px; }
   .scanrow { display:flex; gap:8px; margin:14px 0 0; }
@@ -2736,7 +2778,7 @@ const PAGE = /* html */ `<!doctype html>
   <span class="hdwarn" id="connmsg" style="display:none"></span>
   <span class="dim" style="margin-left:auto">auto-refresh 5s · summaries generate in background</span>
   <a class="hdlink" href="http://localhost:${QA_PORT}/" target="_blank" rel="noopener" title="report pages of the browser-usability-test skill">QA reports ↗</a>
-  <button id="guidebtn" title="how it works, add a repo, start a run">Guide</button>
+  <button id="guidebtn" title="find repos on this machine and add them; step 1 explains how it works">＋ Add project</button>
   <button id="settingsbtn" title="projects & settings">⚙ Settings</button>
   <button id="alertBtn" aria-pressed="false" title="Sound and notification when a run stops or the agent answers">🔕</button>
   <button id="themeBtn" title="toggle light/dark">🌙</button></header>
@@ -2980,13 +3022,59 @@ function archivedMatches() {
   return plans.filter((p) => p.archived && (q ? matchesQ(p, q) : selected === p.key))
     .sort((a, b) => b.slug.localeCompare(a.slug));   // slugs start with their date: newest first
 }
+// Project look: every project gets a color and a short tag, so cards from different projects
+// tell apart at a glance. Registry "color" / "short" win. Otherwise the color comes from PROJ_HUES in
+// registry order (no red, yellow or green: those mean blocked, waiting and done), and the tag is the
+// name minus the dash parts it shares with another project of the same client (galileon-solver-api → api).
+const PROJ_HUES = [205, 320, 25, 170, 265, 290];
+let projLookKey = null, projLookMap = {};
+// the name minus the dash parts it shares with another project of the same client
+function autoShort(name, client) {
+  const parts = name.split('-');
+  let shared = 0;
+  for (const o of state) {
+    if (o.name === name || o.client !== client) continue;
+    const op = o.name.split('-');
+    let k = 0;
+    while (k < parts.length - 1 && op[k] === parts[k]) k++;
+    shared = Math.max(shared, k);
+  }
+  return parts.slice(shared).join('-');
+}
+function projLook(name) {
+  const key = state.map((s) => [s.name, s.client, s.color, s.short].join('|')).join(',');
+  if (key !== projLookKey) {
+    projLookKey = key; projLookMap = {};
+    state.forEach((s, i) => {
+      projLookMap[s.name] = { style: s.color ? '--pc:' + s.color : '--ph:' + PROJ_HUES[i % PROJ_HUES.length],
+        short: s.short || autoShort(s.name, s.client) };
+    });
+  }
+  return projLookMap[name] || { style: '--ph:210', short: name };
+}
+const projStyle = (name) => ' style="' + escA(projLook(name).style) + '"';
+const projPill = (name) => '<span class="ppill pcx"' + projStyle(name) + ' title="' + escA(name) + '">' +
+  esc(projLook(name).short) + '</span>';
+const openMark = '<span class="openmk">▶ open</span>';
+// the automatic project color as #rrggbb (a color input takes only hex); same hsl as the .pcx rule
+function projAutoHex(name) {
+  const m = /--ph:(\\d+)/.exec(projLook(name).style);
+  return hueHex(m ? +m[1] : 210);
+}
+function hueHex(hue) {
+  const sat = theme === 'light' ? 0.45 : 0.40, lit = theme === 'light' ? 0.48 : 0.66;
+  const a = sat * Math.min(lit, 1 - lit);
+  const f = (n) => { const k = (n + hue / 30) % 12;
+    return Math.round(255 * (lit - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))).toString(16).padStart(2, '0'); };
+  return '#' + f(0) + f(8) + f(4);
+}
 let lastItemClick = {};
 const itemHtml = (p, withProject) => \`
     <div class="item \${selected === p.key ? 'sel' : ''} \${p.archived ? 'arch' : ''} \${dotClass(p)}" data-key="\${p.key}"\${selected === p.key ? ' aria-current="true"' : ''}>
       <input type="checkbox" aria-label="queue this plan" data-check="\${p.key}" \${picked.has(p.key) ? 'checked' : ''}
              \${p.live || starting(p) || p.worktree || p.archived ? 'disabled' : ''}>
       <div class="t">
-        <div class="name">\${withProject ? '[' + esc(p.project) + '] ' : ''}\${p.file}</div>
+        <div class="name">\${selected === p.key ? openMark : ''}\${withProject ? projPill(p.project) : ''}\${p.file}</div>
         <div class="chiprow">
           \${p.status ? '<span class="chip st">' + esc(p.status) + '</span>' : ''}
           \${p.tags.map((t) => '<span class="chip">' + esc(t) + '</span>').join('')}
@@ -3043,23 +3131,23 @@ function renderList() {
   rs.className = 'runstrip' +
     (live.length || inflight.length || ready.length || bad.length || launching.length || failed.length ? ' on' : '');
   let sh = '';
-  const stripName = (p) => '<span class="pfx">[' + esc(p.project) + ']</span> ' + p.file;
+  const stripName = (p) => (p.key === selected ? openMark : '') + projPill(p.project) + p.file;
   if (failed.length) sh += '<div class="cap bc">⚠ DIDN’T START — ' + failed.length + '</div>' +
-    failed.map((p) => '<div class="rp bp" data-go="' + p.key + '"><span class="dot bad"></span><span class="n">' +
+    failed.map((p) => '<div class="rp bp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot bad"></span><span class="n">' +
       stripName(p) + '</span><button class="mini" data-why="' + p.key + '">why?</button></div>').join('');
   if (launching.length) sh += '<div class="cap wc">⏳ STARTING — ' + launching.length + '</div>' +
-    launching.map((p) => '<div class="rp wp" data-go="' + p.key + '"><span class="dot warn"></span><span class="n">' +
+    launching.map((p) => '<div class="rp wp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot warn"></span><span class="n">' +
       stripName(p) + '</span><span class="dim mini">setting up…</span></div>').join('');
   if (live.length) sh += '<div class="cap">● RUNNING NOW — ' + live.length + '</div>' +
-    live.map((p) => '<div class="rp" data-go="' + p.key + '"><span class="dot live"></span><span class="n">' +
+    live.map((p) => '<div class="rp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot live"></span><span class="n">' +
       stripName(p) + '</span><button class="mini" data-log="' + p.key + '">📜 log</button></div>').join('');
   if (inflight.length) sh += '<div class="cap wc">⏳ LAUNCHED — IN PROGRESS — ' + inflight.length + '</div>' +
-    inflight.map((p) => '<div class="rp wp" data-go="' + p.key + '"><span class="dot warn"></span><span class="n">' +
+    inflight.map((p) => '<div class="rp wp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot warn"></span><span class="n">' +
       stripName(p) + '</span><button class="mini" data-rep="' + p.key + '">' +
       (p.hasPipeline ? '📋 report' : '📜 log') + '</button></div>').join('');
   // the run's own status says what it waits for ("VERIFIED", "PR OPEN — 3 DECISIONS WAITING",
   // "BLOCKED: step 10 …"); a run that stopped blocked or failed needs you as much as a finished one
-  const doneRow = (p, cls, dot) => '<div class="rp ' + cls + '" data-go="' + p.key + '"><span class="dot ' + dot + '"></span><span class="n">' +
+  const doneRow = (p, cls, dot) => '<div class="rp pcx ' + cls + '" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot ' + dot + '"></span><span class="n">' +
       stripName(p) + '<span class="rst" title="' + escA(p.run.status || '') + '">' + esc(p.run.status || '') + '</span></span>' +
       '<span class="acts">' + (p.run.links || []).map((l) => '<button class="mini" data-url="' + escA(l.url) + '">🔗 ' +
         esc(l.label) + '</button>').join('') +
@@ -3119,14 +3207,16 @@ function renderList() {
       const runBadges =
         (liveN ? '<span class="chip live">● ' + liveN + ' running</span>' : '') +
         (flightN ? '<span class="chip warn">⏳ ' + flightN + '</span>' : '');
-      return '<div class="phead" data-toggle="' + esc(pr) + '"><span class="chev">' +
-        (closed ? '▸' : '▾') + '</span>📁 ' + esc(pr) +
+      return '<div class="phead pcx" data-toggle="' + esc(pr) + '"' + projStyle(pr) + '><span class="chev">' +
+        (closed ? '▸' : '▾') + '</span><input type="color" class="pswatch" data-swatch="' + escA(pr) + '" value="' +
+          escA(sp.color || projAutoHex(pr)) + '" title="project color — click to change (tag and reset: ⚙ Settings)"' +
+          ' aria-label="color of ' + escA(pr) + '">' + esc(pr) +
         (hasLanes ? '<button class="pbtn" data-suggest="' + esc(pr) +
           '" title="suggest a parallel launch batch">🧭 Suggest</button>' : '') +
         '<button class="pbtn" data-pull="' + esc(pr) + '" title="git pull --ff-only in ' + escA(sp.root) +
           ' (the branch it is on, from its remote)">📥 Pull</button>' + runBadges +
         (sp.setupLevel === 'red' ? '<span class="chip bad x" data-guide="' + escA(sp.root) +
-          '" title="something required is missing — open the guide">needs setup</span>' : '') +
+          '" title="something required is missing — see what and how to fix it">needs setup</span>' : '') +
         '<span class="cnt">' + items.length + ' plan' + (items.length === 1 ? '' : 's') +
         '</span></div>' + (closed ? '' : items.length ? items.map((p) => itemHtml(p)).join('')
           : '<div class="emptyproj">' + (projPlans.length ? 'All plans are archived.'
@@ -3153,6 +3243,13 @@ function renderList() {
   byId('collapseAll').textContent =
     allProjNames.length && allProjNames.every((n) => collapsedProjects.has(n))
       ? 'Expand all' : 'Collapse all';
+  byId('side').querySelectorAll('input[data-swatch]').forEach((el) => {
+    el.addEventListener('click', (e) => e.stopPropagation());
+    el.addEventListener('change', async () => {
+      const r = await post('/api/project-look', { name: el.dataset.swatch, color: el.value });
+      if (r.ok) refresh();
+    });
+  });
   byId('side').querySelectorAll('.phead[data-toggle]').forEach((el) =>
     el.addEventListener('click', () => {
       const pr = el.dataset.toggle;
@@ -3210,6 +3307,7 @@ async function renderDetail(loadPlan) {
   syncUrl();
   const p = find(selected);
   if (!p) return renderEmptyDetail();
+  markDetailProject(p.project);
   CUR_ISSUES = p.issuesUrl || '';
   let tab = prTab[p.key] || 'plan';
   // the Ask tab is now the chat panel: an old ?tab=ask link opens it beside the diff
@@ -3242,7 +3340,7 @@ async function renderDetail(loadPlan) {
     '<div class="planview"><div class="mdc" id="planmd">loading plan…</div></div></details>';
   byId('detail').innerHTML = \`
     <div class="dhead"><div class="dtitle">
-      <div class="crumb">\${esc(p.client)} / 📁 \${esc(p.project)}</div>
+      <div class="crumb">\${esc(p.client)} / \${projPill(p.project)}\${esc(p.project)}</div>
       <h2 class="fname">\${p.file}</h2>
       <div class="subtitle">\${inline(p.title)}</div></div>
       <div class="btns" id="actions"></div></div>
@@ -4000,7 +4098,7 @@ async function renderPrTab(p, tab, force) {
         <span class="rname" title="\${escA((p.title || p.slug) + '\\n' + p.client + ' / ' + p.project + ' / ' + p.file)}">\${inline(p.title || p.slug)}</span></div>
       \${prTabs(p, tab, true)}
       <div class="rright"><span class="seen" id="rseen"></span>\${chatBtn(p)}<span class="btns" id="ract"></span></div></div>\` : \`
-    <div class="crumb">\${esc(p.client)} / 📁 \${esc(p.project)}</div>
+    <div class="crumb">\${esc(p.client)} / \${projPill(p.project)}\${esc(p.project)}</div>
     <h2 class="fname">\${p.file}</h2>
     <div class="subtitle">\${inline(p.title)}</div>
     <div class="prtabsrow">\${prTabs(p, tab)}<span class="btns" id="ract"></span></div>
@@ -5258,6 +5356,7 @@ async function openSettings() {
   const reg = await (await fetch('/api/registry')).json();
   // _orig remembers the saved name so "Edit launchers" works even mid-rename
   const rows = reg.map((e) => ({ ...e, _orig: e.name }));
+  const savedRows = JSON.stringify(rows);
   const render = () => {
     let h = '<div class="setup">';
     h += '<p class="hint">Stored in <code>~/.claude/pipeline-projects.json</code> · paths may start with ~ · ' +
@@ -5286,6 +5385,14 @@ async function openSettings() {
         '<span class="flabel">Done folder</span>' +
         '<input type="text" class="mono" data-f="doneDir" data-i="' + i + '" value="' + escA(e.doneDir || '') +
           '" placeholder="default: &lt;plans folder&gt;/done">' +
+        // color + tag on the plan cards; empty means automatic (see projLook)
+        '<span class="flabel">Look</span><span class="plook">' +
+          '<input type="color" data-col="' + i + '" value="' + escA(e.color || projAutoHex(e._orig || '')) +
+            '" aria-label="project color" title="project color on cards and the plan header">' +
+          '<input type="text" data-f="short" data-i="' + i + '" value="' + escA(e.short || '') + '" maxlength="12"' +
+            ' placeholder="' + escA(e._orig ? projLook(e._orig).short : 'tag') + '" aria-label="short tag">' +
+          (e.color ? '<button class="pbtn" data-colauto="' + i + '" title="go back to the automatic color">↺ auto</button>'
+            : '<span class="dim">auto</span>') + '</span>' +
         '</div>';
       h += '<div class="pcard-foot">' +
         (e._hasPipeline
@@ -5295,18 +5402,29 @@ async function openSettings() {
                      : ' · save the project first, then configure launchers')) + '</div>';
       h += '</div>';
     });
-    h += '<div class="setupbar"><button id="addProj">＋ Add project</button>' +
+    h += '<div class="setupbar"><button id="addProj" title="find repos on this machine and add them, with readiness checks">' +
+      '＋ Add project</button><button class="pbtn" id="addManual" title="a blank project card: type name, client and paths yourself">' +
+      'or type the paths</button>' +
       '<span style="flex:1"></span><button class="primary" id="saveReg">Save changes</button></div></div>';
     byId('logbody').innerHTML = h;
     byId('logbody').querySelectorAll('input[data-f]').forEach((el) =>
       el.addEventListener('input', () => { rows[+el.dataset.i][el.dataset.f] = el.value; }));
+    byId('logbody').querySelectorAll('input[data-col]').forEach((el) =>
+      el.addEventListener('change', () => { rows[+el.dataset.col].color = el.value; render(); }));
+    byId('logbody').querySelectorAll('[data-colauto]').forEach((el) =>
+      el.addEventListener('click', () => { delete rows[+el.dataset.colauto].color; render(); }));
     byId('logbody').querySelectorAll('[data-rm]').forEach((el) =>
       el.addEventListener('click', () => {
         const nm = rows[+el.dataset.rm].name || 'this project';
         if (!confirm('Remove "' + nm + '" from the dashboard?\\n\\nThe repo and its plans are untouched — only the registry entry goes away.')) return;
         rows.splice(+el.dataset.rm, 1); render();
       }));
+    // the same window as the top-bar "＋ Add project"; unsaved edits here would be lost, so ask first
     byId('addProj').addEventListener('click', () => {
+      if (JSON.stringify(rows) !== savedRows && !confirm('Leave settings without saving your changes?')) return;
+      closeLog(); openGuide(1);
+    });
+    byId('addManual').addEventListener('click', () => {
       rows.push({ name: '', client: '', root: '', plansDir: '', launchers: [] }); render();
     });
     byId('logbody').querySelectorAll('[data-lset]').forEach((el) =>
@@ -5429,8 +5547,16 @@ const onbOpenCards = new Set();   // project roots whose row is expanded
 const CHECK_SVG = '<svg viewBox="0 0 16 16"><path d="M3 8.5l3.2 3.2L13 4.5" fill="none" stroke="currentColor" ' +
   'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const mark = (c) => '<span class="mk ' + (c.ok ? 'ok' : c.required ? 'bad' : 'warn') + '">' + (c.ok ? CHECK_SVG : '') + '</span>';
+// the open plan's project color as a band on top of the detail pane
+function markDetailProject(name) {
+  const d = byId('detail');
+  d.classList.toggle('pcx', !!name);
+  d.style.removeProperty('--ph'); d.style.removeProperty('--pc');
+  if (name) { const [k, v] = projLook(name).style.split(':'); d.style.setProperty(k, v); }
+}
 function renderEmptyDetail() {
   syncUrl();
+  markDetailProject(null);
   syncChat(null);
   document.body.classList.remove('review');
   byId('detail').innerHTML = state.length ? '<span class="dim">Select a plan on the left.</span>'
@@ -5519,7 +5645,12 @@ function projRow(p, registered) {
   h += '<div class="prow-actions">';
   if (!registered)
     h += '<input data-nm="' + escA(p.root) + '" value="' + escA(p.name) + '" aria-label="project name" title="project name">' +
-      '<input data-cl="' + escA(p.root) + '" value="' + escA(p.client) + '" aria-label="client" title="client — groups projects in the sidebar">';
+      '<input data-cl="' + escA(p.root) + '" value="' + escA(p.client) + '" aria-label="client" title="client — groups projects in the sidebar">' +
+      // the color it would get as the next project; sent only when changed, so it stays automatic otherwise
+      '<input type="color" data-gc="' + escA(p.root) + '" value="' + hueHex(PROJ_HUES[state.length % PROJ_HUES.length]) +
+        '" aria-label="project color" title="project color on cards and the plan header">' +
+      '<input data-gs="' + escA(p.root) + '" maxlength="12" size="8" placeholder="' + escA(autoShort(p.name, p.client)) +
+        '" aria-label="short tag" title="short tag on the plan cards — empty means automatic">';
   if (p.fixAll)
     h += '<button class="sm" data-cp="' + cp(p.fixAll) + '" title="one prompt covering every item above that Claude can fix">' +
       'Copy one prompt that fixes all of it</button>';
@@ -5627,6 +5758,7 @@ function renderGuide() {
     el.textContent = ok ? 'Copied' : 'Copy failed — select it by hand';
     setTimeout(() => (el.textContent = was), 1600);
   }));
+  B.querySelectorAll('input[data-gc]').forEach((el) => el.addEventListener('input', () => { el.dataset.touched = '1'; }));
   B.querySelectorAll('[data-card]').forEach((el) => el.addEventListener('click', () => {
     const k = el.dataset.card;
     onbOpenCards.has(k) ? onbOpenCards.delete(k) : onbOpenCards.add(k);
@@ -5644,7 +5776,8 @@ function renderGuide() {
     el.disabled = true; el.textContent = 'Adding…';
     const r = await (await fetch('/api/add-project', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ root, name: val('data-nm', cand.name), client: val('data-cl', cand.client),
-        plansDir: cand.plansDir }) })).json();
+        plansDir: cand.plansDir, short: val('data-gs', ''),
+        color: B.querySelector('[data-gc="' + CSS.escape(root) + '"][data-touched]')?.value || '' }) })).json();
     if (!r.ok) { alert(r.output); el.disabled = false; el.textContent = 'Add'; return; }
     onbScan.candidates = onbScan.candidates.filter((c) => c.root !== root);
     await loadGuide(false);
@@ -5673,7 +5806,8 @@ byId('onbnext').addEventListener('click', () => {
 });
 byId('onbskip').addEventListener('click', closeGuide);
 byId('onb').addEventListener('click', (e) => { if (e.target === byId('onb')) closeGuide(); });
-byId('guidebtn').addEventListener('click', () => openGuide(0));
+// returning users come to add a repo: open on "Pick a project" (step 1 "How it works" is one click back)
+byId('guidebtn').addEventListener('click', () => openGuide(1));
 // --- tour: after the guide, spotlight the real screen one region at a time ---
 // What to do next stays the user's call; the tour only says what each part is for.
 const TOUR = [
