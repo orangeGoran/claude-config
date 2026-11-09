@@ -1889,7 +1889,14 @@ const chatState = (proj, slug) => {
     waits: ch ? [...ch.waits].map(([id, r]) => waitView(id, r)) : [],
     partial: ch ? ch.partial : '', landing: ch ? ch.landing : [], last: ch ? ch.last : null, error: chatNotes.get(key) || '',
     context: chatContext(proj, slug, ch, a),
+    idleFrom: chatIdleFrom(proj, slug),
   };
+};
+// when the session last wrote to its transcript: the composer counts the idle time from it,
+// because the prompt cache usually expires after an hour without a request
+const chatIdleFrom = (proj, slug) => {
+  const tr = chatTranscript(proj, slug);
+  try { return tr ? statSync(tr.file).mtimeMs : null; } catch { return null; }
 };
 const chatEvents = (req, res, proj, slug) => {
   const key = proj.name + '/' + slug;
@@ -2722,6 +2729,7 @@ const PAGE = /* html */ `<!doctype html>
   .crow select { background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:7px; padding:3px 6px; max-width:48%; }
   .cctx { display:inline-flex; align-items:center; gap:5px; color:var(--dim); white-space:nowrap; }
   .cctx[hidden] { display:none; }
+  .cidle { color:var(--dim); white-space:nowrap; } .cidle[hidden] { display:none; } .cidle.warn { color:var(--warn); }
   .cctxbar { width:44px; height:5px; border-radius:3px; background:var(--line); overflow:hidden; }
   .cctxbar i { display:block; height:100%; background:var(--run); }
   .cctx.warn .cctxbar i { background:var(--warn); } .cctx.warn { color:var(--warn); }
@@ -3674,7 +3682,7 @@ function chatBind(p) {
       '<div class="crow"><select id="cmode" aria-label="Permission mode" title="What the agent may do without asking (Shift+Tab switches)">' +
         CHAT_MODES.map(([v, l]) => '<option value="' + v + '"' + (v === chatMode ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
         '<select id="cmodel" aria-label="Model"><option value="">Model: default</option></select>' +
-        '<span class="cctx" id="cctx" hidden></span><button id="ccompact">Compact</button>' +
+        '<span class="cctx" id="cctx" hidden></span><span class="cidle" id="cidle" hidden></span><button id="ccompact">Compact</button>' +
         '<span style="flex:1"></span><button id="cstop" hidden>Stop</button><button id="cgo" class="primary">Send</button></div></div>';
   const inp = byId('cin');
   inp.value = chatDraft[p.key] || '';
@@ -3755,6 +3763,25 @@ function paintContext() {
   E.innerHTML = pct == null ? esc(tok(x.used)) + ' used'
     : '<span class="cctxbar"><i style="width:' + Math.min(pct, 100) + '%"></i></span>' + pct + '% of ' + esc(tok(max));
 }
+// the time since the session's last activity; past an hour the prompt cache has likely expired,
+// so the next message reads the whole context again at full price
+const CACHE_TTL_MS = 60 * 60 * 1000;
+function paintIdle() {
+  const c = ch, E = byId('cidle');
+  if (!c || !E) return;
+  const from = c.st.idleFrom;
+  E.hidden = !from || !!c.st.busy;
+  if (E.hidden) return;
+  const ms = Math.max(0, Date.now() - from), m = Math.floor(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  const ago = d ? d + 'd ' + (h % 24) + 'h' : h ? h + 'h ' + (m % 60) + 'm' : m + 'm';
+  const cold = ms >= CACHE_TTL_MS;
+  E.className = 'cidle' + (cold ? ' warn' : '');
+  E.textContent = 'idle ' + ago;
+  E.title = cold ? 'Prompt cache likely expired (idle ' + ago + '). The next message reads the whole context again.'
+    : 'Last activity ' + ago + ' ago. The prompt cache usually lasts 1 hour.';
+  E.setAttribute('aria-label', E.title);
+}
+setInterval(paintIdle, 30000);
 function chatSetMode(mode, model) {
   chatMode = mode; chatModel = model;
   try { localStorage.setItem('dash-chat-mode', mode); localStorage.setItem('dash-chat-model', model); } catch {}
@@ -3864,6 +3891,7 @@ function chatState(st) {
   else if (was.busy && !st.busy) chatLoad('new');
   paintLive();
   paintContext();
+  paintIdle();
   paintWaits(st.waits || []);
   if (c.p) { const p = find(c.key); if (p) p.chatWaits = (st.waits || []).length; }
 }
@@ -3934,6 +3962,7 @@ async function chatSendMsg(command) {
   }
   c.st.partial = ''; c.st.busy = true; c.st.error = '';
   paintLive();
+  paintIdle();
 }
 // --- the / and @ menu above the box ---
 let chatMenuItems = [], chatMenuAt = 0, chatMenuPick = 0;
