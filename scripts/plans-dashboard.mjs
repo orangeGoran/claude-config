@@ -2273,6 +2273,10 @@ const PAGE = /* html */ `<!doctype html>
   .modes label { display:flex; gap:5px; align-items:center; color:var(--dim); cursor:pointer; }
   .modes input[type=radio] { margin:0; }
   .btns { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+  .dhead { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; }
+  .dhead .dtitle { flex:1 1 360px; min-width:0; }
+  .dhead #actions { margin:0; justify-content:flex-end; }
+  .rfbtn svg { display:block; }
   button { background:var(--btn); color:var(--fg); border:1px solid var(--line); border-radius:8px;
            padding:7px 13px; cursor:pointer; font-size:calc(13px * var(--fs)); }
   button:hover, .hdlink:hover { border-color:var(--accent); }
@@ -2473,10 +2477,6 @@ const PAGE = /* html */ `<!doctype html>
   .prtabs button.on { color:var(--fg); border-bottom-color:var(--accent); }
   .prtabs .n { font:calc(11px * var(--fs)) ui-monospace,monospace; background:var(--btn); border-radius:10px;
                padding:1px 6px; margin-left:4px; }
-  .prhead { display:grid; gap:8px; padding:12px 14px; border:1px solid var(--line); border-radius:10px;
-            background:var(--card); margin-bottom:14px; }
-  .prhead .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .prhead .btns { margin:0; }
   .prtitle { font-size:calc(15px * var(--fs)); }
   .add, .del { font:600 calc(12px * var(--fs)) ui-monospace,monospace; }
   .add { color:var(--ok); } .del { color:var(--gitD); }
@@ -2560,6 +2560,7 @@ const PAGE = /* html */ `<!doctype html>
   .rbar #rback, .rbar .chatbtn, .rbar #ract .ghbtn, .rbar #ract .rfbtn { padding:4px 10px; border-radius:6px; }
   .rbar #rback:hover, .rbar .chatbtn:hover, #ract .ghbtn:hover, #ract .rfbtn:hover { background:var(--hover); border-color:transparent; }
   #ract .rfbtn { font-size:calc(16px * var(--fs)); }
+  #ract .vsbtn { font-size:calc(13px * var(--fs)); }
   .rbar .chatbtn { margin-left:0; }
   .rbar .chatbtn.on { background:var(--sel); border-color:transparent; color:var(--fg); }
   .rbar .chatbtn .n { border-radius:10px; padding:0 5px; margin-left:4px; font-size:calc(11px * var(--fs)); }
@@ -2599,6 +2600,19 @@ const PAGE = /* html */ `<!doctype html>
   .mfoot select { background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:7px; padding:4px 8px; }
   .mfoot label { display:flex; gap:6px; align-items:center; }
   .mbox.flash { outline:2px solid var(--merge); }
+  #mstat > summary { list-style:none; cursor:pointer; }
+  #mstat > summary::-webkit-details-marker { display:none; }
+  #mstat:not([open]) > summary { border-bottom:0; }
+  #mstat .mtoggle::after { content:' ▸'; }
+  #mstat[open] .mtoggle::after { content:' ▾'; }
+  #mstat > summary button { padding:3px 10px; font-size:calc(12.5px * var(--fs)); }
+  .mbox:has(.mfoot) #mstat:not([open]) > summary { border-bottom:1px solid var(--line); }
+  .prdec { margin-bottom:8px; }
+  .prdec > h2:first-child { margin-top:0; }
+  details.prmore { border-top:1px solid var(--line); margin-top:18px; padding-top:10px; }
+  details.prmore > summary { cursor:pointer; color:var(--dim); }
+  .prmeta { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:12px 0 4px; }
+  .prmeta .btns { margin:0; }
   .mergednote { border:1px solid var(--merge); border-radius:10px; padding:10px 14px; margin-bottom:16px; }
   .mergednote b { color:var(--merge); }
   .mergednote div { color:var(--dim); font-size:calc(12.5px * var(--fs)); }
@@ -3200,7 +3214,9 @@ async function renderDetail(loadPlan) {
   let tab = prTab[p.key] || 'plan';
   // the Ask tab is now the chat panel: an old ?tab=ask link opens it beside the diff
   if (tab === 'ask') { prTab[p.key] = tab = p.pr ? 'files' : 'plan'; if (!chatOn) toggleChat(true); }
+  if (tab === 'pr') prTab[p.key] = tab = 'plan';   // the plan and its PR are one tab
   if (tab !== 'plan' && !p.pr) tab = 'plan';
+  autoChat(p);
   syncChat(p);
   if (tab !== 'plan') return renderPrTab(p, tab, loadPlan);
   lastPrDraw = null;
@@ -3219,23 +3235,20 @@ async function renderDetail(loadPlan) {
     <div class="modes"><b>Where to stop:</b>
       \${(p.modes || []).map((m) => '<label><input type="radio" name="m" value="' + escA(m.id) + '" ' +
         (modeOf(p) === m.id ? 'checked' : '') + '>' + esc(m.label) + '</label>').join('')}</div>\` : '';
+  const withPr = !!p.pr;
+  const badges = '<div class="badges">' + autoChips(p) + '</div>';
+  const lastStep = p.run && p.run.lastEvent ? '<div class="laststep">last: ' + esc(p.run.lastEvent.slice(0, 200)) + '</div>' : '';
+  const planFold = '<details class="planfold" id="planfold" ' + (planOpen.has(p.key) ? 'open' : '') + '><summary>Show the full plan</summary>' +
+    '<div class="planview"><div class="mdc" id="planmd">loading plan…</div></div></details>';
   byId('detail').innerHTML = \`
-    <div class="crumb">\${esc(p.client)} / 📁 \${esc(p.project)}</div>
-    <h2 class="fname">\${p.file}</h2>
-    <div class="subtitle">\${inline(p.title)}</div>
-    \${prTabs(p, 'plan')}
-    <div class="badges">\${autoChips(p)}</div>
-    \${p.pr && p.pr.state === 'MERGED' ? '<div class="mergedline"><span>✓ PR #' + p.pr.number +
-      ' was merged into <code>' + esc(p.pr.base || '?') + '</code>' + (p.pr.mergedAt ? ' on ' + esc(new Date(p.pr.mergedAt).toLocaleString()) : '') +
-      '</span><a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener">↗ GitHub</a></div>' : ''}
-    \${p.summary ? '<div class="summary">💡 ' + esc(p.summary) + '</div>'
-      : p.summarizing ? '<div class="summary dim">💭 plain-language summary is being generated…</div>' : ''}
-    \${p.run && p.run.lastEvent ? '<div class="laststep">last: ' + esc(p.run.lastEvent.slice(0, 200)) + '</div>' : ''}
-    \${p.live ? '' : launcherModes}\${pipelineModes}
-    <div class="btns" id="actions"></div>
-    \${!p.pr && p.prError ? '<div class="ghhint">PRs are not shown: ' + esc(p.prError) + '. Run <code>' +
-      (/not installed/.test(p.prError) ? 'brew install gh &amp;&amp; gh auth login' : 'gh auth login') + '</code> in a terminal.</div>' : ''}
+    <div class="dhead"><div class="dtitle">
+      <div class="crumb">\${esc(p.client)} / 📁 \${esc(p.project)}</div>
+      <h2 class="fname">\${p.file}</h2>
+      <div class="subtitle">\${inline(p.title)}</div></div>
+      <div class="btns" id="actions"></div></div>
+    \${withPr ? '<div class="prtabsrow">' + prTabs(p, 'plan') + '<span class="btns" id="ract"></span></div>' : prTabs(p, 'plan') + badges}
     <div id="morebox" \${moreOpen.has(p.key) ? '' : 'hidden'}>
+    \${withPr ? badges + lastStep : ''}
     <div class="metabox"><b>Status:</b>
       <select id="stSel"><option value="">—</option>
         \${STATUSES.map((s) => '<option ' + (p.status === s ? 'selected' : '') + '>' + s + '</option>').join('')}
@@ -3246,9 +3259,18 @@ async function renderDetail(loadPlan) {
       <datalist id="tagOpts">\${TAG_SUGGESTIONS.map((t) => '<option>' + t + '</option>').join('')}</datalist>
     </div>
     <div id="sessbox"></div>
+    \${withPr ? planFold : ''}
     </div>
-    <details class="planfold" id="planfold" \${planOpen.has(p.key) ? 'open' : ''}><summary>Show the full plan</summary>
-      <div class="planview"><div class="mdc" id="planmd">loading plan…</div></div></details>\`;
+    \${p.pr && p.pr.state === 'MERGED' ? '<div class="mergedline"><span>✓ PR #' + p.pr.number +
+      ' was merged into <code>' + esc(p.pr.base || '?') + '</code>' + (p.pr.mergedAt ? ' on ' + esc(new Date(p.pr.mergedAt).toLocaleString()) : '') +
+      '</span><a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener">↗ GitHub</a></div>' : ''}
+    \${p.summary ? '<div class="summary">💡 ' + esc(p.summary) + '</div>'
+      : p.summarizing ? '<div class="summary dim">💭 plain-language summary is being generated…</div>' : ''}
+    \${withPr ? '' : lastStep}
+    \${p.live ? '' : launcherModes}\${pipelineModes}
+    \${!p.pr && p.prError ? '<div class="ghhint">PRs are not shown: ' + esc(p.prError) + '. Run <code>' +
+      (/not installed/.test(p.prError) ? 'brew install gh &amp;&amp; gh auth login' : 'gh auth login') + '</code> in a terminal.</div>' : ''}
+    \${withPr ? '<div id="prview" class="pvpr"></div>' : planFold}\`;
   document.body.classList.remove('review');
   bindPrTabs(p);
   byId('planfold').addEventListener('toggle', () =>
@@ -3286,10 +3308,9 @@ async function renderDetail(loadPlan) {
     { project: p.project, slug: p.slug, launcher: +modeOf(p) }, true);
   if (notStarted(p)) btn('⚠ Why it didn’t start', () => showLaunchError(p), 'danger');
   for (const l of (p.run && p.run.links) || []) {
+    // the run's link to its own PR would open this tab: ↗ GitHub in the bar is the PR on the web
+    if (p.pr && l.url.replace(/[/]+$/, '') === p.pr.url.replace(/[/]+$/, '')) continue;
     btn('🔗 ' + l.label, () => openRunLink(p, l.url), 'primary');
-    // the button above opens the PR tab here; this one is for the page on GitHub
-    if (p.pr && l.url.replace(/[/]+$/, '') === p.pr.url.replace(/[/]+$/, ''))
-      btn('↗ GitHub', () => window.open(p.pr.url, '_blank', 'noopener'));
   }
   if (stt === 'starting') {
     btn('⏳ Starting… setting up the worktree', () => {}).disabled = true;
@@ -3389,6 +3410,15 @@ async function renderDetail(loadPlan) {
     det.appendChild(box);
     byId('sessbox').appendChild(det);
   }
+  // the PR under the summary: what is loaded now, at once, so a repaint does not jump
+  const prNow = () => selected === p.key && byId('prview') && (prTab[p.key] || 'plan') === 'plan';
+  const prOld = withPr && (loadPlan || !prData[p.key] || prData[p.key].from !== JSON.stringify(p.pr));
+  if (withPr && prData[p.key]) { drawBarAction(p, 'plan'); drawPr(p); }
+  else if (withPr) byId('prview').innerHTML = '<div class="dim">loading PR #' + p.pr.number + '…</div>';
+  if (prOld) {
+    busy(true);
+    loadPr(p).then(() => { if (prNow()) { drawBarAction(p, 'plan'); drawPr(p); } }).finally(() => busy(false));
+  }
   // full plan, folded under "Show the full plan", rendered as markdown
   if (loadPlan || !planCache[p.key])
     planCache[p.key] = await (await fetch('/api/plan?project=' + p.project + '&slug=' + p.slug)).text();
@@ -3438,8 +3468,8 @@ try { diffFull = localStorage.getItem('dash-diff-full') !== '0'; } catch {}
 
 // inBar: the review toolbar, where ‹ Plan is the way back, the viewed line has the file count and Chat sits with the actions
 const prTabs = (p, tab, inBar) => !p.pr && !hasChat(p) ? '' : '<div class="prtabs">' + [
-  !inBar && ['plan', 'Plan'],
-  p.pr && ['pr', 'Pull request <span class="n">#' + p.pr.number + '</span>'],
+  // the plan and its PR are one tab; in the review bar it is the way back, beside ‹ Plan
+  (!inBar || p.pr) && ['plan', p.pr ? 'Plan · PR <span class="n">#' + p.pr.number + '</span>' : 'Plan'],
   p.pr && ['files', 'Files changed' + (inBar ? '' : ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
     prData[p.key] && prData[p.key].changedFiles != null ? prData[p.key].changedFiles : p.pr.changedFiles))],
 ].filter(Boolean).map(([id, label]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '">' + label + '</button>').join('') +
@@ -3484,6 +3514,15 @@ function chatHistPush(text) {
 }
 const chatBtn = (p) => hasChat(p) ? '<button class="chatbtn' + (chatOn ? ' on' : '') + '" data-chat="1" aria-pressed="' + chatOn +
   '" title="Chat with the agent that ran this plan">Chat' + (p.chatWaits ? ' <span class="n">!</span>' : '') + '</button>' : '';
+let chatAutoFor = null;
+function autoChat(p) {
+  if (chatAutoFor === p.key) return;
+  chatAutoFor = p.key;
+  if (hasChat(p) && !chatOn) {
+    chatOn = true;
+    document.querySelectorAll('[data-chat]').forEach((b) => { b.classList.add('on'); b.setAttribute('aria-pressed', 'true'); });
+  }
+}
 function toggleChat(on) {
   chatOn = on == null ? !chatOn : on;
   try { localStorage.setItem('dash-chat-open', chatOn ? '1' : '0'); } catch {}
@@ -3988,9 +4027,18 @@ function drawBarAction(p, tab) {
   // the PR's state when it is not simply open, then GitHub, then the one next step
   R.innerHTML = (d.state === 'OPEN' && !d.isDraft ? '' : prChip(d)) + '<a class="ghbtn" href="' + escA(d.url) + '" target="_blank" rel="noopener" ' +
     'title="Open the PR on GitHub">↗ GitHub</a>';
+  // Files changed has no header with the plan's actions: the worktree in VS Code is here
+  if (tab === 'files') {
+    const vs = document.createElement('button');
+    vs.textContent = 'VS Code'; vs.className = 'rfbtn vsbtn'; vs.title = 'Open the plan’s worktree in VS Code';
+    vs.addEventListener('click', () => post('/api/vscode', { project: p.project, slug: p.slug }));
+    R.insertBefore(vs, R.querySelector('.ghbtn'));
+  }
   // the PR list is read once a minute; after a push this reads it, the PR and the diff now
   const rf = document.createElement('button');
-  rf.textContent = '⟳'; rf.className = 'rfbtn'; rf.title = 'Reload the PR from GitHub, for example after a push';
+  rf.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>';
+  rf.className = 'rfbtn'; rf.title = 'Reload the PR from GitHub, for example after a push';
   rf.setAttribute('aria-label', 'Reload the PR from GitHub');
   rf.addEventListener('click', async () => {
     rf.disabled = true; busy(true);
@@ -4011,9 +4059,9 @@ function drawBarAction(p, tab) {
   } else {
     b.textContent = 'Merge…'; b.className = 'merge';
     b.addEventListener('click', () => {
-      const go = () => { const m = byId('mbox'); if (m) { m.scrollIntoView({ block: 'center' }); m.classList.add('flash'); byId('mmethod')?.focus(); } };
-      if (tab === 'pr') return go();
-      prTab[p.key] = 'pr'; lastPrDraw = null;
+      const go = () => { const m = byId('mbox'); if (m) { if (!byId('mgo')) byId('mstat').open = true; m.scrollIntoView({ block: 'center' }); m.classList.add('flash'); byId('mmethod')?.focus(); } };
+      if (tab === 'plan') return go();
+      prTab[p.key] = 'plan'; lastPrDraw = null;
       renderDetail(false).then(go);
     });
   }
@@ -4041,7 +4089,7 @@ async function prAct(p, data) {
   if (!r.ok && !byId('prbody')) alert('⚠️ GitHub refused: ' + prErr[p.key].text);
   if (r.notes) prNotes[p.key] = r.notes;
   await loadPr(p);
-  drawBarAction(p, prTab[p.key]);
+  drawBarAction(p, prTab[p.key] || 'plan');
   if (byId('prbody')) drawPr(p);
   busy(false);
   refresh();
@@ -4060,6 +4108,29 @@ async function closePr(p) {
     : confirm('Also delete the branch ' + d.headRefName + ' on GitHub and on this Mac?\\n\\nOK = delete · Cancel = keep the branch');
   await prAct(p, { action: 'close', deleteBranch });
 }
+// the PR description in three parts, by the decision sheet's markers (the sheet's contract, not
+// its headings): the first ## section of the sheet (your decisions), and what came before and after
+// it. No sheet: all of it is "rest", and the fold opens by itself.
+function splitPrBody(body) {
+  const s = body.indexOf('<!-' + '- decision-sheet:start');
+  if (s < 0) return { pre: body, dec: '', post: '' };
+  const e = body.indexOf('<!-' + '- decision-sheet:end', s);
+  const sheet = e < 0 ? body.slice(s) : body.slice(s, e), after = e < 0 ? '' : body.slice(e);
+  const h = sheet.search(/^## /m);
+  if (h < 0) return { pre: body, dec: '', post: '' };
+  const next = sheet.slice(h + 3).search(/^## /m);
+  const cut = next < 0 ? sheet.length : h + 3 + next;
+  return { pre: body.slice(0, s), dec: sheet.slice(0, cut), post: sheet.slice(cut) + after };
+}
+// PR tab: what was unfolded, kept across repaints (plan key -> open)
+const prMoreOpen = {}, prStatusOpen = new Set();
+// the chat box gets the request; you read it and press Enter
+function askAgent(p, text) {
+  chatDraft[p.key] = text;
+  if (!chatOn) return toggleChat(true);
+  const inp = byId('cin');
+  if (inp) { inp.value = text; inp.focus(); }
+}
 function drawPr(p) {
   const d = prData[p.key], v = byId('prview');
   if (!v) return;
@@ -4067,71 +4138,89 @@ function drawPr(p) {
   const open = d.state === 'OPEN', c = d.checks;
   v.className = 'pvpr';
   v.style.padding = '';
-  // what GitHub checks before a merge, one plain line each; only draft and conflicts block here
-  const lines = [], warns = [];
-  const line = (cls, ic, html, warn) => { lines.push('<div class="mline ' + cls + '"><span class="ic">' + ic + '</span><span>' + html + '</span></div>'); if (warn) warns.push(warn); };
+  // what GitHub checks before a merge: one line each, folded under one status line.
+  // why: the short reasons on the status line; warns: what the merge confirm repeats
+  const lines = [], warns = [], why = [];
+  const line = (cls, ic, html, warn, short) => {
+    lines.push('<div class="mline ' + cls + '"><span class="ic">' + ic + '</span><span>' + html + '</span></div>');
+    if (warn) warns.push(warn);
+    if (short) why.push(short);
+  };
   if (open) {
-    if (d.isDraft) line('warn', '!', '<b>Draft</b> · mark it ready for review first');
+    if (d.isDraft) line('warn', '!', '<b>Draft</b> · mark it ready for review first', null, 'draft');
     if (c.failed.length) line('bad', '✕', '<b>' + c.failed.length + ' check' + (c.failed.length > 1 ? 's' : '') + ' failed:</b> ' +
-      esc(c.failed.join(', ')) + (c.passed ? ' <span class="dim">· ' + c.passed + ' passed</span>' : ''), c.failed.join(', ') + ' failed');
+      esc(c.failed.join(', ')) + (c.passed ? ' <span class="dim">· ' + c.passed + ' passed</span>' : ''), c.failed.join(', ') + ' failed',
+      c.failed.length + ' check' + (c.failed.length > 1 ? 's' : '') + ' failed');
     else if (c.running) line('warn', '●', '<b>' + c.running + ' check' + (c.running > 1 ? 's' : '') + ' still running</b>' +
-      (c.passed ? ' <span class="dim">· ' + c.passed + ' passed</span>' : ''), c.running + ' checks still running');
+      (c.passed ? ' <span class="dim">· ' + c.passed + ' passed</span>' : ''), c.running + ' checks still running', 'checks running');
     else if (c.passed) line('ok', '✓', 'All ' + c.passed + ' checks passed');
     if (d.reviewDecision === 'APPROVED') line('ok', '✓', 'Approved');
-    else if (d.reviewDecision === 'CHANGES_REQUESTED') line('bad', '✕', '<b>Changes requested</b>', 'changes were requested');
-    else if (d.reviewDecision === 'REVIEW_REQUIRED') line('warn', '!', '<b>Review required</b> <span class="dim">· nobody has approved yet</span>', 'nobody has approved');
-    if (d.mergeable === 'CONFLICTING') line('bad', '✕', '<b>Conflicts with ' + esc(d.baseRefName) + '</b> · resolve them in the worktree, then push');
+    else if (d.reviewDecision === 'CHANGES_REQUESTED') line('bad', '✕', '<b>Changes requested</b>', 'changes were requested', 'changes requested');
+    else if (d.reviewDecision === 'REVIEW_REQUIRED') line('warn', '!', '<b>Review required</b> <span class="dim">· nobody has approved yet</span>', 'nobody has approved', 'review required');
+    if (d.mergeable === 'CONFLICTING') line('bad', '✕', '<b>Conflicts with ' + esc(d.baseRefName) + '</b> · resolve them in the worktree, then push', null, 'conflicts');
     else if (d.mergeable === 'MERGEABLE') line('ok', '✓', 'No conflicts with <code>' + esc(d.baseRefName) + '</code>');
-    else line('dim', '…', 'GitHub is still checking for conflicts');
+    else line('dim', '…', 'GitHub is still checking for conflicts', null, 'checking conflicts');
   }
   // GitHub's own verdict: BLOCKED means a branch rule is not met (usually a required approval)
   const rules = open && !d.isDraft && d.mergeable !== 'CONFLICTING' && d.mergeStateStatus === 'BLOCKED';
   const admin = !!(d.merge && d.merge.admin);
   if (rules) line('bad', '✕', '<b>GitHub blocks the merge</b> · ' + (d.reviewDecision === 'REVIEW_REQUIRED'
     ? 'the branch rules need an approving review' : c.failed.length || c.running ? 'the branch rules need the checks to pass'
-    : 'a branch rule is not met yet') + (admin ? '' : '. Ask someone to approve it on GitHub.'));
+    : 'a branch rule is not met yet') + (admin ? '' : '. Ask someone to approve it on GitHub.'), null, 'blocked by branch rules');
   const blocked = d.isDraft || d.mergeable === 'CONFLICTING';
+  const canMerge = open && !blocked && !(rules && !admin);
   const methods = (d.merge && d.merge.methods.length) ? d.merge.methods : ['merge'];
   const pick = methods.includes(mergeMethod) ? mergeMethod : methods.includes(d.merge && d.merge.default) ? d.merge.default : methods[0];
   const LABEL = { merge: 'Merge commit', squash: 'Squash and merge', rebase: 'Rebase and merge' };
   const notes = prNotes[p.key], err = prErr[p.key];
+  // the status line: ready or not, and why, in a few words; the full list unfolds under it
+  const head = canMerge
+    ? (why.length ? ['warn', '!', '<b>Ready to merge</b> <span class="dim">· ' + esc(why.join(' · ')) + '</span>']
+      : ['ok', '✓', '<b>Ready to merge</b>'])
+    : ['bad', '✕', '<b>Not ready to merge:</b> ' + esc(why.join(' · '))];
+  const fix = open && d.mergeable === 'CONFLICTING' && hasChat(p);
+  const parts = splitPrBody(d.body || '');
+  const moreOpen = prMoreOpen[p.key] != null ? prMoreOpen[p.key] : !parts.dec;
   v.innerHTML =
     (err ? '<div class="merr" role="alert"><b>GitHub refused' + (err.action === 'merge' ? ' the merge' : '') + ':</b> ' +
       esc(err.text) + '</div>' : '') +
     (d.state === 'MERGED' && notes ? '<div class="mergednote"><b>Merged into ' + esc(d.baseRefName) + '.</b>' +
       notes.map((n) => '<div' + (n.startsWith('Not pulled') ? ' class="notpulled"' : '') + '>' + esc(n) + '</div>').join('') + '</div>' : '') +
-    '<div class="prhead">' +
-    '<div class="row">' + prChip(d) + '<b class="prtitle">' + esc(d.title) + '</b><span class="dim">#' + d.number + '</span></div>' +
-    '<div class="row dim"><span><code>' + esc(d.baseRefName) + '</code> ← <code>' + esc(d.headRefName) + '</code></span>' +
-      '<span class="add">+' + d.additions + '</span><span class="del">−' + d.deletions + '</span>' +
-      '<span>' + d.changedFiles + ' files · ' + d.commits + ' commits</span>' +
-      '<span style="flex:1"></span><span class="btns" id="practs"></span></div></div>' +
-    (open ? '<div class="mbox" id="mbox">' + lines.join('') + '<div class="mfoot">' + (blocked
-      ? '<span class="dim">' + (d.isDraft ? 'A draft cannot be merged. Use Ready for review in the bar above.' : 'Fix the conflicts first.') + '</span>'
-      : rules && !admin ? '<span class="dim">It can be merged once GitHub allows it.</span>'
-      : '<select id="mmethod" aria-label="merge method">' + methods.map((m) => '<option value="' + m + '"' + (m === pick ? ' selected' : '') + '>' + LABEL[m] + '</option>').join('') + '</select>' +
+    (open ? '<div class="mbox" id="mbox"><details id="mstat"' + (prStatusOpen.has(p.key) ? ' open' : '') + '>' +
+      '<summary class="mline mhead ' + head[0] + '"><span class="ic">' + head[1] + '</span><span>' + head[2] + '</span>' +
+        '<span style="flex:1"></span>' + (fix ? '<button id="mfix" title="Puts the request in the chat box. You read it and press Enter.">Ask the agent to fix</button>' : '') +
+        '<span class="dim mtoggle">details</span></summary>' + lines.join('') + '</details>' +
+      (canMerge ? '<div class="mfoot">' +
+        '<select id="mmethod" aria-label="merge method">' + methods.map((m) => '<option value="' + m + '"' + (m === pick ? ' selected' : '') + '>' + LABEL[m] + '</option>').join('') + '</select>' +
         '<label><input type="checkbox" id="mdel" checked> Delete the branch on GitHub</label><span style="flex:1"></span>' +
         (rules ? '<label title="You are an admin of this repo: gh pr merge --admin"><input type="checkbox" id="madmin"> Merge as admin, past the branch rules</label>' : '') +
-        '<button class="merge" id="mgo"' + (rules ? ' disabled' : '') + '>Merge into ' + esc(d.baseRefName) + '</button>') + '</div></div>' : '') +
-    '<div class="mdc prbody" id="prbody"></div>';
+        '<button class="merge" id="mgo"' + (rules ? ' disabled' : '') + '>Merge into ' + esc(d.baseRefName) + '</button></div>' : '') +
+      '</div>' : '') +
+    (parts.dec ? '<div class="mdc prbody prdec" id="prdec"></div>' : '') +
+    '<details class="prmore" id="prmore"' + (moreOpen ? ' open' : '') + '><summary>' +
+      (parts.dec ? 'Full PR description' : 'PR description') +
+      ' <span class="dim">· <code>' + esc(d.baseRefName) + '</code> ← <code>' + esc(d.headRefName) + '</code> · </span>' +
+      '<span class="add">+' + d.additions + '</span> <span class="del">−' + d.deletions + '</span>' +
+      ' <span class="dim">· ' + d.changedFiles + ' files · ' + d.commits + ' commits</span></summary>' +
+      '<div class="prmeta"><b class="prtitle">' + esc(d.title) + '</b> <span class="dim">#' + d.number + '</span>' +
+        '<span style="flex:1"></span><span class="btns" id="practs"></span></div>' +
+      '<div class="mdc prbody" id="prbody"></div></details>';
+  byId('mstat')?.addEventListener('toggle', (e) => e.target.open ? prStatusOpen.add(p.key) : prStatusOpen.delete(p.key));
+  byId('prmore').addEventListener('toggle', (e) => { prMoreOpen[p.key] = e.target.open; });
+  byId('mfix')?.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();   // not a click on the status line: it stays as it is
+    askAgent(p, 'Merge ' + d.baseRefName + ' into this branch, fix the conflicts, run the tests and push.');
+  });
   const A = byId('practs');
-  const btn = (label, fn, cls, parent) => {
-    const b = document.createElement('button');
-    b.textContent = label; if (cls) b.className = cls;
-    b.addEventListener('click', () => { A.querySelectorAll('button').forEach((x) => (x.disabled = true)); fn(); });
-    (parent || A).appendChild(b);
-    return b;
-  };
-  btn('↗ Open on GitHub', () => { window.open(d.url, '_blank', 'noopener'); drawPr(p); }, 'linkbtn');
   if (open) {
-    // rarely needed: behind "⋯"
-    const more = document.createElement('span');
-    more.style.cssText = 'display:none;gap:8px';
-    const mb = btn('⋯', () => { more.style.display = 'inline-flex'; mb.remove(); A.querySelectorAll('button').forEach((x) => (x.disabled = false)); });
-    mb.title = 'Close PR, back to draft';
-    if (!d.isDraft) btn('Back to draft', () => prAct(p, { action: 'draft' }), null, more);
-    btn('Close PR', () => closePr(p).then(() => drawPr(p)), 'danger', more);
-    A.appendChild(more);
+    const btn = (label, fn, cls) => {
+      const b = document.createElement('button');
+      b.textContent = label; if (cls) b.className = cls;
+      b.addEventListener('click', () => { A.querySelectorAll('button').forEach((x) => (x.disabled = true)); fn(); });
+      A.appendChild(b);
+    };
+    if (!d.isDraft) btn('Back to draft', () => prAct(p, { action: 'draft' }));
+    btn('Close PR', () => closePr(p).then(() => drawPr(p)), 'danger');
   }
   const go = byId('mgo'), adm = byId('madmin');
   if (adm) adm.addEventListener('change', () => { go.disabled = !adm.checked; });
@@ -4146,16 +4235,19 @@ function drawPr(p) {
     go.disabled = true; go.textContent = 'Merging…';
     await prAct(p, { action: 'merge', method, deleteBranch: del, head: d.headRefOid, admin: asAdmin });
   });
-  // GitHub task lists: each box writes the description back, like ticking it on github.com
+  // GitHub task lists: each box writes the description back, like ticking it on github.com.
+  // The boxes are numbered in the order of the description, as the server counts them.
   let n = 0;
-  // drop HTML comments, e.g. the decision-sheet markers
-  const src = (d.body || '').replace(/<!-{2}[\\s\\S]*?-{2}>/g, '');
-  byId('prbody').innerHTML = src.trim()
-    ? md(src, true).replace(/<li>\\[([ xX])\\] /g, (m, x) => '<li class="task"><input type="checkbox" aria-label="I agree" data-task="' + (n++) + '"' +
-        (x === ' ' ? '' : ' checked') + (open ? '' : ' disabled') + '>')
-    : '<p class="dim">No description.</p>';
-  byId('prbody').querySelectorAll('[data-task]').forEach((el) => el.addEventListener('change', () => {
-    byId('prbody').querySelectorAll('[data-task]').forEach((x) => (x.disabled = true));
+  const render = (src) => {
+    src = src.replace(/<!-{2}[\\s\\S]*?-{2}>/g, '');   // drop HTML comments, e.g. the decision-sheet markers
+    return src.trim() ? md(src, true).replace(/<li>\\[([ xX])\\] /g, (m, x) => '<li class="task"><input type="checkbox" aria-label="I agree" data-task="' + (n++) + '"' +
+      (x === ' ' ? '' : ' checked') + (open ? '' : ' disabled') + '>') : '';
+  };
+  const pre = render(parts.pre), dec = render(parts.dec), post = render(parts.post);
+  if (byId('prdec')) byId('prdec').innerHTML = dec;
+  byId('prbody').innerHTML = pre + post || '<p class="dim">No description.</p>';
+  v.querySelectorAll('[data-task]').forEach((el) => el.addEventListener('change', () => {
+    v.querySelectorAll('[data-task]').forEach((x) => (x.disabled = true));
     prAct(p, { action: 'task', index: +el.dataset.task, count: n, was: !el.checked });
   }));
 }
