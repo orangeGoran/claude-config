@@ -24,6 +24,8 @@
 // ~/.claude/pipeline-dashboard/state/<project>/. Logs are always central for
 // generic runs. Localhost only.
 import http from 'node:http';
+import net from 'node:net';
+import { EventEmitter } from 'node:events';
 import {
   readFileSync, readdirSync, existsSync, openSync, mkdirSync, unlinkSync,
   writeFileSync, renameSync, statSync, closeSync, readSync, realpathSync,
@@ -1304,6 +1306,87 @@ const CHAT_MODES = ['default', 'acceptEdits', 'plan', 'auto'];
 const chats = new Map();         // plan key -> the open claude
 const chatClients = new Map();   // plan key -> the pages listening (server-sent events)
 const chatNotes = new Map();     // plan key -> how the last claude ended, when it failed
+// Each chat's claude runs under scripts/chat-relay.mjs, detached, so a restart of this server
+// (launchctl kickstart -k ends its whole process group) does not end it. The relay listens on
+// a socket in CHAT_SOCKS; a .json in CHAT_DIR says whose chat it is and where its socket is,
+// and a restarted server reads those and connects again (chatReattach). One folder per port:
+// a test server on another port never takes the live server's chats. The sockets sit in a
+// short folder because macOS allows a socket path of 104 characters at most.
+const CHAT_RELAY = fileURLToPath(new URL('./chat-relay.mjs', import.meta.url));
+const CHAT_DIR = path.join(CENTRAL, 'chats', String(PORT));
+const CHAT_SOCKS = '/tmp/plans-chat-' + (process.getuid?.() ?? 'u');
+// the relay as the child process the chat code talks to: stdin, stdout, stderr, kill, exit
+const relayChild = (sockPath) => {
+  const c = new EventEmitter();
+  c.stdout = new EventEmitter(); c.stderr = new EventEmitter();
+  let sock = null, queue = [], ended = false, tries = 0;
+  const end = (code) => { if (!ended) { ended = true; c.emit('exit', code); } };
+  c.stdin = { write: (s) => { if (sock) sock.write(s); else if (!ended) queue.push(s); return true; }, on: () => {} };
+  c.kill = () => c.stdin.write('{"relay":"kill"}\n');
+  const connect = () => {
+    const s = net.connect(sockPath);
+    let buf = '', open = false;
+    s.on('connect', () => { open = true; sock = s; for (const q of queue) s.write(q); queue = []; });
+    s.on('error', () => {});
+    s.on('data', (d) => {
+      buf += d;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        const t = line[0], v = line.slice(2);
+        if (t === 'o') c.stdout.emit('data', v + '\n');
+        else if (t === 'e') { try { c.stderr.emit('data', JSON.parse(v)); } catch {} }
+        else if (t === 'p') c.pid = +v;
+        else if (t === 'b') c.emit('busy');
+        else if (t === 'x') {
+          let x = {};
+          try { x = JSON.parse(v); } catch {}
+          if (x.spawnError) { if (!ended) { ended = true; c.emit('error', new Error(x.spawnError)); } }
+          else end(x.code);
+        }
+      }
+    });
+    s.on('close', () => {
+      sock = null;
+      // the relay is still starting: try again for a few seconds
+      if (!open && !ended && ++tries < 100) return setTimeout(connect, 50);
+      end(1);   // the relay went without saying how: claude is gone with it
+    });
+  };
+  connect();
+  return c;
+};
+// a chat's files: <hash>-<start>.json in CHAT_DIR (whose chat, for chatReattach) and the relay's socket in CHAT_SOCKS
+const chatRelayStart = (key, meta, argv, cwd) => {
+  mkdirSync(CHAT_DIR, { recursive: true });
+  mkdirSync(CHAT_SOCKS, { recursive: true, mode: 0o700 });
+  const base = path.join(CHAT_DIR, createHash('sha1').update(key).digest('hex').slice(0, 12) + '-' + Date.now().toString(36));
+  const metaFile = base + '.json', sockPath = path.join(CHAT_SOCKS, createHash('sha1').update(base).digest('hex').slice(0, 16) + '.sock');
+  writeFileSync(metaFile, JSON.stringify({ ...meta, sock: sockPath }));
+  spawn(process.execPath, [CHAT_RELAY, sockPath, ...argv], { cwd, env: ENV, detached: true, stdio: 'ignore' }).unref();
+  return { child: relayChild(sockPath), metaFile };
+};
+// after a restart: the chats still running come back, with the turn that runs now replayed
+const chatReattach = () => {
+  let files = [];
+  try { files = readdirSync(CHAT_DIR).filter((f) => f.endsWith('.json')); } catch { return; }
+  for (const f of files) {
+    const metaFile = path.join(CHAT_DIR, f);
+    let m = null;
+    try { m = JSON.parse(readFileSync(metaFile, 'utf8')); } catch {}
+    if (!m || !m.sock || !existsSync(m.sock)) { try { unlinkSync(metaFile); } catch {} continue; }
+    const proj = projByName(m.project), key = proj && proj.name + '/' + m.slug;
+    // a chat of a project no longer registered, or a second one for a plan: nobody can talk to it
+    if (!proj || chats.has(key)) { relayChild(m.sock).kill(); try { unlinkSync(metaFile); } catch {} continue; }
+    chatAttach(proj, m.slug, relayChild(m.sock), { ...m, metaFile, fresh: false });
+    console.log('Chat ' + key + ' reconnected.');
+  }
+};
+// a background shell (Bash run_in_background) is a zsh/bash/sh child of claude; its MCP servers are not shells
+const shellsRunning = (pid) => new Promise((resolve) => {
+  if (!pid) return resolve(false);
+  execFile('pgrep', ['-lP', String(pid)], (e, out) => resolve(/^\d+\s+-?(zsh|bash|sh)$/m.test(out || '')));
+});
 const chatFile = (proj, slug) => path.join(proj.stateDir, 'ask', slug + '.json');
 const loadChat = (proj, slug) => {
   try { return JSON.parse(readFileSync(chatFile(proj, slug), 'utf8')); } catch { return {}; }
@@ -1554,11 +1637,12 @@ const chatLandWatch = (ch) => {
   }, 200);
 };
 // closing marks the chat at once: a message sent before its exit opens a new session
-const chatKill = (ch) => { ch.closing = true; ch.child.kill('SIGTERM'); };
+const chatKill = (ch) => { ch.closing = true; ch.child.kill(); };
 const chatIdle = (ch) => {
   clearTimeout(ch.idleTimer);
-  ch.idleTimer = setTimeout(() => {
-    if (ch.busy || ch.waits.size) return chatIdle(ch);
+  ch.idleTimer = setTimeout(async () => {
+    if (ch.busy || ch.waits.size || await shellsRunning(ch.child.pid)) return chatIdle(ch);
+    if (chats.get(ch.key) !== ch || ch.busy) return;
     chatKill(ch);
   }, CHAT_IDLE_MS);
 };
@@ -1574,6 +1658,14 @@ const applyModeModel = (ch, b, picked) => {
   }
   const model = chatModel(b.model);
   if (model !== ch.model) { ch.model = model; chatControl(ch, { subtype: 'set_model', model }).then(() => chatContextRefresh(ch)); }
+  chatMetaSave(ch);
+};
+const chatMetaSave = (ch) => {
+  if (!ch.metaFile || !existsSync(ch.metaFile)) return;
+  try {
+    const m = JSON.parse(readFileSync(ch.metaFile, 'utf8'));
+    writeFileSync(ch.metaFile, JSON.stringify({ ...m, session: ch.session, fork: ch.fork, mode: ch.mode, model: ch.model }));
+  } catch {}
 };
 // how full the session's context is, asked of claude itself: the count includes the system
 // prompt and tools. It is asked when the session opens, at the end of each turn (a /compact is
@@ -1658,6 +1750,7 @@ const chatOnLine = (ch, j) => {
       ch.fork = false;
     } else if (a.current) a.current.id = j.session_id;
     saveChat(proj, slug, a);
+    chatMetaSave(ch);
     chatEmitState(proj, slug);
   }
   if (j.type === 'system' && j.subtype === 'init' && CHAT_MODES.includes(j.permissionMode) && j.permissionMode !== ch.mode) {
@@ -1731,15 +1824,26 @@ const chatStart = (proj, slug, b) => {
   const rules = repoAllowRules([wtPath, proj.root]);
   // the flags the VS Code extension starts its sessions with; --allowedTools takes every word
   // after it, so it comes last
-  const child = spawn('claude', ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
+  const meta = { project: proj.name, slug, session: fork ? null : id, fork, mode, model: model || 'default' };
+  const { child, metaFile } = chatRelayStart(key, meta, ['claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
     '--include-partial-messages', '--setting-sources', 'user,project,local', '--permission-prompt-tool', 'stdio', '--permission-mode', mode,
     ...(model ? ['--model', model] : []), '--resume', id, ...(fork ? ['--fork-session'] : []),
-    ...(rules.length ? ['--allowedTools', ...rules] : [])],
-  { cwd: wtPath, env: ENV, stdio: ['pipe', 'pipe', 'pipe'] });
-  const ch = { key, proj, slug, child, session: fork ? null : id, fork, mode, model: model || 'default', busy: false,
+    ...(rules.length ? ['--allowedTools', ...rules] : [])], wtPath);
+  return chatAttach(proj, slug, child, { ...meta, metaFile, fresh: true });
+};
+// the chat's state around its claude. fresh: claude has just started; otherwise this is a
+// reconnect after a restart, and the relay replays the turn running now through chatOnLine.
+const chatAttach = (proj, slug, child, { session, fork, mode, model, metaFile, fresh }) => {
+  const key = proj.name + '/' + slug, { wtPath } = planSessions(proj, slug);
+  const ch = { key, proj, slug, child, metaFile, session, fork: !!fork, mode, model: model || 'default', busy: false,
     closing: false, turnsEnded: 0, partial: '', landing: [], landed: 0, waits: new Map(), pending: new Map(), err: '', last: null };
   chats.set(key, ch);
   chatNotes.delete(key);
+  const gone = () => { try { unlinkSync(metaFile); } catch {} };
+  child.on('exit', gone);
+  child.on('error', gone);
+  // a reconnect: the relay says a turn is running before it replays it
+  child.on('busy', () => { ch.busy = true; });
   child.stdin.on('error', () => {});
   let buf = '';
   child.stdout.on('data', (d) => {
@@ -1764,11 +1868,12 @@ const chatStart = (proj, slug, b) => {
   };
   child.on('exit', done);
   child.on('error', (e) => { ch.err = 'Could not start claude: ' + e.message; ch.busy = true; done(-1); });
-  chatControl(ch, { subtype: 'initialize' }).then((r) => {
+  if (fresh) chatControl(ch, { subtype: 'initialize' }).then((r) => {
     const m = metaOf(r);
     if (m) chatMetaCache.set(wtPath, { ...chatMetaCache.get(wtPath), ...m });
     chatContextRefresh(ch);
   });
+  else chatContextRefresh(ch);
   chatIdle(ch);
   return ch;
 };
@@ -1857,7 +1962,7 @@ const chatEnd = (key) => { const ch = chats.get(key); if (ch) chatKill(ch); };
 const chatRestart = (proj, slug, fork) => {
   const key = proj.name + '/' + slug, ch = chats.get(key);
   if (ch && ch.busy) return { ok: false, output: 'The agent is still working. Stop it or wait for the answer first.' };
-  if (ch) { chats.delete(key); ch.child.kill('SIGTERM'); }
+  if (ch) { chats.delete(key); ch.child.kill(); }
   const a = loadChat(proj, slug);
   if (fork) a.fork = true;
   else { a.current = null; a.fork = false; }
@@ -2198,6 +2303,11 @@ const PAGE = /* html */ `<!doctype html>
   header { padding:11px 20px; border-bottom:1px solid var(--line); display:flex;
            align-items:center; gap:14px; flex-shrink:0; }
   h1 { font-size:calc(15px * var(--fs)); margin:0; }
+  /* the main header has the review bar's layout: the Plan · PR / Files changed switch sits in the middle, at the same place */
+  header.mainhd { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(max-content,1fr); gap:16px; }
+  .mainhd .hleft, .mainhd .hright { display:flex; align-items:center; gap:14px; min-width:0; }
+  .mainhd .hright { justify-content:flex-end; }
+  .mainhd .hdnote { margin-left:auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .wrap { flex:1; display:flex; min-height:0; }
   aside { width:calc(400px * var(--fs)); border-right:1px solid var(--line); background:var(--panel);
           flex-shrink:0; display:flex; flex-direction:column; }
@@ -2585,11 +2695,12 @@ const PAGE = /* html */ `<!doctype html>
   .rbar .rright { display:flex; align-items:center; justify-content:flex-end; gap:2px; }
   .rbar .rname { font-weight:600; font-size:calc(13px * var(--fs)); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .rbar #rback { color:var(--accent); flex-shrink:0; white-space:nowrap; }
-  .rbar .prtabs { margin:0; border:0; gap:2px; padding:2px; border-radius:8px; background:var(--input); }
-  .rbar .prtabs button { padding:3px 12px; border:0; border-radius:6px; white-space:nowrap; }
-  .rbar .prtabs button:hover { color:var(--fg); }
-  .rbar .prtabs button.on { background:var(--sel); }
-  .rbar .prtabs .n { font:inherit; background:none; padding:0; margin-left:2px; color:var(--dim); }
+  .rbar .ppill { flex-shrink:0; margin:0 2px 0 4px; }
+  .rbar .prtabs, #hdtabs .prtabs { margin:0; border:0; gap:2px; padding:2px; border-radius:8px; background:var(--input); }
+  .rbar .prtabs button, #hdtabs .prtabs button { padding:3px 12px; border:0; border-radius:6px; white-space:nowrap; }
+  .rbar .prtabs button:hover, #hdtabs .prtabs button:hover { color:var(--fg); }
+  .rbar .prtabs button.on, #hdtabs .prtabs button.on { background:var(--sel); }
+  .rbar .prtabs .n, #hdtabs .prtabs .n { font:inherit; background:none; padding:0; margin-left:2px; color:var(--dim); }
   .rbar .seen { font-size:calc(12px * var(--fs)); font-variant-numeric:tabular-nums; color:var(--dim); white-space:nowrap; margin-right:8px; }
   .rbar .btns { margin:0; flex-wrap:nowrap; gap:2px; }
   .rbar #ract button.merge, .rbar #ract button.primary { padding:4px 12px; margin-left:6px; }
@@ -2665,6 +2776,7 @@ const PAGE = /* html */ `<!doctype html>
   .chatbtn { margin-left:auto; } .chatbtn.on { border-color:var(--accent); color:var(--accent); }
   .chatbtn .n { background:var(--warn); color:var(--accentfg); }
   .chead { display:flex; align-items:center; gap:8px; padding:7px 12px; border-bottom:1px solid var(--line); flex-shrink:0; }
+  .chead .ppill { flex-shrink:0; margin:0; }
   .chead button { padding:3px 9px; font-size:calc(12px * var(--fs)); }
   .cwho { font:calc(11.5px * var(--fs)) ui-monospace,monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .clog { flex:1; min-height:0; overflow:auto; padding:10px 12px; display:flex; flex-direction:column; gap:8px; }
@@ -2779,16 +2891,17 @@ const PAGE = /* html */ `<!doctype html>
   .tp-foot { display:flex; gap:8px; align-items:center; }
   @media (prefers-reduced-motion: reduce) { #tourhole, #tourpop { transition:none; } }
 </style>
-<header><h1>🗂 Plans</h1><span class="hdrun" id="hdrun" style="display:none"></span>
+<header class="mainhd"><div class="hleft"><h1>🗂 Plans</h1><span class="hdrun" id="hdrun" style="display:none"></span>
   <span class="hdok" id="hdok" style="display:none"></span>
   <span class="dim" id="clock"></span>
   <span class="hdwarn" id="connmsg" style="display:none"></span>
-  <span class="dim" style="margin-left:auto">auto-refresh 5s · summaries generate in background</span>
-  <a class="hdlink" href="http://localhost:${QA_PORT}/" target="_blank" rel="noopener" title="report pages of the browser-usability-test skill">QA reports ↗</a>
+  <span class="dim hdnote">auto-refresh 5s · summaries generate in background</span></div>
+  <div id="hdtabs"></div>
+  <div class="hright"><a class="hdlink" href="http://localhost:${QA_PORT}/" target="_blank" rel="noopener" title="report pages of the browser-usability-test skill">QA reports ↗</a>
   <button id="guidebtn" title="find repos on this machine and add them; step 1 explains how it works">＋ Add project</button>
   <button id="settingsbtn" title="projects & settings">⚙ Settings</button>
   <button id="alertBtn" aria-pressed="false" title="Sound and notification when a run stops or the agent answers">🔕</button>
-  <button id="themeBtn" title="toggle light/dark">🌙</button></header>
+  <button id="themeBtn" title="toggle light/dark">🌙</button></div></header>
 <div class="wrap">
   <aside>
     <div class="filters">
@@ -3346,6 +3459,7 @@ async function renderDetail(loadPlan) {
   if (tab !== 'plan' && !p.pr) tab = 'plan';
   autoChat(p);
   syncChat(p);
+  drawHdTabs(p);
   if (tab !== 'plan') return renderPrTab(p, tab, loadPlan);
   lastPrDraw = null;
   const launcherModes = !p.hasPipeline && !p.archived
@@ -3374,7 +3488,7 @@ async function renderDetail(loadPlan) {
       <h2 class="fname">\${p.file}</h2>
       <div class="subtitle">\${inline(p.title)}</div></div>
       <div class="btns" id="actions"></div></div>
-    \${withPr ? '<div class="prtabsrow">' + prTabs(p, 'plan') + '<span class="btns" id="ract"></span></div>' : prTabs(p, 'plan') + badges}
+    \${withPr ? '<div class="prtabsrow"><div class="prtabs">' + chatBtn(p) + '</div><span class="btns" id="ract"></span></div>' : prTabs(p, 'plan') + badges}
     <div id="morebox" \${moreOpen.has(p.key) ? '' : 'hidden'}>
     \${withPr ? badges + lastStep : ''}
     <div class="metabox"><b>Status:</b>
@@ -3602,6 +3716,15 @@ const prTabs = (p, tab, inBar) => !p.pr && !hasChat(p) ? '' : '<div class="prtab
     prData[p.key] && prData[p.key].changedFiles != null ? prData[p.key].changedFiles : p.pr.changedFiles))],
 ].filter(Boolean).map(([id, label]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '">' + label + '</button>').join('') +
   (inBar ? '' : chatBtn(p)) + '</div>';
+// the same switch in the main header, so the plan view has it where Files changed has it
+function drawHdTabs(p) {
+  const h = byId('hdtabs');
+  if (!h) return;
+  h.innerHTML = p && p.pr ? prTabs(p, 'plan', true) : '';
+  h.querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => {
+    prTab[p.key] = el.dataset.tab; lastPrDraw = null; renderDetail(false);
+  }));
+}
 function bindPrTabs(p) {
   byId('detail').querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => {
     prTab[p.key] = el.dataset.tab; lastPrDraw = null; renderDetail(false);
@@ -3693,7 +3816,7 @@ function chatBind(p) {
   const C = byId('chat');
   if (chatW) C.style.width = chatW + 'px';
   C.innerHTML =
-    '<div class="chead"><b>Chat</b><span class="dim cwho" id="cwho"></span><span style="flex:1"></span>' +
+    '<div class="chead"><b>Chat</b>' + projPill(p.project) + '<span class="dim cwho" id="cwho"></span><span style="flex:1"></span>' +
       '<button id="cfork" title="The next message goes on in a copy of this session. The session so far stays as it is.">Fork</button>' +
       '<button id="cnew" hidden title="The next message starts again from the run’s latest session">New chat</button>' +
       '<button id="cclose" title="Close the chat" aria-label="Close the chat">✕</button></div>' +
@@ -3724,7 +3847,7 @@ function chatBind(p) {
     const d = prData[c.key];
     if (!d || !d.baseRefName) return;
     e.target.disabled = true;
-    chatSendMsg('/update-branch ' + d.baseRefName);
+    chatSendMsg('/merge-parent ' + d.baseRefName);
   });
   paintSync();
   byId('cstop').addEventListener('click', () => post('/api/chat/stop', { project: c.p.project, slug: c.p.slug }));
@@ -3817,7 +3940,7 @@ function paintIdle() {
 }
 setInterval(paintIdle, 30000);
 // "Fix conflicts" in the chat row: shown when the PR's base has commits the PR lacks, or GitHub
-// reports conflicts. It sends /update-branch <base>: merge the base in, fix, check, push.
+// reports conflicts. It sends /merge-parent <base>: merge the base in, fix, check, push.
 function paintSync() {
   const B = byId('csync'), d = ch && prData[ch.key];
   if (!B) return;
@@ -3827,7 +3950,7 @@ function paintSync() {
   B.disabled = false;
   B.title = (conflicts ? 'Conflicts with ' + d.baseRefName + '. ' : '') +
     (d.behindBy > 0 ? d.baseRefName + ' has ' + d.behindBy + ' commit' + (d.behindBy > 1 ? 's' : '') + ' this branch does not have. ' : '') +
-    'Sends /update-branch ' + d.baseRefName + ': the agent merges it in, fixes the conflicts, runs the checks and pushes.';
+    'Sends /merge-parent ' + d.baseRefName + ': the agent merges it in, fixes the conflicts, runs the checks and pushes.';
 }
 function chatSetMode(mode, model) {
   chatMode = mode; chatModel = model;
@@ -3930,8 +4053,10 @@ function chatState(st) {
   c.st = st;
   const short = (id) => String(id || '').slice(0, 8);
   byId('cwho').textContent = (st.live ? '● ' : '') + (st.fork ? 'next message: a copy of ' + short(st.session)
-    : st.current && st.current.copy ? 'copy of ' + short(st.current.base) : 'session ' + short(st.session));
-  byId('cwho').title = st.live ? 'The session is open. It closes after 15 minutes without a message.' : 'The next message opens the session.';
+    : st.current && st.current.copy ? 'copy of ' + short(st.current.base) : '');
+  // the session id is only in the tooltip; the project pill beside "Chat" says whose chat this is
+  byId('cwho').title = 'Session ' + short(st.session) + '. ' +
+    (st.live ? 'The session is open. It closes after 15 minutes without a message.' : 'The next message opens the session.');
   byId('cnew').hidden = !(st.current && st.current.id !== st.latest);
   byId('cfork').disabled = !!st.fork;
   byId('cgo').textContent = st.busy ? 'Queue' : 'Send';
@@ -4177,7 +4302,7 @@ async function renderPrTab(p, tab, force) {
   if (!again) byId('detail').innerHTML = (review ? \`
     <div class="rbar">
       <div class="rleft"><button id="rback" title="Back to the plan and the plan list (Esc)">‹ Plan</button>
-        <span class="rname" title="\${escA((p.title || p.slug) + '\\n' + p.client + ' / ' + p.project + ' / ' + p.file)}">\${inline(p.title || p.slug)}</span></div>
+        \${projPill(p.project)}<span class="rname" title="\${escA((p.title || p.slug) + '\\n' + p.client + ' / ' + p.project + ' / ' + p.file)}">\${inline(p.title || p.slug)}</span></div>
       \${prTabs(p, tab, true)}
       <div class="rright"><span class="seen" id="rseen"></span>\${chatBtn(p)}<span class="btns" id="ract"></span></div></div>\` : \`
     <div class="crumb">\${esc(p.client)} / \${projPill(p.project)}\${esc(p.project)}</div>
@@ -5627,6 +5752,7 @@ function renderEmptyDetail() {
   syncUrl();
   markDetailProject(null);
   syncChat(null);
+  drawHdTabs(null);
   document.body.classList.remove('review');
   byId('detail').innerHTML = state.length ? '<span class="dim">Select a plan on the left.</span>'
     : '<div class="welcome"><h2>Hand off the work. Review the result.</h2><p>Describe a change in a plan ' +
@@ -6367,6 +6493,7 @@ server.on('error', (e) => {
 });
 
 server.listen(PORT, BIND, () => {
+  chatReattach();
   // prefer the /etc/hosts vanity domain when the user has added it
   let host = 'plans.localhost';
   try {

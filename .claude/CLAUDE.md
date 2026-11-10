@@ -1,3 +1,3 @@
 # claude-config (this repo only)
 
-- **Apply dashboard changes to plans.test.** After editing `scripts/plans-dashboard.mjs` (or anything it imports), restart the login service so https://plans.test serves the new code: `npm run restart` (it waits while a chat agent is working, so a restart never cuts off a chat). Then tell me to reload the page.
+- **Apply dashboard changes to plans.test.** After editing `scripts/plans-dashboard.mjs` (or anything it imports), restart the login service so https://plans.test serves the new code: `npm run restart` (chats keep running through it: each chat's `claude` runs under `scripts/chat-relay.mjs`, and the new server connects to it again). Then tell me to reload the page.

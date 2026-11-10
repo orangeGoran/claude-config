@@ -1,6 +1,6 @@
 ---
-name: update-branch
-description: Merge the parent branch (the PR's base, usually develop) into the current branch, resolve the conflicts, check the result, commit the merge and push. Use when the user or the plans dashboard asks to "update the branch", "merge develop in", "bring the branch up to date", or "fix the PR conflicts", or invokes /update-branch.
+name: merge-parent
+description: Merge the parent branch (the PR's base, usually develop) into the current branch, resolve the conflicts, check the result, commit the merge and push. Use when the user or the plans dashboard asks to "merge develop", "merge develop in", "merge main in", "update the branch", "bring the branch up to date", or "fix the PR conflicts", or invokes /merge-parent (formerly /update-branch).
 argument-hint: "[parent branch, default: the open PR's base, else develop]"
 allowed-tools: Bash(git *), Bash(gh *), Bash(npm *), Bash(pnpm *), Bash(yarn *), Bash(npx *), Bash(composer *), Bash(php *), Read, Edit, Write, Grep, Glob
 ---

@@ -6,7 +6,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import http from 'node:http';
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
+import { readdirSync, mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -203,6 +203,11 @@ before(async () => {
 
 after(async () => {
   await stop(server);
+  // chats outlive the server on purpose (scripts/chat-relay.mjs): end the ones this run left
+  const chatDir = path.join(home, '.claude', 'pipeline-dashboard', 'chats', String(port));
+  for (const f of existsSync(chatDir) ? readdirSync(chatDir) : []) {
+    try { execFileSync('pkill', ['-f', JSON.parse(readFileSync(path.join(chatDir, f), 'utf8')).sock]); } catch {}
+  }
   if (tmp) rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -549,6 +554,42 @@ test('Stop ends the running turn only: the turn its queued messages start stays 
   assert.deepEqual(await post('/api/chat/send', { ...who, text: 'hang here' }), { ok: true });
   assert.deepEqual(await post('/api/chat/stop', who), { ok: true });
   await until(async () => !(await chat()).live, 'the process to be closed');
+  assert.deepEqual(await post('/api/chat/new', who), { ok: true });
+});
+
+test('a chat outlives a server restart: the new server shows its question and the same claude answers', async () => {
+  const q = 'project=demo&slug=demo-plan', who = { project: 'demo', slug: 'demo-plan' };
+  const chat = async () => (await get('/api/chat?' + q)).json();
+  const history = async () => (await get('/api/chat/history?' + q)).json();
+  const until = async (fn, what) => {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) { const v = await fn(); if (v) return v; await sleep(100); }
+    assert.fail('timed out waiting for ' + what);
+  };
+  const spawns = () => readFileSync(path.join(ghDir, 'claude-calls.log'), 'utf8').trim().split('\n')
+    .filter((l) => l.startsWith('-p ') && l.includes('--resume')).length;
+
+  assert.deepEqual(await post('/api/chat/send', { ...who, text: 'merge main after the restart' }), { ok: true });
+  await until(async () => (await chat()).waits.length, 'the permission card');
+  const before = spawns();
+
+  // launchctl kickstart -k ends the server at once, as SIGKILL does here
+  await stop(server);
+  server = await start();
+  const st = await until(async () => { const s = await chat(); return s.waits.length && s; }, 'the question after the restart');
+  assert.deepEqual([st.live, st.busy, st.waits.map((w) => w.what)], [true, true, ['git merge main']]);
+  assert.equal((await onlyPlan()).chatWaits, 1);
+
+  assert.deepEqual(await post('/api/chat/answer', { ...who, id: st.waits[0].id, allow: true }), { ok: true });
+  await until(async () => (await history()).items.some((i) => i.text === 'answer: merge main after the restart (merged)'), 'the answer');
+  await until(async () => !(await chat()).busy, 'the end of the turn');
+  assert.equal(spawns(), before, 'the same claude went on: none was started again');
+
+  // a second restart after the answer: the question does not come back
+  await stop(server);
+  server = await start();
+  await until(async () => (await chat()).live, 'the chat after the second restart');
+  assert.deepEqual([(await chat()).busy, (await chat()).waits], [false, []]);
   assert.deepEqual(await post('/api/chat/new', who), { ok: true });
 });
 
