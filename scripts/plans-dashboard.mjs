@@ -1965,8 +1965,18 @@ const chatAnswer = (proj, slug, b) => {
   if (edits) ch.mode = 'acceptEdits';
   // an approved plan ends Plan mode; the next turn's init says which mode claude went on in
   if (b.allow && req.tool_name === 'ExitPlanMode' && ch.mode === 'plan') ch.mode = 'default';
+  // AskUserQuestion: the answers go into the tool's input, keyed by the question text, as the
+  // extension's question form sends them
+  let input = req.input || {};
+  if (b.allow && req.tool_name === 'AskUserQuestion' && b.answers && typeof b.answers === 'object') {
+    const asked = new Set((input.questions || []).map((q) => q.question));
+    const answers = Object.fromEntries(Object.entries(b.answers)
+      .filter(([q, a]) => asked.has(q) && typeof a === 'string' && a.trim()).map(([q, a]) => [q, a.trim().slice(0, 4000)]));
+    if (!Object.keys(answers).length) { ch.waits.set(b.id, req); return { ok: false, output: 'Pick an answer first.' }; }
+    input = { ...input, answers };
+  }
   const response = b.allow
-    ? { behavior: 'allow', updatedInput: req.input || {}, ...(edits ? { updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] }
+    ? { behavior: 'allow', updatedInput: input, ...(edits ? { updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] }
       : b.always && rules.length ? { updatedPermissions: rules } : {}) }
     : { behavior: 'deny', message: String(b.message || 'The user said no. Wait for their next message.').slice(0, 2000) };
   chatSend(ch, { type: 'control_response', response: { subtype: 'success', request_id: b.id, response } });
@@ -2019,6 +2029,11 @@ const waitView = (id, r) => {
     what: clip(i.command || i.file_path || i.url || i.pattern || i.skill || '', 2000),
     detail: r.tool_name === 'ExitPlanMode' ? clip(i.plan, 20000) : r.tool_name === 'Bash' || r.tool_name === 'Read' ? '' : toolInput(r.tool_name, i),
     plan: r.tool_name === 'ExitPlanMode',
+    // AskUserQuestion: the page shows the questions with their options instead of Allow / Deny
+    ask: r.tool_name === 'AskUserQuestion' && Array.isArray(i.questions) ? i.questions.slice(0, 8).map((q) => ({
+      question: clip(q.question, 2000), header: clip(q.header, 60), multi: !!q.multiSelect,
+      options: (Array.isArray(q.options) ? q.options : []).slice(0, 12).map((o) => ({ label: clip(o.label, 200), description: clip(o.description, 1000) })),
+    })) : null,
     always: (r.permission_suggestions || []).some((s) => s.type === 'addRules'),
     edits: (r.permission_suggestions || []).some((s) => s.type === 'setMode' && s.mode === 'acceptEdits'),
   };
@@ -2863,6 +2878,13 @@ const PAGE = /* html */ `<!doctype html>
   .askempty { padding:14px 4px; line-height:1.6; }
   #cwaits { padding:0 12px; flex-shrink:0; max-height:45vh; overflow:auto; }
   .cwait { border:1px solid var(--warn); border-radius:10px; padding:9px 12px; margin:8px 0 0; display:flex; flex-direction:column; gap:6px; }
+  .cask { display:flex; flex-direction:column; gap:5px; padding-top:4px; }
+  .cask + .cask { border-top:1px solid var(--line); padding-top:8px; }
+  .copt { display:flex; flex-direction:column; align-items:flex-start; gap:2px; text-align:left; background:var(--input); color:var(--fg);
+          border:1px solid var(--line); border-radius:8px; padding:6px 10px; cursor:pointer; }
+  .copt:hover { border-color:var(--dim); }
+  .copt.on { border-color:var(--run); box-shadow:inset 3px 0 0 var(--run); }
+  .cother { background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:6px 10px; }
   .cwait code { font:calc(12px * var(--fs)) ui-monospace,monospace; word-break:break-all; }
   .cwait pre { font:calc(11.5px * var(--fs)) ui-monospace,monospace; background:var(--codebg); border-radius:6px; padding:6px 8px; margin:0; max-height:200px; overflow:auto; }
   .cplan { max-height:40vh; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:6px 10px; }
@@ -2919,9 +2941,18 @@ const PAGE = /* html */ `<!doctype html>
   /* tour: a transparent blocker, a spotlight hole, and a card beside it */
   #tour { display:none; }
   #tour.open { display:block; }
-  /* in-page alerts: one card per event, bottom right, left of the chat panel so they never cover its input; a click opens the plan */
-  #toasts { position:fixed; right:calc(var(--chatw, 0px) + 16px); bottom:16px; z-index:40; display:flex; flex-direction:column; gap:8px;
-            max-width:min(360px, calc(100vw - 32px)); }
+  /* in-page alerts: one card per event, bottom right, left of the chat panel so they never cover its input; a click opens the plan.
+     A hidden card waits behind the 🔔 pill until you open it or close it. */
+  #toasts { position:fixed; right:calc(var(--chatw, 0px) + 16px); bottom:16px; z-index:40; display:flex; flex-direction:column;
+            align-items:flex-end; gap:8px; width:min(360px, calc(100vw - 32px)); pointer-events:none; }
+  #toasts > * { pointer-events:auto; }
+  #toastList { display:flex; flex-direction:column; gap:8px; width:100%; max-height:min(70vh, 640px); overflow-y:auto; }
+  #toastList:empty { display:none; }
+  .toastPill { background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:5px 12px; cursor:pointer;
+               color:var(--fg); font-size:calc(13px * var(--fs)); box-shadow:0 6px 18px rgba(0,0,0,.3); }
+  .toastPill:hover { border-color:var(--dim); }
+  .toastPill .clr { color:var(--dim); margin-left:10px; text-decoration:underline; }
+  .toast .tm { color:var(--dim); font-size:calc(11.5px * var(--fs)); font-weight:normal; margin-left:6px; }
   .toast { display:flex; align-items:flex-start; gap:10px; background:var(--panel); border:1px solid var(--line);
            border-left:4px solid var(--run); border-radius:10px; padding:10px 10px 10px 12px; cursor:pointer;
            box-shadow:0 10px 30px rgba(0,0,0,.35); font-size:calc(13px * var(--fs)); animation:toastIn .18s ease-out; }
@@ -2929,7 +2960,8 @@ const PAGE = /* html */ `<!doctype html>
   .toast:hover { border-color:var(--dim); }
   .toast .tt { flex:1; min-width:0; } .toast b { display:block; margin-bottom:2px; }
   .toast .tb { color:var(--dim); overflow-wrap:anywhere; }
-  .toast .tx { background:none; border:0; color:var(--dim); cursor:pointer; font-size:16px; line-height:1; padding:0 2px; }
+  .toast .tx, .toast .th { background:none; border:0; color:var(--dim); cursor:pointer; font-size:16px; line-height:1; padding:0 3px; }
+  .toast .tx:hover, .toast .th:hover { color:var(--fg); }
   @keyframes toastIn { from { opacity:0; transform:translateY(8px); } }
   #tourblock { position:fixed; inset:0; z-index:30; }
   #tourhole { position:fixed; z-index:31; border-radius:10px; pointer-events:none;
@@ -2994,7 +3026,7 @@ const PAGE = /* html */ `<!doctype html>
 </div>
 <dialog id="seldlg" aria-labelledby="seldlgt"><div class="seldlg-top"><b id="seldlgt"></b><span style="flex:1"></span>
   <button class="ccopy" id="seldlgcopy">Copy</button><button class="onb-x" id="seldlgx" title="Close (Esc)">✕</button></div><pre id="seldlgbody"></pre></dialog>
-<div id="toasts" role="status" aria-live="polite"></div>
+<div id="toasts" role="status" aria-live="polite"><div id="toastList"></div><button id="toastPill" class="toastPill" hidden></button></div>
 <div id="tour"><div id="tourblock"></div><div id="tourhole"></div>
   <div id="tourpop" role="dialog" aria-live="polite"></div></div>
 <script>
@@ -4167,7 +4199,7 @@ function paintWaits(waits) {
   const sig = waits.map((w) => w.id).join();
   if (W.dataset.sig === sig) return;
   W.dataset.sig = sig;
-  W.innerHTML = waits.map((w) => '<div class="cwait" data-w="' + escA(w.id) + '">' +
+  W.innerHTML = waits.map((w) => w.ask ? askHtml(w) : '<div class="cwait" data-w="' + escA(w.id) + '">' +
     (w.plan ? '<b>The agent has a plan and asks to start:</b><div class="mdc cplan">' + md(w.detail) + '</div>'
       : '<b>Allow ' + esc(w.tool) + '?</b>' + (w.description ? '<div class="dim">' + esc(w.description) + '</div>' : '') +
         (w.what && !(w.description && w.what.endsWith(w.description)) ? '<code>' + esc(w.what) + '</code>' : '') + (w.detail ? '<pre>' + esc(w.detail) + '</pre>' : '')) +
@@ -4176,14 +4208,58 @@ function paintWaits(waits) {
       (w.edits && !w.plan ? '<button data-a="3" title="The agent edits files in this folder without asking until the chat closes. The mode picker shows Edit automatically.">Allow all edits in this chat</button>' : '') +
       '<button data-a="0">' + (w.plan ? 'Keep planning' : 'Deny') + '</button>' +
       '<span class="dim">' + (w.plan ? '' : 'To say what to do instead, type it below and click Deny.') + '</span></div></div>').join('');
+  W.querySelectorAll('.cask').forEach((Q) => {
+    const multi = Q.dataset.multi === '1', other = Q.querySelector('.cother');
+    Q.querySelectorAll('.copt').forEach((o) => o.addEventListener('click', () => {
+      if (!multi) { Q.querySelectorAll('.copt').forEach((x) => x !== o && x.classList.remove('on')); other.value = ''; }
+      o.classList.toggle('on');
+      askReady(Q.closest('[data-w]'));
+    }));
+    other.addEventListener('input', () => {
+      if (!multi && other.value.trim()) Q.querySelectorAll('.copt').forEach((x) => x.classList.remove('on'));
+      askReady(Q.closest('[data-w]'));
+    });
+  });
   W.querySelectorAll('[data-a]').forEach((b) => b.addEventListener('click', () => {
     const id = b.closest('[data-w]').dataset.w, a = +b.dataset.a, inp = byId('cin');
+    if (a === 4) {
+      W.querySelectorAll('button').forEach((x) => (x.disabled = true));
+      post('/api/chat/answer', { project: c.p.project, slug: c.p.slug, id, allow: true, answers: askAnswers(b.closest('[data-w]')) })
+        .then((r) => { if (!r.ok) { W.dataset.sig = ''; paintWaits(waits); } });
+      return;
+    }
     const message = a === 0 && inp.value.trim() ? inp.value.trim() : undefined;
     if (message) { inp.value = ''; delete chatDraft[c.key]; }
     W.querySelectorAll('button').forEach((x) => (x.disabled = true));
     post('/api/chat/answer', { project: c.p.project, slug: c.p.slug, id, allow: a > 0, always: a === 2, edits: a === 3, message });
   }));
   if (waits.length) byId('clog').scrollTop = byId('clog').scrollHeight;
+}
+// AskUserQuestion: each question with its options as buttons (one or several, as the agent
+// allows) and a box for an answer of your own. Send answers is ready when every question has one.
+function askHtml(w) {
+  return '<div class="cwait" data-w="' + escA(w.id) + '"><b>The agent asks you' + (w.ask.length > 1 ? ' ' + w.ask.length + ' questions' : '') + ':</b>' +
+    w.ask.map((q) => '<div class="cask" data-q="' + escA(q.question) + '" data-multi="' + (q.multi ? 1 : 0) + '">' +
+      '<div>' + (q.header ? '<span class="chip">' + esc(q.header) + '</span> ' : '') + esc(q.question) +
+        (q.multi ? ' <span class="dim">(pick one or more)</span>' : '') + '</div>' +
+      q.options.map((o) => '<button class="copt" data-o="' + escA(o.label) + '"><b>' + esc(o.label) + '</b>' +
+        (o.description ? '<span class="dim">' + esc(o.description) + '</span>' : '') + '</button>').join('') +
+      '<input class="cother" placeholder="Other: type your own answer">' +
+    '</div>').join('') +
+    '<div class="crow"><button class="primary" data-a="4" disabled>Send answers</button><button data-a="0">Deny</button>' +
+      '<span class="dim">To stop and say something else, type it below and click Deny.</span></div></div>';
+}
+function askAnswers(card) {
+  const out = {};
+  card.querySelectorAll('.cask').forEach((Q) => {
+    const picked = [...Q.querySelectorAll('.copt.on')].map((o) => o.dataset.o), own = Q.querySelector('.cother').value.trim();
+    if (own) picked.push(own);
+    if (picked.length) out[Q.dataset.q] = picked.join(', ');
+  });
+  return out;
+}
+function askReady(card) {
+  card.querySelector('[data-a="4"]').disabled = Object.keys(askAnswers(card)).length < card.querySelectorAll('.cask').length;
 }
 // a command from a button goes as it is: the draft and the selected lines stay for the next message
 async function chatSendMsg(command) {
@@ -6225,27 +6301,67 @@ function openFromAlert(key, tab) {
   lastPrDraw = null; renderList(); renderDetail(true);
 }
 // A card in the page for each alert, so you see it while you read another plan, without the 🔔
-// and without leaving what you do. Finished runs and answers go away by themselves; a failed run
-// and a permission question stay until you click or close them. A newer card for the same plan
-// and event replaces the older one.
-function toast(title, body, key, tab, kind) {
-  const box = byId('toasts'), id = key + '|' + title;
-  box.querySelectorAll('.toast').forEach((el) => { if (el.dataset.id === id) el.remove(); });
-  const el = document.createElement('div');
-  el.className = 'toast ' + kind; el.dataset.id = id;
-  el.innerHTML = '<div class="tt"><b>' + esc(title) + '</b><div class="tb">' + esc(body) + '</div></div>' +
-    '<button class="tx" title="Close" aria-label="Close">×</button>';
-  el.addEventListener('click', (e) => { el.remove(); if (!e.target.closest('.tx')) openFromAlert(key, tab); });
-  box.append(el);
-  while (box.children.length > 5) box.firstElementChild.remove();
-  if (kind !== 'bad' && kind !== 'warn') {
-    let left = 12000, t0;
-    const tick = () => { t0 = Date.now(); el._t = setTimeout(() => el.remove(), left); };
-    el.addEventListener('mouseenter', () => { clearTimeout(el._t); left -= Date.now() - t0; });
-    el.addEventListener('mouseleave', tick);
-    tick();
-  }
+// and without leaving what you do. A card stays open until you hide it with the – button; it never
+// hides by itself. Hidden cards wait behind the 🔔 pill at the bottom right; a click on the pill
+// shows them again. Only a click on the card (it opens the plan) or × removes it. The list is kept
+// in the browser, so a reload or a dashboard restart keeps it. A newer card for the same plan and
+// event replaces the older one.
+let alertCards = [], trayOpen = false;
+try { alertCards = JSON.parse(localStorage.getItem('dash-alert-cards') || '[]'); } catch {}
+function saveCards() {
+  alertCards = alertCards.slice(-30);
+  try { localStorage.setItem('dash-alert-cards', JSON.stringify(alertCards)); } catch {}
 }
+function setCard(id, change) {
+  const c = alertCards.find((x) => x.id === id);
+  if (!c) return;
+  if (change === 'remove') alertCards = alertCards.filter((x) => x !== c); else Object.assign(c, change);
+  saveCards(); paintCards();
+}
+function paintCards() {
+  const list = byId('toastList'), pill = byId('toastPill');
+  const hidden = alertCards.filter((c) => !c.open);
+  if (!hidden.length) trayOpen = false;
+  const shown = alertCards.filter((c) => c.open || trayOpen);
+  list.innerHTML = shown.map((c) => {
+    const at = new Date(c.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return '<div class="toast ' + escA(c.kind) + '" data-id="' + escA(c.id) + '"><div class="tt"><b>' + esc(c.title) +
+      '<span class="tm">' + at + '</span></b><div class="tb">' + esc(c.body) + '</div></div>' +
+      (c.open ? '<button class="th" title="Hide. It waits behind the 🔔 pill." aria-label="Hide">–</button>' : '') +
+      '<button class="tx" title="Close" aria-label="Close">×</button></div>';
+  }).join('');
+  pill.hidden = !hidden.length;
+  pill.innerHTML = trayOpen ? 'Hide ' + hidden.length + ' <span class="clr" data-clear>Clear all</span>'
+    : '🔔 ' + hidden.length + ' hidden alert' + (hidden.length > 1 ? 's' : '');
+  pill.title = trayOpen ? 'Hide these alerts again' : 'Show the alerts you hid or did not get to';
+}
+byId('toastList').addEventListener('click', (e) => {
+  const el = e.target.closest('.toast');
+  if (!el) return;
+  const c = alertCards.find((x) => x.id === el.dataset.id);
+  if (!c) return;
+  if (e.target.closest('.th')) return setCard(c.id, { open: false });
+  setCard(c.id, 'remove');
+  if (!e.target.closest('.tx')) openFromAlert(c.key, c.tab);
+});
+byId('toastPill').addEventListener('click', (e) => {
+  if (e.target.closest('[data-clear]')) { alertCards = alertCards.filter((c) => c.open); saveCards(); }
+  else trayOpen = !trayOpen;
+  paintCards();
+});
+// the list is one list across tabs
+window.addEventListener('storage', (e) => {
+  if (e.key !== 'dash-alert-cards') return;
+  try { alertCards = JSON.parse(e.newValue || '[]'); } catch { alertCards = []; }
+  paintCards();
+});
+function toast(title, body, key, tab, kind) {
+  const id = key + '|' + title;
+  alertCards = alertCards.filter((c) => c.id !== id);
+  alertCards.push({ id, title, body, key, tab, kind, at: Date.now(), open: true });
+  saveCards(); paintCards();
+}
+paintCards();
 async function alertUser(title, body, key, tab, kind = 'ok') {
   if (!await ringsHere(key)) return;
   if (!document.hasFocus()) { unseen.push(title + ' · ' + body.split(' / ')[0]); paintTitle(); }
