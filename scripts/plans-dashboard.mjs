@@ -1524,7 +1524,18 @@ const userItems = (t, j, cwd) => {
     if (/^\[Request interrupted by user/.test(s)) { t.items.push({ k: 'note', text: 'Stopped' }); continue; }
     you.push(s);
   }
-  if (you.length || sel.length) t.items.push({ k: 'you', text: you.join('\n\n'), sel, selText, at: j.timestamp });
+  // A slash command sent with a selection reaches the transcript as two entries of one prompt:
+  // the command, then the selection alone. Put the selection on the command's bubble.
+  if (!you.length && sel.length) {
+    let i = t.items.length - 1;
+    while (i >= 0 && t.items[i].k === 'note') i--;
+    const prev = t.items[i];
+    if (prev && prev.k === 'you' && !prev.sel.length && (!prev.pid || !j.promptId || prev.pid === j.promptId)) {
+      prev.sel = sel; prev.selText = selText;
+      return;
+    }
+  }
+  if (you.length || sel.length) t.items.push({ k: 'you', text: you.join('\n\n'), sel, selText, at: j.timestamp, pid: j.promptId });
 };
 const assistantItems = (t, j, cwd) => {
   for (const b of j.message?.content || []) {
@@ -2903,8 +2914,8 @@ const PAGE = /* html */ `<!doctype html>
   /* tour: a transparent blocker, a spotlight hole, and a card beside it */
   #tour { display:none; }
   #tour.open { display:block; }
-  /* in-page alerts: one card per event, bottom right; a click opens the plan */
-  #toasts { position:fixed; right:16px; bottom:16px; z-index:40; display:flex; flex-direction:column; gap:8px;
+  /* in-page alerts: one card per event, bottom right, left of the chat panel so they never cover its input; a click opens the plan */
+  #toasts { position:fixed; right:calc(var(--chatw, 0px) + 16px); bottom:16px; z-index:40; display:flex; flex-direction:column; gap:8px;
             max-width:min(360px, calc(100vw - 32px)); }
   .toast { display:flex; align-items:flex-start; gap:10px; background:var(--panel); border:1px solid var(--line);
            border-left:4px solid var(--run); border-radius:10px; padding:10px 10px 10px 12px; cursor:pointer;
@@ -4024,6 +4035,11 @@ async function chatLoadEnd(c, how) {
     let from = c.total;
     for (let i = Math.max(c.first, c.total - 300); i < c.total; i++)
       if (c.items[i] && c.items[i].k === 'tool' && !c.items[i].done) { from = i; break; }
+    // a slash command's selection is written after the command, and the server puts it on the command's bubble
+    let y = c.total - 1;
+    while (y >= c.first && c.items[y] && c.items[y].k === 'note') y--;
+    if (y >= c.first && c.items[y] && c.items[y].k === 'you' && !(c.items[y].sel || []).length
+      && c.items[y].text.startsWith('/')) from = Math.min(from, y);
     q = '&from=' + from;
   }
   const r = await fetch('/api/chat/history?project=' + encodeURIComponent(c.p.project) + '&slug=' + encodeURIComponent(c.p.slug) + q)
