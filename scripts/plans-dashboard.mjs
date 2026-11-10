@@ -2388,9 +2388,9 @@ const PAGE = /* html */ `<!doctype html>
            background:var(--thbg); display:flex; align-items:center; gap:8px;
            cursor:pointer; user-select:none; position:sticky; top:0; z-index:2; }
   .phead:hover { background:var(--hover); }
-  .phead .cnt { font-weight:400; margin-left:auto; color:var(--dim); }
+  .phead .cnt { font-weight:400; margin-left:auto; color:var(--dim); white-space:nowrap; }
   .phead .chev { color:var(--dim); width:13px; flex-shrink:0; }
-  .phead .pbtn { padding:1px 8px; font-size:calc(11px * var(--fs)); border-radius:7px; flex-shrink:0; }
+  .phead .pbtn { padding:1px 6px; font-size:calc(11px * var(--fs)); border-radius:7px; flex-shrink:0; }
   .item { padding:10px 13px; border-bottom:1px solid var(--line); cursor:pointer;
           display:flex; gap:10px; }
   .item:hover { background:var(--hover); }
@@ -3454,11 +3454,11 @@ function renderList() {
       return '<div class="phead pcx" data-toggle="' + esc(pr) + '"' + projStyle(pr) + '><span class="chev">' +
         (closed ? '▸' : '▾') + '</span>' + esc(pr) +
         (hasLanes ? '<button class="pbtn" data-suggest="' + esc(pr) +
-          '" title="suggest a parallel launch batch">🧭 Suggest</button>' : '') +
-        '<button class="pbtn" data-pull="' + esc(pr) + '" title="git pull --ff-only in ' + escA(sp.root) +
-          ' (the branch it is on, from its remote)">📥 Pull</button>' +
-        '<button class="pbtn" data-vscode="' + esc(pr) + '" title="open ' + escA(sp.root) +
-          ' in VS Code">🖥 VS Code</button>' + runBadges +
+          '" title="Suggest a parallel launch batch" aria-label="Suggest a parallel launch batch">🧭</button>' : '') +
+        '<button class="pbtn" data-pull="' + esc(pr) + '" title="Pull: git pull --ff-only in ' + escA(sp.root) +
+          ' (the branch it is on, from its remote)" aria-label="Pull">📥</button>' +
+        '<button class="pbtn" data-vscode="' + esc(pr) + '" title="Open ' + escA(sp.root) +
+          ' in VS Code" aria-label="Open in VS Code">🖥</button>' + runBadges +
         (sp.setupLevel === 'red' ? '<span class="chip bad x" data-guide="' + escA(sp.root) +
           '" title="something required is missing — see what and how to fix it">needs setup</span>' : '') +
         '<span class="cnt">' + items.length + ' plan' + (items.length === 1 ? '' : 's') +
@@ -3479,9 +3479,9 @@ function renderList() {
   byId('side').querySelectorAll('[data-pull]').forEach((el) =>
     el.addEventListener('click', async (e) => {
       e.stopPropagation();
-      el.disabled = true; el.textContent = '📥 Pulling…';
+      el.disabled = true; el.textContent = '⏳';
       await post('/api/pull', { project: el.dataset.pull }, true);
-      el.disabled = false; el.textContent = '📥 Pull';
+      el.disabled = false; el.textContent = '📥';
     }));
   byId('side').querySelectorAll('[data-vscode]').forEach((el) =>
     el.addEventListener('click', (e) => {
