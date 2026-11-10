@@ -6574,7 +6574,7 @@ const qaListPage = () => {
       r.guessed && '<span>project guessed from the page text</span>'].filter(Boolean).join(' ');
     const dl = r.download || r.file;
     return `<tr data-search="${escH(search)}"><td>${open}<div class="file">${sub}</div></td><td>${r.day ? day(r.mtime) : when(r.mtime)}</td><td>${r.size ? size(r.size) : ''}</td>
-<td><div class="act">${r.href ? `<a class="btn" href="${r.href}?download" download="${escH(dl)}" aria-label="Download ${escH(dl)}">Download</a><button class="btn" type="button" data-path="${escH(r.path)}" aria-label="Copy the path of ${escH(dl)}">Copy path</button>` : `<button class="btn" type="button" data-path="${escH(r.url)}" aria-label="Copy the link of ${escH(r.title)}">Copy link</button>`}</div></td></tr>`;
+<td><div class="act">${r.href ? `<a class="btn" href="${r.href}?download" download="${escH(dl)}" aria-label="Download ${escH(dl)}">Download</a><button class="btn" type="button" data-path="${escH(r.path)}" aria-label="Copy the path of ${escH(dl)}">Copy path</button><button class="btn" type="button" data-reveal="${r.href}" aria-label="Show ${escH(dl)} in Finder">Show in Finder</button>` : `<button class="btn" type="button" data-path="${escH(r.url)}" aria-label="Copy the link of ${escH(r.title)}">Copy link</button>`}</div></td></tr>`;
   };
   const section = (name, rows, note = '') => `<section><h2>${escH(name)} <span>${rows.length}</span></h2>${note}
 <table><thead><tr><th>Page</th><th>Updated</th><th>Size</th><th><span class="sr">Actions</span></th></tr></thead><tbody>
@@ -6582,13 +6582,15 @@ ${rows.map(row).join('\n')}
 </tbody></table></section>`;
   const groups = qaReports(), drafts = draftRows();
   const artNote = `<p class="dim">Pages as single files, images included, in ${escH(QA_REPORTS)}/&lt;project&gt;/artifacts/. Claude artifacts downloaded from claude.ai link back there.</p>`;
-  const reports = groups.map(({ project, rows, arts }) => [
-    rows.length && section(project, rows),
-    arts.length && section(project === OTHER ? 'Other artifacts' : `${project} · artifacts`, arts.map((r) => ({ ...r, project })), artNote),
-  ].filter(Boolean).join('\n')).join('\n')
+  // one fold per project; which ones are closed is remembered in this browser (script below)
+  const fold = (key, name, n, inner) => `<details class="proj" data-key="${escH(key)}" open><summary>${escH(name)} <span>${n} page${n === 1 ? '' : 's'}</span></summary>${inner}</details>`;
+  const reports = groups.map(({ project, rows, arts }) => fold(project, project === OTHER ? 'Other' : project, rows.length + arts.length, [
+    rows.length && section('Reports', rows),
+    arts.length && section('Artifacts', arts.map((r) => ({ ...r, project })), artNote),
+  ].filter(Boolean).join('\n'))).join('\n')
     || `<p class="dim">No reports yet. The browser-usability-test skill writes them to ${escH(QA_REPORTS)}/&lt;project&gt;/reports/.</p>`;
   const body = `${reports}
-${drafts.length ? section('Unpublished drafts', drafts, `<p class="dim">HTML that Claude wrote to a session scratchpad in ${escH(CLAUDE_TMP)}. macOS empties that folder now and then. Download gives one file with the images inside; Copy path gives the raw file.</p>`) : ''}
+${drafts.length ? fold('drafts', 'Unpublished drafts', drafts.length, section('Drafts', drafts, `<p class="dim">HTML that Claude wrote to a session scratchpad in ${escH(CLAUDE_TMP)}. macOS empties that folder now and then. Download gives one file with the images inside; Copy path gives the raw file.</p>`)) : ''}
 <p class="dim" id="none" hidden>Nothing matches.</p>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>QA reports</title><link rel="icon" href="data:image/svg+xml,${encodeURIComponent(QA_ICON)}"><style>
@@ -6608,15 +6610,30 @@ td:nth-child(n+2) { white-space:nowrap; } a { color:var(--link); text-decoration
 .btn:hover { border-color:var(--link); text-decoration:none; } .btn:focus-visible, a:focus-visible { outline:2px solid var(--link); outline-offset:2px; }
 .tk { font:12px ui-monospace, Menlo, monospace; margin-right:8px; } .warn { color:#d08770; }
 .search { width:100%; box-sizing:border-box; font:inherit; padding:8px 12px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--fg); margin:14px 0 0; }
+.proj { margin-top:22px; } .proj > summary { font-size:17px; font-weight:600; cursor:pointer; padding:4px 0; }
+.proj > summary span { color:var(--dim); font-weight:400; font-size:13px; } .proj > summary:focus-visible { outline:2px solid var(--link); outline-offset:2px; }
+.proj h2 { margin-top:12px; } .folds { display:flex; gap:6px; margin-top:10px; }
 .sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
 @media (max-width:600px) { th:nth-child(3), td:nth-child(3) { display:none; } .act { flex-direction:column; } th, td { padding:9px 8px; } td:nth-child(2) { white-space:normal; } }
 </style></head><body><main><h1>QA reports</h1>
 <p class="dim">Report pages of the browser-usability-test skill, newest first. Saved in ${escH(QA_REPORTS)}.</p>
 <input class="search" type="search" placeholder="Search by ticket number or title, e.g. 435" aria-label="Search by ticket number or title" autofocus>
+<div class="folds"><button class="btn" type="button" id="fold-all">Collapse all</button><button class="btn" type="button" id="open-all">Expand all</button></div>
 ${body}
-<p class="dim">Download saves the file to your Downloads folder, ready to drag into a chat or an issue. Copy path copies where it is saved, for a file picker (⌘⇧G) or Finder (Go → Go to Folder).</p></main>
+<p class="dim">Download saves the file to your Downloads folder, ready to drag into a chat or an issue. Copy path copies where it is saved, for a file picker (⌘⇧G) or Finder (Go → Go to Folder). Show in Finder opens its folder with the file selected.</p></main>
 <script>
 const q = document.querySelector('.search');
+const folds = document.querySelectorAll('details.proj');
+let closed = new Set();
+try { closed = new Set(JSON.parse(localStorage.getItem('qa-closed') || '[]')); } catch {}
+const saveFolds = () => { try { localStorage.setItem('qa-closed', JSON.stringify([...closed])); } catch {} };
+folds.forEach((d) => {
+  if (closed.has(d.dataset.key)) d.open = false;
+  d.addEventListener('toggle', () => { if (q.value.trim()) return; d.open ? closed.delete(d.dataset.key) : closed.add(d.dataset.key); saveFolds(); });
+});
+const setAll = (open) => { folds.forEach((d) => { d.open = open; open ? closed.delete(d.dataset.key) : closed.add(d.dataset.key); }); saveFolds(); };
+document.getElementById('fold-all').addEventListener('click', () => setAll(false));
+document.getElementById('open-all').addEventListener('click', () => setAll(true));
 q.addEventListener('input', () => {
   const words = q.value.toLowerCase().replace(/#/g, ' ').split(/\\s+/).filter(Boolean);
   let any = false;
@@ -6625,12 +6642,23 @@ q.addEventListener('input', () => {
     s.querySelectorAll('tbody tr').forEach((tr) => { const hit = words.every((w) => tr.dataset.search.includes(w)); tr.hidden = !hit; n += hit; });
     s.hidden = !n; any ||= n > 0;
   });
+  // while searching, show every project with a hit opened; after, back to the saved folds
+  folds.forEach((d) => {
+    d.hidden = !!words.length && !d.querySelector('section:not([hidden])');
+    d.open = words.length ? true : !closed.has(d.dataset.key);
+  });
   document.getElementById('none').hidden = any || !words.length;
 });
 document.querySelectorAll('[data-path]').forEach((b) => b.addEventListener('click', async () => {
   const label = b.textContent;
   try { await navigator.clipboard.writeText(b.dataset.path); b.textContent = 'Copied'; }
   catch { window.prompt('Copy the path:', b.dataset.path); }
+  setTimeout(() => { b.textContent = label; }, 1500);
+}));
+document.querySelectorAll('[data-reveal]').forEach((b) => b.addEventListener('click', async () => {
+  const label = b.textContent;
+  const r = await fetch('/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ href: b.dataset.reveal }) }).catch(() => null);
+  b.textContent = r && r.ok ? 'Opened' : 'Not found';
   setTimeout(() => { b.textContent = label; }, 1500);
 }));
 </script></body></html>`;
@@ -6673,6 +6701,15 @@ const sendSaved = (req, res, file, name) => {
     { n: (older.at(-1)?.n || 0) + 1, mtime: statSync(file).mtimeMs, href: pathname, current: !old, latest: true }].reverse();
   sendPage(req, res, readFileSync(old ? old.path : file), old ? name.replace(/\.html$/, `-v${old.n}.html`) : name, versions);
 };
+// the file behind a page link of the list: an artifact, a scratchpad draft or a report
+const qaPageFile = (pathname) => {
+  const art = pathname.match(/^\/([A-Za-z0-9_-][A-Za-z0-9._-]*)\/artifacts\/([A-Za-z0-9_-][A-Za-z0-9._-]*\.html)$/);
+  if (art) return { kind: 'artifact', file: path.join(QA_REPORTS, art[1], 'artifacts', art[2]), name: art[2] };
+  const draft = pathname.startsWith('/drafts/') && draftFile(pathname.slice(8));
+  if (draft) return { kind: 'draft', file: draft };
+  const m = pathname.match(/^\/([A-Za-z0-9_-][A-Za-z0-9._-]*)\/([A-Za-z0-9_-][A-Za-z0-9._-]*\.html)$/);
+  return m ? { kind: 'report', file: path.join(QA_REPORTS, m[1], 'reports', m[2]), name: m[2] } : null;
+};
 const reportServer = http.createServer((req, res) => {
   const host = (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
   // a rebound public name must not read the reports (they hold test data)
@@ -6686,20 +6723,26 @@ const reportServer = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     return res.end(qaListPage());
   }
-  const art = pathname.match(/^\/([A-Za-z0-9_-][A-Za-z0-9._-]*)\/artifacts\/([A-Za-z0-9_-][A-Za-z0-9._-]*\.html)$/);
-  const draft = pathname.startsWith('/drafts/') && draftFile(pathname.slice(8));
-  if (req.method === 'GET' && (art || draft)) {
-    const f = art ? path.join(QA_REPORTS, art[1], 'artifacts', art[2]) : draft;
-    if (!existsSync(f)) { res.writeHead(404); return res.end('page not found'); }
-    if (art) return sendSaved(req, res, f, art[2]);
-    // a draft's images sit next to it: packed in, so a download is one file
-    return sendPage(req, res, inlineHtml(readFileSync(f, 'utf8'), path.dirname(f), { page: f }), path.basename(f));
+  // Show in Finder: only for a page this server lists, and only from its own list page
+  if (pathname === '/reveal' && req.method === 'POST') {
+    const why = crossSiteReason(req);
+    if (why) { res.writeHead(403); return res.end(why); }
+    let body = '';
+    req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy(); });
+    return req.on('end', () => {
+      let href = '';
+      try { href = new URL(JSON.parse(body).href, 'http://x').pathname; } catch {}
+      const pg = qaPageFile(href);
+      if (!pg || !existsSync(pg.file)) { res.writeHead(404); return res.end('page not found'); }
+      execFile('open', ['-R', pg.file], (err) => { res.writeHead(err ? 500 : 204); res.end(); });
+    });
   }
-  const m = pathname
-    .match(/^\/([A-Za-z0-9_-][A-Za-z0-9._-]*)\/([A-Za-z0-9_-][A-Za-z0-9._-]*\.html)$/);
-  const f = m && path.join(QA_REPORTS, m[1], 'reports', m[2]);
-  if (req.method !== 'GET' || !f || !existsSync(f)) { res.writeHead(404); return res.end('report not found'); }
-  sendSaved(req, res, f, m[2]);
+  const pg = req.method === 'GET' && qaPageFile(pathname);
+  if (!pg || !existsSync(pg.file)) { res.writeHead(404); return res.end('page not found'); }
+  if (pg.kind === 'draft')
+    // a draft's images sit next to it: packed in, so a download is one file
+    return sendPage(req, res, inlineHtml(readFileSync(pg.file, 'utf8'), path.dirname(pg.file), { page: pg.file }), path.basename(pg.file));
+  sendSaved(req, res, pg.file, pg.name);
 });
 reportServer.on('error', (e) => console.error(`QA reports server on port ${QA_PORT}: ${e.code || e}`));
 reportServer.listen(QA_PORT, '127.0.0.1');
