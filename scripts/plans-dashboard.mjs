@@ -1488,11 +1488,11 @@ const handBackItem = (s) => {
 const userItems = (t, j, cwd) => {
   const c = j.message?.content;
   const blocks = typeof c === 'string' ? [{ type: 'text', text: c }] : Array.isArray(c) ? c : [];
-  const you = [], sel = [], selText = [];
+  const you = [], sel = [], selText = [], n0 = t.items.length;
   for (const b of blocks) {
     if (b.type === 'tool_result') {
       const it = t.tools.get(b.tool_use_id);
-      if (it) { it.out = clip(resultText(b.content), 4000); it.err = !!b.is_error; it.done = true; }
+      if (it) { it.out = clip(resultText(b.content), 4000); it.err = !!b.is_error; it.done = true; it.end = j.timestamp; }
       continue;
     }
     if (b.type === 'image') { you.push('[image]'); continue; }
@@ -1524,6 +1524,8 @@ const userItems = (t, j, cwd) => {
     if (/^\[Request interrupted by user/.test(s)) { t.items.push({ k: 'note', text: 'Stopped' }); continue; }
     you.push(s);
   }
+  // notes (task notices, command output) get the line's time too: the page shows it on hover
+  for (const it of t.items.slice(n0)) if (!it.at) it.at = j.timestamp;
   // A slash command sent with a selection reaches the transcript as two entries of one prompt:
   // the command, then the selection alone. Put the selection on the command's bubble.
   if (!you.length && sel.length) {
@@ -1539,11 +1541,12 @@ const userItems = (t, j, cwd) => {
 };
 const assistantItems = (t, j, cwd) => {
   for (const b of j.message?.content || []) {
-    if (b.type === 'text' && b.text?.trim()) t.items.push({ k: 'agent', text: b.text.trim(), mid: j.message.id });
-    else if (b.type === 'thinking' && b.thinking?.trim()) t.items.push({ k: 'think', text: clip(b.thinking.trim(), 6000) });
+    const at = j.timestamp;
+    if (b.type === 'text' && b.text?.trim()) t.items.push({ k: 'agent', text: b.text.trim(), mid: j.message.id, at });
+    else if (b.type === 'thinking' && b.thinking?.trim()) t.items.push({ k: 'think', text: clip(b.thinking.trim(), 6000), at });
     else if (b.type === 'tool_use') {
       const i = b.input || {};
-      const it = { k: 'tool', name: b.name, sum: toolSummary(b.name, i, cwd), input: toolInput(b.name, i), done: false };
+      const it = { k: 'tool', name: b.name, sum: toolSummary(b.name, i, cwd), input: toolInput(b.name, i), done: false, at };
       t.tools.set(b.id, it);
       t.items.push(it);
     }
@@ -1559,7 +1562,7 @@ const transcriptLine = (t, line, cwd) => {
   let j;
   try { j = JSON.parse(line); } catch { return; }
   if (j.isSidechain) return;
-  if (j.type === 'system' && j.subtype === 'local_command') userItems(t, { message: { content: j.content } }, cwd);
+  if (j.type === 'system' && j.subtype === 'local_command') userItems(t, { message: { content: j.content }, timestamp: j.timestamp }, cwd);
   // t.used: the context size the last answer reported. A compact makes it out of date, and
   // the transcript has no size to replace it: its post_tokens leaves out the system prompt and tools.
   else if (j.type === 'system' && j.subtype === 'compact_boundary') t.used = null;
@@ -2070,11 +2073,11 @@ const logLine = (t, line) => {
     const n = t.items.length;
     assistantItems(t, j, t.cwd);
     if (j.parent_tool_use_id) t.items.slice(n).forEach((it, k) => {
-      t.items[n + k] = it.k === 'agent' ? { k: 'note', text: 'Subagent message', body: clip(it.text, 6000), sub: true } : Object.assign(it, { sub: true });
+      t.items[n + k] = it.k === 'agent' ? { k: 'note', text: 'Subagent message', body: clip(it.text, 6000), sub: true, at: it.at } : Object.assign(it, { sub: true });
     });
   } else if (j.type === 'user') {
     const c = j.message?.content;
-    if (j.parent_tool_use_id) userItems(t, { message: { content: Array.isArray(c) ? c.filter((b) => b.type === 'tool_result') : [] } }, t.cwd);
+    if (j.parent_tool_use_id) userItems(t, { message: { content: Array.isArray(c) ? c.filter((b) => b.type === 'tool_result') : [] }, timestamp: j.timestamp }, t.cwd);
     else userItems(t, { ...j, isMeta: j.isMeta || j.isSynthetic }, t.cwd);
   } else if (j.type === 'result') {
     t.items.push({ k: 'note', text: '🏁 ' + (j.subtype || 'done'), body: j.result ? clip(j.result, 4000) : '', err: !!j.is_error });
@@ -2832,6 +2835,8 @@ const PAGE = /* html */ `<!doctype html>
   .ccopy { position:absolute; top:6px; right:6px; padding:2px 8px; font-size:calc(11.5px * var(--fs)); opacity:0; z-index:1; }
   .cmsg { top:auto; bottom:6px; }
   .amsg.agent:hover > .cmsg, .cpre:hover > .ccopy, .ccopy:focus-visible { opacity:1; }
+  .cat { position:absolute; bottom:9px; right:64px; padding:1px 6px; border-radius:4px; background:var(--card); font-size:calc(10.5px * var(--fs)); color:var(--dim); opacity:0; pointer-events:none; }
+  .amsg.agent:hover > .cat { opacity:1; }
   @media (hover: none) { .ccopy { opacity:.8; } }
   .ctool, .cnote { font:calc(11.5px * var(--fs)) ui-monospace,monospace; color:var(--dim); padding:0 4px; }
   .ctool summary, details.cnote summary { cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -4085,6 +4090,15 @@ async function chatLoadEnd(c, how) {
   paintLive();
 }
 const chatTime = (at) => at ? new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+// the hover time of an answer, a tool or a note: seconds, and the day only when it is not today
+const clock = (at) => {
+  const d = new Date(at), today = d.toDateString() === new Date().toDateString();
+  return d.toLocaleString([], { ...(today ? {} : { month: 'short', day: 'numeric' }), hour: '2-digit', minute: '2-digit', second: '2-digit' });
+};
+const took = (ms) => ms < 60000 ? Math.floor(ms / 1000) + 's' : ms < 3600000 ? Math.floor(ms / 60000) + 'm ' + Math.floor(ms % 60000 / 1000) + 's'
+  : Math.floor(ms / 3600000) + 'h ' + Math.floor(ms % 3600000 / 60000) + 'm';
+const atTitle = (it) => !it.at ? '' : ' title="' + escA(it.end && it.end !== it.at
+  ? 'Started ' + clock(it.at) + ', finished ' + clock(it.end) + ' (' + took(new Date(it.end) - new Date(it.at)) + ')' : clock(it.at)) + '"';
 // a click on the chip opens the text that went with the message
 const selChip = (label, text) => text
   ? '<button type="button" class="cchip cview" data-seltext="' + escA(text) + '" title="Show the text that went with this message">⧉ ' + esc(label) + '</button>'
@@ -4095,17 +4109,17 @@ function chatItemHtml(it, c) {
     '<div class="amsg you">' + (it.sel || []).map((s, n) => selChip(s, (it.selText || [])[n])).join('') +
     (it.text ? (/^\\/[\\w:-]+/.test(it.text) ? '<code>' + esc(it.text.split(' ')[0]) + '</code> ' + esc(it.text.split(' ').slice(1).join(' ')) : esc(it.text)) : '') + '</div></div>';
   if (it.k === 'agent') return '<div class="amsg agent mdc" data-i="' + it.i + '">' + md(it.text) +
-    '<button class="ccopy cmsg" data-copymsg="' + it.i + '" title="Copy the whole answer as Markdown">Copy</button></div>';
-  if (it.k === 'think') return '<details class="cnote" data-i="' + it.i + '"' + open + '><summary>Thinking</summary><div class="mdc">' + md(it.text) + '</div></details>';
-  if (it.k === 'tool') return '<details class="ctool' + (it.err ? ' err' : '') + '" data-i="' + it.i + '"' + open + '><summary>' + (it.sub ? '<i class="dim">subagent</i> ' : '') + '<b>' + esc(it.name) + '</b> ' +
+    (it.at ? '<span class="cat">' + esc(clock(it.at)) + '</span>' : '') + '<button class="ccopy cmsg" data-copymsg="' + it.i + '" title="Copy the whole answer as Markdown">Copy</button></div>';
+  if (it.k === 'think') return '<details class="cnote" data-i="' + it.i + '"' + open + '><summary' + atTitle(it) + '>Thinking</summary><div class="mdc">' + md(it.text) + '</div></details>';
+  if (it.k === 'tool') return '<details class="ctool' + (it.err ? ' err' : '') + '" data-i="' + it.i + '"' + open + '><summary' + atTitle(it) + '>' + (it.sub ? '<i class="dim">subagent</i> ' : '') + '<b>' + esc(it.name) + '</b> ' +
     '<span>' + esc(it.sum) + '</span>' + (it.done ? '' : ' <i class="dim">running…</i>') +
     (/^(Edit|MultiEdit|Write|NotebookEdit)$/.test(it.name) && it.sum && it.sum[0] !== '/' && c.p.pr
       ? '<button class="cjump" data-jump="' + escA(it.sum) + '" title="Open this file in Files changed">view in diff</button>' : '') + '</summary>' +
     (it.input ? '<pre>' + esc(it.input) + '</pre>' : '') + (it.out ? '<pre class="out">' + esc(it.out) + '</pre>' : '') + '</details>';
-  if (it.report) return '<details class="cnote report" data-i="' + it.i + '"' + open + '><summary>' + esc(it.text) + '</summary><div class="mdc">' + md(it.body) + '</div></details>';
+  if (it.report) return '<details class="cnote report" data-i="' + it.i + '"' + open + '><summary' + atTitle(it) + '>' + esc(it.text) + '</summary><div class="mdc">' + md(it.body) + '</div></details>';
   const err = it.err ? ' err' : '';
-  return it.body ? '<details class="cnote' + err + '" data-i="' + it.i + '"' + open + '><summary>' + esc(it.text) + '</summary><pre>' + esc(it.body) + '</pre></details>'
-    : '<div class="cnote' + err + '" data-i="' + it.i + '">' + esc(it.text) + '</div>';
+  return it.body ? '<details class="cnote' + err + '" data-i="' + it.i + '"' + open + '><summary' + atTitle(it) + '>' + esc(it.text) + '</summary><pre>' + esc(it.body) + '</pre></details>'
+    : '<div class="cnote' + err + '" data-i="' + it.i + '"' + atTitle(it) + '>' + esc(it.text) + '</div>';
 }
 function chatState(st) {
   const c = ch, was = c.st;
