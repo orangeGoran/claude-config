@@ -1395,6 +1395,24 @@ const saveChat = (proj, slug, a) => {
   mkdirSync(path.dirname(chatFile(proj, slug)), { recursive: true });
   writeFileSync(chatFile(proj, slug), JSON.stringify(a, null, 2));
 };
+// The pinned session moves to its VS Code copy once you continue the copy there.
+// A project's vscode-session-copy.mjs forks headless sessions into copies the extension
+// lists, and records old id -> copy id in .vscode-copies.json in the transcript dir.
+// Without this the panel kept showing the old session and the next message went on in it.
+// Not while the chat is open: its claude is on the pinned session.
+const followVscodeCopy = (proj, slug, a) => {
+  if (!a.current || chats.has(proj.name + '/' + slug)) return a;
+  const dir = transcriptDirFor(proj.hasPipeline ? worktreeOf(proj, slug) : proj.root);
+  let to;
+  try { to = JSON.parse(readFileSync(path.join(dir, '.vscode-copies.json'), 'utf8'))[a.current.id]; } catch { return a; }
+  if (!to || to === a.current.id) return a;
+  const mtime = (id) => { try { return statSync(path.join(dir, id + '.jsonl')).mtimeMs; } catch { return -1; } };
+  const copyAt = mtime(to);
+  if (copyAt < 0 || copyAt <= mtime(a.current.id)) return a;
+  a.current = { ...a.current, id: to };
+  saveChat(proj, slug, a);
+  return a;
+};
 // the sessions a plan's runs made; the chat's copies are its own and not listed
 const planSessions = (proj, slug) => {
   const wtPath = proj.hasPipeline ? worktreeOf(proj, slug) : proj.root;
@@ -1566,7 +1584,7 @@ const readTranscript = (file, cwd, parseLine = transcriptLine) => {
 // the transcript the panel shows: the live chat's, the chat's last, or the run's latest
 const chatTranscript = (proj, slug) => {
   const { wtPath, transcriptDir, sessions } = planSessions(proj, slug);
-  const a = loadChat(proj, slug), ch = chats.get(proj.name + '/' + slug);
+  const a = followVscodeCopy(proj, slug, loadChat(proj, slug)), ch = chats.get(proj.name + '/' + slug);
   const ids = [ch && ch.session, a.current && a.current.id, a.current && a.current.base, (sessions.at(-1) || {}).id];
   for (const id of ids.filter(Boolean)) {
     const file = path.join(transcriptDir, id + '.jsonl');
@@ -1813,7 +1831,7 @@ const chatOnLine = (ch, j) => {
 const chatStart = (proj, slug, b) => {
   const key = proj.name + '/' + slug;
   const { wtPath, sessions } = planSessions(proj, slug);
-  const a = loadChat(proj, slug);
+  const a = followVscodeCopy(proj, slug, loadChat(proj, slug));
   const id = a.current ? a.current.id : (sessions.at(-1) || {}).id;
   if (!id) return { error: 'This plan has no Claude session to continue yet.' };
   if (!a.current) a.current = { id, base: id, copy: false };
@@ -1992,7 +2010,7 @@ const waitView = (id, r) => {
   };
 };
 const chatState = (proj, slug) => {
-  const key = proj.name + '/' + slug, ch = chats.get(key), a = loadChat(proj, slug);
+  const key = proj.name + '/' + slug, ch = chats.get(key), a = followVscodeCopy(proj, slug, loadChat(proj, slug));
   const latest = (planSessions(proj, slug).sessions.at(-1) || {}).id || null;
   return {
     live: !!ch, busy: !!(ch && ch.busy), mode: ch ? ch.mode : null, model: ch ? ch.model : null,

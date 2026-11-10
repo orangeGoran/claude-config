@@ -6,7 +6,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import http from 'node:http';
-import { readdirSync, mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
+import { readdirSync, mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, rmSync, realpathSync, utimesSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -386,6 +386,34 @@ test("counts only the plan's own sessions, not every session in the repo", async
   let p;
   do { await sleep(200); p = await onlyPlan(); } while (Date.now() < deadline && (!p.run || p.live));
   assert.deepEqual(p.sessions.map((x) => x.id), ['ses-mine'], 'the unrelated session is not attributed to this plan');
+});
+
+test('the chat follows its session to the VS Code copy once the copy is continued', async () => {
+  const q = 'project=demo&slug=demo-plan';
+  const transcripts = path.join(home, '.claude', 'projects', repo.replace(/[^a-zA-Z0-9]/g, '-'));
+  const askFile = path.join(home, '.claude', 'pipeline-dashboard', 'state', 'demo', 'ask', 'demo-plan.json');
+  const index = path.join(transcripts, '.vscode-copies.json');
+  const copy = path.join(transcripts, 'ses-copy.jsonl');
+  mkdirSync(path.dirname(askFile), { recursive: true });
+  const pinned = { current: { id: 'ses-mine', base: 'ses-mine', copy: false } };
+  writeFileSync(askFile, JSON.stringify(pinned));
+  writeFileSync(index, JSON.stringify({ 'ses-mine': 'ses-copy' }));
+  try {
+    // a copy older than the pinned session was not continued: the pin stays
+    writeFileSync(copy, '{}\n');
+    const old = new Date(Date.now() - 60000);
+    utimesSync(copy, old, old);
+    assert.equal((await (await get('/api/chat?' + q)).json()).session, 'ses-mine');
+    // continued in VS Code: the copy is newer, and the panel and the pin move to it
+    utimesSync(copy, new Date(), new Date(Date.now() + 60000));
+    const st = await (await get('/api/chat?' + q)).json();
+    assert.equal(st.session, 'ses-copy');
+    assert.deepEqual(st.current, { id: 'ses-copy', base: 'ses-mine', copy: false });
+    assert.equal((await (await get('/api/chat/history?' + q)).json()).session, 'ses-copy');
+    assert.equal(JSON.parse(readFileSync(askFile, 'utf8')).current.id, 'ses-copy');
+  } finally {
+    for (const f of [askFile, index, copy]) rmSync(f, { force: true });
+  }
 });
 
 test("the chat continues the plan's session live: history, permission prompts, selected lines, fork", async () => {
