@@ -2903,6 +2903,18 @@ const PAGE = /* html */ `<!doctype html>
   /* tour: a transparent blocker, a spotlight hole, and a card beside it */
   #tour { display:none; }
   #tour.open { display:block; }
+  /* in-page alerts: one card per event, bottom right; a click opens the plan */
+  #toasts { position:fixed; right:16px; bottom:16px; z-index:40; display:flex; flex-direction:column; gap:8px;
+            max-width:min(360px, calc(100vw - 32px)); }
+  .toast { display:flex; align-items:flex-start; gap:10px; background:var(--panel); border:1px solid var(--line);
+           border-left:4px solid var(--run); border-radius:10px; padding:10px 10px 10px 12px; cursor:pointer;
+           box-shadow:0 10px 30px rgba(0,0,0,.35); font-size:calc(13px * var(--fs)); animation:toastIn .18s ease-out; }
+  .toast.ok { border-left-color:var(--ok); } .toast.bad { border-left-color:var(--bad); } .toast.warn { border-left-color:var(--warn); }
+  .toast:hover { border-color:var(--dim); }
+  .toast .tt { flex:1; min-width:0; } .toast b { display:block; margin-bottom:2px; }
+  .toast .tb { color:var(--dim); overflow-wrap:anywhere; }
+  .toast .tx { background:none; border:0; color:var(--dim); cursor:pointer; font-size:16px; line-height:1; padding:0 2px; }
+  @keyframes toastIn { from { opacity:0; transform:translateY(8px); } }
   #tourblock { position:fixed; inset:0; z-index:30; }
   #tourhole { position:fixed; z-index:31; border-radius:10px; pointer-events:none;
               box-shadow:0 0 0 9999px rgba(5,7,12,.66); outline:2px solid var(--accent);
@@ -2966,6 +2978,7 @@ const PAGE = /* html */ `<!doctype html>
 </div>
 <dialog id="seldlg" aria-labelledby="seldlgt"><div class="seldlg-top"><b id="seldlgt"></b><span style="flex:1"></span>
   <button class="ccopy" id="seldlgcopy">Copy</button><button class="onb-x" id="seldlgx" title="Close (Esc)">✕</button></div><pre id="seldlgbody"></pre></dialog>
+<div id="toasts" role="status" aria-live="polite"></div>
 <div id="tour"><div id="tourblock"></div><div id="tourhole"></div>
   <div id="tourpop" role="dialog" aria-live="polite"></div></div>
 <script>
@@ -6176,19 +6189,43 @@ async function ringsHere(key) {
   } catch { return true; }
   return alertLead;
 }
-async function alertUser(title, body, key, tab) {
+function openFromAlert(key, tab) {
+  selected = key;
+  if (tab === 'chat') { chatOn = false; toggleChat(true); } else if (tab) prTab[key] = tab;
+  lastPrDraw = null; renderList(); renderDetail(true);
+}
+// A card in the page for each alert, so you see it while you read another plan, without the 🔔
+// and without leaving what you do. Finished runs and answers go away by themselves; a failed run
+// and a permission question stay until you click or close them. A newer card for the same plan
+// and event replaces the older one.
+function toast(title, body, key, tab, kind) {
+  const box = byId('toasts'), id = key + '|' + title;
+  box.querySelectorAll('.toast').forEach((el) => { if (el.dataset.id === id) el.remove(); });
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind; el.dataset.id = id;
+  el.innerHTML = '<div class="tt"><b>' + esc(title) + '</b><div class="tb">' + esc(body) + '</div></div>' +
+    '<button class="tx" title="Close" aria-label="Close">×</button>';
+  el.addEventListener('click', (e) => { el.remove(); if (!e.target.closest('.tx')) openFromAlert(key, tab); });
+  box.append(el);
+  while (box.children.length > 5) box.firstElementChild.remove();
+  if (kind !== 'bad' && kind !== 'warn') {
+    let left = 12000, t0;
+    const tick = () => { t0 = Date.now(); el._t = setTimeout(() => el.remove(), left); };
+    el.addEventListener('mouseenter', () => { clearTimeout(el._t); left -= Date.now() - t0; });
+    el.addEventListener('mouseleave', tick);
+    tick();
+  }
+}
+async function alertUser(title, body, key, tab, kind = 'ok') {
   if (!await ringsHere(key)) return;
   if (!document.hasFocus()) { unseen.push(title + ' · ' + body.split(' / ')[0]); paintTitle(); }
+  // no card for an answer you are looking at: the plan's chat is open on screen
+  if (!(tab === 'chat' && ch && ch.key === key && !document.hidden)) toast(title, body, key, tab, kind);
   if (!alertsOn) return;
   chime();
   if (document.hasFocus() || !('Notification' in window) || Notification.permission !== 'granted') return;
   const n = new Notification(title, { body, tag: key + title });
-  n.onclick = () => {
-    window.focus(); n.close();
-    selected = key;
-    if (tab === 'chat') { chatOn = false; toggleChat(true); } else if (tab) prTab[key] = tab;
-    lastPrDraw = null; renderList(); renderDetail(true);
-  };
+  n.onclick = () => { window.focus(); n.close(); openFromAlert(key, tab); };
 }
 function checkAlerts() {
   for (const p of plans) {
@@ -6196,14 +6233,14 @@ function checkAlerts() {
     if (was && was.run && !run) {
       const o = outOf(p);
       alertUser(o === 'failed' ? 'Run failed' : o === 'needs-you' ? 'Run needs you' : 'Run finished',
-        p.project + ' / ' + p.file, p.key);
+        p.project + ' / ' + p.file, p.key, null, o === 'failed' ? 'bad' : o === 'needs-you' ? 'warn' : 'ok');
     }
     if (was && was.ask && !ask) {
       alertUser('The agent answered', p.project + ' / ' + p.file, p.key, 'chat');
       if (!(ch && ch.key === p.key)) markAnswered(p.key, true);   // not marked when its chat is on screen
     }
     if (ask) markAnswered(p.key, false);
-    if (was && waits > was.waits) alertUser('The agent asks for permission', p.project + ' / ' + p.file, p.key, 'chat');
+    if (was && waits > was.waits) alertUser('The agent asks for permission', p.project + ' / ' + p.file, p.key, 'chat', 'warn');
     wasBusy[p.key] = { run, ask, waits };
   }
 }
