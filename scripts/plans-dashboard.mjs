@@ -999,9 +999,10 @@ const cleanup = (proj, slug, artifacts) =>
         resolve({ ok: true, output });
       });
   });
+// with no slug (the project header's button) it opens the project's main checkout
 const openInVsCode = (proj, slug) => {
-  const wt = worktreeOf(proj, slug);
-  const target = proj.hasPipeline && existsSync(wt) ? wt : proj.root;
+  const wt = slug ? worktreeOf(proj, slug) : '';
+  const target = proj.hasPipeline && wt && existsSync(wt) ? wt : proj.root;
   execFile('code', [target], { env: ENV }, (err) => {
     if (err) execFile('open', ['-a', 'Visual Studio Code', target], () => {});
   });
@@ -2270,6 +2271,11 @@ const server = http.createServer(async (req, res) => {
         const note = await pullRoot(proj, br.out);
         return json(res, 200, { ok: !note.startsWith('Not pulled'), output: note });
       }
+      // 🖥 VS Code on a project header: the main checkout, not a plan's worktree
+      if (url.pathname === '/api/vscode-project') {
+        if (!proj) return json(res, 400, { error: 'bad project' });
+        return json(res, 200, { ok: true, target: openInVsCode(proj) });
+      }
       if (!proj || !safeName(b.slug)) return json(res, 400, { error: 'bad request' });
       if (url.pathname === '/api/launch-generic')
         return json(res, 200, launchGeneric(proj, b.slug, +b.launcher || 0));
@@ -3450,7 +3456,9 @@ function renderList() {
         (hasLanes ? '<button class="pbtn" data-suggest="' + esc(pr) +
           '" title="suggest a parallel launch batch">🧭 Suggest</button>' : '') +
         '<button class="pbtn" data-pull="' + esc(pr) + '" title="git pull --ff-only in ' + escA(sp.root) +
-          ' (the branch it is on, from its remote)">📥 Pull</button>' + runBadges +
+          ' (the branch it is on, from its remote)">📥 Pull</button>' +
+        '<button class="pbtn" data-vscode="' + esc(pr) + '" title="open ' + escA(sp.root) +
+          ' in VS Code">🖥 VS Code</button>' + runBadges +
         (sp.setupLevel === 'red' ? '<span class="chip bad x" data-guide="' + escA(sp.root) +
           '" title="something required is missing — see what and how to fix it">needs setup</span>' : '') +
         '<span class="cnt">' + items.length + ' plan' + (items.length === 1 ? '' : 's') +
@@ -3474,6 +3482,11 @@ function renderList() {
       el.disabled = true; el.textContent = '📥 Pulling…';
       await post('/api/pull', { project: el.dataset.pull }, true);
       el.disabled = false; el.textContent = '📥 Pull';
+    }));
+  byId('side').querySelectorAll('[data-vscode]').forEach((el) =>
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      post('/api/vscode-project', { project: el.dataset.vscode });
     }));
   const allProjNames = [...new Set(plans.map((p) => p.project))];
   byId('collapseAll').textContent =
