@@ -2303,11 +2303,18 @@ const PAGE = /* html */ `<!doctype html>
   header { padding:11px 20px; border-bottom:1px solid var(--line); display:flex;
            align-items:center; gap:14px; flex-shrink:0; }
   h1 { font-size:calc(15px * var(--fs)); margin:0; }
-  /* the main header has the review bar's layout: the Plan · PR / Files changed switch sits in the middle, at the same place */
-  header.mainhd { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(max-content,1fr); gap:16px; }
+  #home { color:inherit; text-decoration:none; }
+  /* the Plan · PR / Files changed switch sits where the review bar has it: in the middle of the space left of the chat
+     panel (--chatw, set from the panel's width); the left group stops before it */
+  header.mainhd { position:relative; }
   .mainhd .hleft, .mainhd .hright { display:flex; align-items:center; gap:14px; min-width:0; }
-  .mainhd .hright { justify-content:flex-end; }
-  .mainhd .hdnote { margin-left:auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mainhd .hleft { flex:1; }
+  .mainhd .hright { margin-left:auto; }
+  /* shown only while the open plan waits for GitHub or the server (busy), beside the thin bar at the top */
+  .mainhd .hdnote { margin-left:auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; visibility:hidden; }
+  body.busy .mainhd .hdnote { visibility:visible; }
+  #hdtabs { position:absolute; top:50%; left:calc((100% - var(--chatw, 0px)) / 2); transform:translate(-50%, -50%); }
+  .mainhd.tabs .hleft { max-width:calc((100% - var(--chatw, 0px)) / 2 - var(--tabsw, 0px) / 2 - 36px); }
   .wrap { flex:1; display:flex; min-height:0; }
   aside { width:calc(400px * var(--fs)); border-right:1px solid var(--line); background:var(--panel);
           flex-shrink:0; display:flex; flex-direction:column; }
@@ -2891,11 +2898,11 @@ const PAGE = /* html */ `<!doctype html>
   .tp-foot { display:flex; gap:8px; align-items:center; }
   @media (prefers-reduced-motion: reduce) { #tourhole, #tourpop { transition:none; } }
 </style>
-<header class="mainhd"><div class="hleft"><h1>🗂 Plans</h1><span class="hdrun" id="hdrun" style="display:none"></span>
+<header class="mainhd"><div class="hleft"><h1><a href="/" id="home" title="close the open plan">🗂 Plans</a></h1><span class="hdrun" id="hdrun" style="display:none"></span>
   <span class="hdok" id="hdok" style="display:none"></span>
   <span class="dim" id="clock"></span>
   <span class="hdwarn" id="connmsg" style="display:none"></span>
-  <span class="dim hdnote">auto-refresh 5s · summaries generate in background</span></div>
+  <span class="dim hdnote" aria-live="polite">loading…</span></div>
   <div id="hdtabs"></div>
   <div class="hright"><a class="hdlink" href="http://localhost:${QA_PORT}/" target="_blank" rel="noopener" title="report pages of the browser-usability-test skill">QA reports ↗</a>
   <button id="guidebtn" title="find repos on this machine and add them; step 1 explains how it works">＋ Add project</button>
@@ -3721,6 +3728,8 @@ function drawHdTabs(p) {
   const h = byId('hdtabs');
   if (!h) return;
   h.innerHTML = p && p.pr ? prTabs(p, 'plan', true) : '';
+  h.parentElement.classList.toggle('tabs', !!h.innerHTML);
+  h.parentElement.style.setProperty('--tabsw', h.offsetWidth + 'px');
   h.querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => {
     prTab[p.key] = el.dataset.tab; lastPrDraw = null; renderDetail(false);
   }));
@@ -3774,6 +3783,9 @@ function autoChat(p) {
     document.querySelectorAll('[data-chat]').forEach((b) => { b.classList.add('on'); b.setAttribute('aria-pressed', 'true'); });
   }
 }
+// the chat panel's width (and its divider), so the header switch centers over the same space as the review bar's
+new ResizeObserver(() => document.body.style.setProperty('--chatw', (byId('chat').offsetWidth + byId('csplit').offsetWidth) + 'px'))
+  .observe(byId('chat'));
 function toggleChat(on) {
   chatOn = on == null ? !chatOn : on;
   try { localStorage.setItem('dash-chat-open', chatOn ? '1' : '0'); } catch {}
@@ -4149,12 +4161,13 @@ function chatMenu() {
   const meta = chatMetas[ch.p.project] || { commands: [] };
   let m;
   chatMenuItems = [];
-  if ((m = /^\\/([^\\s]*)$/.exec(before))) {
-    const f = m[1].toLowerCase();
+  // a / at the start of any line or after a space, so a skill can be named on a later line too
+  if ((m = /(^|\\s)\\/([^\\s]*)$/.exec(before))) {
+    const f = m[2].toLowerCase();
     chatMenuItems = meta.commands.filter((x) => x.name.toLowerCase().includes(f))
       .sort((a, b) => (b.name.toLowerCase().startsWith(f) - a.name.toLowerCase().startsWith(f)))
       .slice(0, 60).map((x) => ({ ins: '/' + x.name + ' ', label: '/' + x.name, hint: x.hint, desc: x.description }));
-    chatMenuAt = 0;
+    chatMenuAt = before.length - m[2].length - 1;
   } else if ((m = /(^|\\s)@([^\\s]*)$/.exec(before))) {
     const f = m[2].toLowerCase(), df = prDiff[ch.key];
     chatMenuItems = ((df && df.files) || []).map((x) => x.path).filter((x) => x.toLowerCase().includes(f))
@@ -5722,7 +5735,15 @@ document.addEventListener('keydown', (e) => {
   // Files changed fills the window; Esc goes back to the plan, as ‹ Plan does
   if (document.body.classList.contains('review') && !byId('logpane').classList.contains('open'))
     return byId('rback')?.click();
-  if (drawerBack) drawerBack(); else closeLog();
+  if (byId('logpane').classList.contains('open')) return drawerBack ? drawerBack() : closeLog();
+  // nothing else is open: Esc closes the open plan (not while typing in a box)
+  if (selected && !(e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"]'))) goHome();
+});
+// the empty home screen: no plan open, no drawer
+function goHome() { closeLog(); selected = null; renderList(); renderDetail(false); }
+byId('home').addEventListener('click', (e) => {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;   // a new tab opens the page as a link does
+  e.preventDefault(); goHome();
 });
 byId('q').addEventListener('input', renderList);
 byId('collapseAll').addEventListener('click', () => {
