@@ -242,6 +242,34 @@ const pipelineModes = (proj) => {
 const allProjects = () => loadRegistry().map(resolveProject);
 const projByName = (name) => allProjects().find((p) => p.name === name);
 
+// the project's own .claude/scripts/plan-lanes.mjs: which plans can run in parallel
+const runLanes = (proj) => new Promise((resolve) =>
+  execFile(process.execPath, [path.join(proj.root, '.claude/scripts/plan-lanes.mjs'), '--json'],
+    { cwd: proj.root, env: ENV, timeout: 30000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+      if (err) return resolve({ error: String(err) });
+      try { resolve(JSON.parse(stdout)); } catch { resolve({ error: 'analyzer returned invalid JSON' }); }
+    }));
+// a prompt for Claude Code that adds the missing lane checkers; the dashboard reads the fields listed in it
+const lanesFixPrompt = (missing, model) => [
+  'Add a plan lane checker to ' + (missing.length === 1 ? 'this repo' : 'these repos') +
+    ', so the plans dashboard can suggest which plans can run in parallel across all projects:',
+  '',
+  ...missing.map((p) => '- ' + p.name + ': ' + tilde(p.root) + ' (plans in ' + tilde(p.plansDir) + ')'),
+  '',
+  'In each repo, create .claude/scripts/plan-lanes.mjs. It reads every plan in the plans folder, finds the repo files each plan says it will touch, and puts plans that share files into one "lane" (they must run one after another). Plans in different lanes can run at the same time in separate worktrees.',
+  model
+    ? 'Read ' + tilde(path.join(model.root, '.claude/scripts/plan-lanes.mjs')) + ' first and follow it. Adapt it to each repo: its plans folder, its source layout, and its own list of shared files that many plans only append to (registrations, enums, translation files). Those files must not force plans into one lane.'
+    : 'Treat shared files that many plans only append to (registrations, enums, translation files) as soft conflicts: they must not force plans into one lane.',
+  '',
+  '`node .claude/scripts/plan-lanes.mjs --json` must print one JSON object with:',
+  '- schedulableCount, laneCount, maxParallel: numbers',
+  '- recommendedBatch: [{ slug, file, areas: [string], validation: { claude, codex } }], the plans to start now, at most one per lane',
+  '- lanes: [{ lane, label, members: [slug] }]',
+  '- inFlight: [{ slug, autoRunStatus }], plans already running or waiting for review',
+  '',
+  'Run it in each repo and check the lanes against the real plans. Do not commit.',
+].join('\n');
+
 // ---------- per-project data ----------
 
 const planFiles = (proj) => {
@@ -2310,12 +2338,20 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/lanes') {
       const proj = getProj();
       if (!proj || !proj.hasLanes) return json(res, 400, { error: 'no lane analyzer for this project' });
-      return execFile(process.execPath, [path.join(proj.root, '.claude/scripts/plan-lanes.mjs'), '--json'],
-        { cwd: proj.root, env: ENV, timeout: 30000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
-          if (err) return json(res, 500, { error: String(err) });
-          try { json(res, 200, JSON.parse(stdout)); }
-          catch { json(res, 500, { error: 'analyzer returned invalid JSON' }); }
+      const r = await runLanes(proj);
+      return json(res, r.error ? 500 : 200, r);
+    }
+    // one batch across every project; refused until each project has its own lane checker
+    if (url.pathname === '/api/lanes-all') {
+      const all = allProjects(), missing = all.filter((p) => !p.hasLanes);
+      if (missing.length)
+        return json(res, 409, {
+          error: missing.length + ' of ' + all.length + ' projects have no lane checker',
+          missing: missing.map((p) => ({ name: p.name, root: tilde(p.root) })),
+          prompt: lanesFixPrompt(missing, all.find((p) => p.hasLanes)),
         });
+      const runs = await Promise.all(all.map(runLanes));
+      return json(res, 200, { projects: all.map((p, i) => ({ name: p.name, ...runs[i] })) });
     }
     if (url.pathname === '/api/registry' && req.method === 'GET')
       return json(res, 200, loadRegistry().map((e) => ({
@@ -3089,6 +3125,7 @@ const PAGE = /* html */ `<!doctype html>
   #seldlg::backdrop { background:rgba(5,7,12,.5); }
   .seldlg-top { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); }
   .seldlg-top .ccopy { position:static; opacity:1; }
+  #seldlgnote { margin:0; padding:10px 14px; color:var(--bad); border-bottom:1px solid var(--line); line-height:1.5; }
   #seldlgbody { margin:0; padding:12px 14px; overflow:auto; white-space:pre-wrap; word-break:break-word;
                 font:calc(12px * var(--fs)) ui-monospace,monospace; background:var(--codebg); }
   .cchip button { border:0; background:none; padding:0 2px; color:var(--dim); cursor:pointer; }
@@ -3170,6 +3207,7 @@ const PAGE = /* html */ `<!doctype html>
   <aside>
     <div class="filters">
       <input id="q" placeholder="search plans, archived too…">
+      <button id="suggestAll" title="Suggest one parallel launch batch across all projects">⚡ All</button>
       <button id="collapseAll" title="collapse or expand all project sections">Collapse all</button>
     </div>
     <div class="sidescroll">
@@ -3204,7 +3242,8 @@ const PAGE = /* html */ `<!doctype html>
   </div>
 </div>
 <dialog id="seldlg" aria-labelledby="seldlgt"><div class="seldlg-top"><b id="seldlgt"></b><span style="flex:1"></span>
-  <button class="ccopy" id="seldlgcopy">Copy</button><button class="onb-x" id="seldlgx" title="Close (Esc)">✕</button></div><pre id="seldlgbody"></pre></dialog>
+  <button class="ccopy" id="seldlgcopy">Copy</button><button class="onb-x" id="seldlgx" title="Close (Esc)">✕</button></div>
+  <p id="seldlgnote" hidden></p><pre id="seldlgbody"></pre></dialog>
 <div id="toasts" role="status" aria-live="polite"><div id="toastList"></div><button id="toastPill" class="toastPill" hidden></button></div>
 <div id="tour"><div id="tourblock"></div><div id="tourhole"></div>
   <div id="tourpop" role="dialog" aria-live="polite"></div></div>
@@ -3281,6 +3320,7 @@ document.addEventListener('click', (e) => {
   e.preventDefault();
   const D = byId('seldlg');
   byId('seldlgt').textContent = (chip.querySelector('b') || chip).textContent.replace(/^⧉\s*/, '').trim();
+  byId('seldlgnote').hidden = true;
   byId('seldlgbody').textContent = chip.dataset.seltext;
   D.showModal();
 });
@@ -6145,18 +6185,11 @@ async function openSettings() {
 }
 byId('settingsbtn').addEventListener('click', openSettings);
 // suggest-batch: deterministic lane analysis (plan-lanes.mjs), rendered in the drawer
-async function openSuggest(projName) {
-  if (!projName) return;
-  logKey = null;
-  setBack(null);
-  byId('logtitle').textContent = '🧭 suggested launch batch — ' + projName;
-  byId('logpane').classList.add('open');
-  byId('logbody').textContent = 'analyzing plan backlog…';
-  const d = await (await fetch('/api/lanes?project=' + projName)).json();
-  if (d.error) { byId('logbody').textContent = '⚠️ ' + d.error; return; }
+const LANES_WRAP = '<div style="font-family:-apple-system,sans-serif;font-size:13px;line-height:1.7;white-space:normal;color:var(--fg)">';
+// one project's lanes; queueBtn is the label of its queue button, or '' for none
+function lanesHtml(projName, d, queueBtn) {
   const K = (s) => projName + '/' + s;
-  let h = '<div style="font-family:-apple-system,sans-serif;font-size:13px;line-height:1.7;white-space:normal;color:var(--fg)">';
-  h += '<p><b>' + d.schedulableCount + '</b> schedulable · <b>' + d.laneCount +
+  let h = '<p><b>' + d.schedulableCount + '</b> schedulable · <b>' + d.laneCount +
        '</b> independent lanes · up to <b>' + d.maxParallel + '</b> safely in parallel</p>';
   if (d.recommendedBatch && d.recommendedBatch.length) {
     h += '<p><b>Recommended batch:</b></p><ul>';
@@ -6172,7 +6205,7 @@ async function openSuggest(projName) {
             + 'not validated — click to copy /skill-auto-validate-plan</b>') +
         '</span></li>';
     }
-    h += '</ul><button class="primary" id="queueBatch">✓ Queue this batch</button>';
+    h += '</ul>' + (queueBtn ? '<button class="primary" data-queue="' + esc(projName) + '">' + queueBtn + '</button>' : '');
   } else h += '<p>No launchable batch right now.</p>';
   const multi = (d.lanes || []).filter((l) => (l.members || []).length > 1);
   if (multi.length) {
@@ -6187,7 +6220,19 @@ async function openSuggest(projName) {
       d.inFlight.map((p) => '<li><code class="plink" data-open="' + esc(K(p.slug)) + '">' + esc(p.slug) + '</code> — ' +
         esc((p.autoRunStatus || '').split(/[.—]/)[0].trim()) + '</li>').join('') + '</ul>';
   }
-  byId('logbody').innerHTML = h + '</div>';
+  return h;
+}
+// queues the recommended batch of each project in byProj ({ name: lanes }) and closes the drawer
+function queueBatches(byProj) {
+  for (const [projName, d] of Object.entries(byProj))
+    for (const p of d.recommendedBatch || []) {
+      const pl = find(projName + '/' + p.slug);
+      if (pl && !pl.live && !pl.worktree) picked.add(pl.key);
+    }
+  renderBar(); renderList(); closeLog();
+}
+// clicks inside the drawer: open a plan, copy a command, queue one project's batch or all of them
+function wireLanes(byProj) {
   byId('logbody').querySelectorAll('[data-open]').forEach((el) =>
     el.addEventListener('click', () => {
       const k = el.dataset.open;
@@ -6208,14 +6253,62 @@ async function openSuggest(projName) {
       }
       setTimeout(() => { el.textContent = was; delete el.dataset.busy; }, 1600);
     }));
-  const qb = document.getElementById('queueBatch');
-  if (qb) qb.addEventListener('click', () => {
-    for (const p of d.recommendedBatch) {
-      const pl = find(K(p.slug));
-      if (pl && !pl.live && !pl.worktree) picked.add(pl.key);
-    }
-    renderBar(); renderList(); closeLog();
-  });
+  byId('logbody').querySelectorAll('[data-queue]').forEach((el) =>
+    el.addEventListener('click', () => queueBatches({ [el.dataset.queue]: byProj[el.dataset.queue] })));
+  const all = byId('queueAll');
+  if (all) all.addEventListener('click', () => queueBatches(byProj));
+}
+async function openSuggest(projName) {
+  if (!projName) return;
+  logKey = null;
+  setBack(null);
+  byId('logtitle').textContent = '🧭 suggested launch batch — ' + projName;
+  byId('logpane').classList.add('open');
+  byId('logbody').textContent = 'analyzing plan backlog…';
+  const d = await (await fetch('/api/lanes?project=' + projName)).json();
+  if (d.error) { byId('logbody').textContent = '⚠️ ' + d.error; return; }
+  byId('logbody').innerHTML = LANES_WRAP + lanesHtml(projName, d, '✓ Queue this batch') + '</div>';
+  wireLanes({ [projName]: d });
+}
+// every project at once. Plans in different repos never share files, so the batches just add up.
+// The server refuses until each project has a lane checker; then a dialog gives the prompt that adds them.
+async function openSuggestAll() {
+  const btn = byId('suggestAll');
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = '⚡ …';
+  let d;
+  try { d = await (await fetch('/api/lanes-all')).json(); }
+  catch (e) { d = { error: String(e) }; }
+  finally { btn.disabled = false; btn.textContent = '⚡ All'; }
+  if (d.missing) {
+    byId('seldlgt').textContent = '⚠️ Can\\u2019t suggest a batch for all projects';
+    const note = byId('seldlgnote');
+    note.textContent = d.missing.map((m) => m.name).join(', ') + (d.missing.length === 1 ? ' has' : ' have') +
+      ' no lane checker (.claude/scripts/plan-lanes.mjs), so the dashboard can\\u2019t tell which plans can run in parallel. ' +
+      'Copy this prompt into Claude Code to add ' + (d.missing.length === 1 ? 'it' : 'them') + ', then click ⚡ All again.';
+    note.hidden = false;
+    byId('seldlgbody').textContent = d.prompt;
+    return byId('seldlg').showModal();
+  }
+  logKey = null;
+  setBack(null);
+  byId('logtitle').textContent = '⚡ suggested launch batch — all projects';
+  byId('logpane').classList.add('open');
+  if (d.error) { byId('logbody').textContent = '⚠️ ' + d.error; return; }
+  const byProj = {};
+  let total = 0, h = '';
+  for (const p of d.projects) {
+    h += '<h3 class="pcx" style="' + escA(projLook(p.name).style) +
+      ';margin:18px 0 4px;padding-left:8px;font-size:14px;border-left:3px solid var(--pc)">' + esc(p.name) + '</h3>';
+    if (p.error) { h += '<p>⚠️ ' + esc(p.error) + '</p>'; continue; }
+    byProj[p.name] = p;
+    total += (p.recommendedBatch || []).length;
+    h += lanesHtml(p.name, p, '');
+  }
+  byId('logbody').innerHTML = LANES_WRAP + '<p><b>' + total + '</b> plan' + (total === 1 ? '' : 's') +
+    ' can start now across ' + d.projects.length + ' projects.' +
+    (total ? ' <button class="primary" id="queueAll">✓ Queue all ' + total + '</button>' : '') + '</p>' + h + '</div>';
+  wireLanes(byProj);
 }
 document.addEventListener('keydown', (e) => {
   if (tourStep >= 0) {
@@ -6246,6 +6339,7 @@ byId('home').addEventListener('click', (e) => {
   e.preventDefault(); goHome();
 });
 byId('q').addEventListener('input', renderList);
+byId('suggestAll').addEventListener('click', openSuggestAll);
 byId('collapseAll').addEventListener('click', () => {
   const names = state.map((s) => s.name);
   if (names.every((n) => collapsedProjects.has(n))) collapsedProjects.clear();

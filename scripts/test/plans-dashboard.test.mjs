@@ -222,6 +222,28 @@ test('lists the registered project and parses the plan title', async () => {
   assert.equal(s[0].plans[0].title, 'Demo the dashboard');
 });
 
+test('the all-projects batch is refused with a fix prompt until every project has a lane checker', async () => {
+  const r = await get('/api/lanes-all');
+  assert.equal(r.status, 409);
+  const d = await r.json();
+  assert.deepEqual(d.missing.map((m) => m.name), ['demo']);
+  assert.match(d.prompt, /create \.claude\/scripts\/plan-lanes\.mjs/);
+  assert.ok(d.prompt.includes(repo), 'the prompt names the repo to fix');
+
+  const lanes = path.join(repo, '.claude', 'scripts', 'plan-lanes.mjs');
+  mkdirSync(path.dirname(lanes), { recursive: true });
+  writeFileSync(lanes, 'console.log(JSON.stringify({ schedulableCount: 1, laneCount: 1, maxParallel: 1,' +
+    ' recommendedBatch: [{ slug: "demo-plan" }], lanes: [], inFlight: [] }));\n');
+  try {
+    const ok = await get('/api/lanes-all');
+    assert.equal(ok.status, 200);
+    const all = await ok.json();
+    assert.equal(all.projects.length, 1);
+    assert.equal(all.projects[0].name, 'demo');
+    assert.deepEqual(all.projects[0].recommendedBatch.map((p) => p.slug), ['demo-plan']);
+  } finally { rmSync(path.join(repo, '.claude', 'scripts'), { recursive: true, force: true }); }
+});
+
 test('serves plan markdown and rejects slugs that are not plain names', async () => {
   assert.match(await (await get('/api/plan?project=demo&slug=demo-plan')).text(), /Do the thing/);
   assert.equal((await get('/api/plan?project=demo&slug=../../etc/passwd')).status, 400);
