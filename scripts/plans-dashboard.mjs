@@ -2615,6 +2615,22 @@ const PAGE = /* html */ `<!doctype html>
   .item.live { border-left:3px solid var(--run); background:color-mix(in srgb, var(--run) 8%, transparent); }
   .item.bad { border-left:3px solid var(--bad); }
   .item.ok { border-left:3px solid var(--ok); background:color-mix(in srgb, var(--ok) 6%, transparent); }
+  /* sidebar as grouped cards: a client is a small section label, each project one rounded card
+     with its colour down the left edge, so a project visibly ends where its card ends */
+  #side { padding:2px 0 12px; }
+  .sidescroll { background:var(--bg); }
+  #side .ghead { padding:16px 20px 6px; font-size:calc(11px * var(--fs)); letter-spacing:.08em; font-weight:600;
+                 color:var(--dim); border-top:0; background:none; }
+  .pgrp { --pcard:color-mix(in srgb, var(--card) 55%, var(--panel)); margin:0 10px 10px; background:var(--pcard); border:1px solid var(--line); border-left:4px solid var(--pc, var(--line));
+          border-radius:12px; overflow:clip; box-shadow:0 1px 2px rgba(0,0,0,.14); }
+  .pgrp > .phead { border:0; background:var(--pcard); padding:9px 12px; font-size:calc(12.5px * var(--fs)); }
+  .pgrp > .phead.pcx { border-left:0; }
+  .pgrp > .phead:not(:last-child) { border-bottom:1px solid var(--line); }
+  .pgrp > .phead:hover, .pgrp .item:hover, .pgrp .wthead:hover { background:color-mix(in srgb, var(--fg) 6%, var(--pcard)); }
+  .pgrp .item { border-bottom:0; }
+  .pgrp .item + .item, .pgrp .item + .wthead, .pgrp .emptyproj + .wthead { border-top:1px solid var(--line); }
+  .pgrp .emptyproj, .pgrp > :last-child { border-bottom:0; }
+  .pgrp .item.sel, .pgrp .item.sel:hover { background:var(--sel); }
   /* the open plan; after the status rules, whose backgrounds would hide it */
   .item.sel, .item.sel:hover { background:var(--sel); box-shadow:inset 0 0 0 2px var(--accent); }
   .runstrip { padding:8px 12px 10px; border-bottom:2px solid var(--line); display:none; }
@@ -2706,6 +2722,51 @@ const PAGE = /* html */ `<!doctype html>
   .copycmd { cursor:pointer; color:var(--warn); font-weight:700;
              text-decoration:underline dotted; text-underline-offset:2px; }
   .copycmd:hover { text-decoration:underline; }
+  /* suggest-batch drawer: grouped inset lists, one card per project, one sticky action bar */
+  .lanes { font:calc(13px * var(--fs))/1.45 -apple-system,BlinkMacSystemFont,system-ui,sans-serif; white-space:normal; color:var(--fg); }
+  .lanes .lbar { position:sticky; top:-16px; z-index:1; margin:-16px -16px 18px; padding:12px 16px;
+                 display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--line);
+                 background:color-mix(in srgb, var(--codebg) 82%, transparent); backdrop-filter:saturate(1.6) blur(14px);
+                 -webkit-backdrop-filter:saturate(1.6) blur(14px); }
+  .lanes .lsum { flex:1; min-width:0; display:flex; flex-direction:column; }
+  .lanes .lsum b { font-size:calc(14px * var(--fs)); font-weight:600; }
+  .lanes .lsub, .lanes .lstat, .lanes .lareas, .lanes .lnote, .lanes .lidle { color:var(--dim); font-size:calc(11.5px * var(--fs)); }
+  .lanes .lbar button { border-radius:8px; padding:6px 12px; white-space:nowrap; }
+  .lanes .lbar button:disabled { opacity:.45; cursor:default; }
+  .lanes .lcard { background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; margin:0 0 14px;
+                  box-shadow:0 1px 2px rgba(0,0,0,.12); }
+  .lanes .lhead { display:flex; align-items:center; gap:10px; padding:10px 14px; }
+  .lanes .lhead b { font-size:calc(13.5px * var(--fs)); font-weight:600; }
+  .lanes .lhead b::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%;
+                            background:var(--pc); margin-right:8px; vertical-align:1px; }
+  .lanes .lhtx { display:flex; flex-direction:column; min-width:0; }
+  .lanes .lhtx b { overflow-wrap:anywhere; }
+  .lanes input[type=checkbox] { width:16px; height:16px; margin:0; flex-shrink:0; accent-color:var(--accent); cursor:pointer; }
+  .lanes input[type=checkbox]:disabled { cursor:default; }
+  .lanes .lrow { display:flex; gap:12px; align-items:flex-start; padding:10px 14px; margin-left:14px; padding-left:0;
+                 border-top:1px solid var(--line); }
+  .lanes .lrow input { margin-top:2px; }
+  .lanes .lrow .t { flex:1; min-width:0; }
+  .lanes .lrow.gone { opacity:.5; }
+  .lanes .lsubt { color:var(--dim); font-size:calc(12px * var(--fs)); margin-top:1px; cursor:pointer;
+                  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lanes .lsubt::before { content:'▸'; display:inline-block; width:12px; transition:transform .15s; }
+  .lanes .lsubt:hover { color:var(--fg); }
+  .lanes .lsubt:focus-visible { outline:2px solid var(--link); outline-offset:2px; border-radius:3px; }
+  .lanes .lrow.open .lsubt { white-space:normal; color:var(--fg); }
+  .lanes .lrow.open .lsubt::before { transform:rotate(90deg); }
+  .lanes .ldesc { display:none; color:var(--fg); opacity:.78; font-size:calc(12px * var(--fs)); margin:3px 0 0 12px; }
+  .lanes .lrow.open .ldesc { display:block; }
+  .lanes .lname { font:500 calc(12.5px * var(--fs))/1.4 ui-monospace,SFMono-Regular,monospace; word-break:break-all; }
+  .lanes .lmeta { display:flex; flex-wrap:wrap; gap:4px 8px; align-items:center; margin-top:4px; }
+  .lanes .lareas { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lanes .lmeta .copycmd { text-decoration:none; font-weight:600; }
+  .lanes .lnote { padding:10px 14px; border-top:1px solid var(--line); }
+  .lanes .lmore { border-top:1px solid var(--line); padding:9px 14px; }
+  .lanes .lmore summary { cursor:pointer; color:var(--dim); font-size:calc(12px * var(--fs)); list-style-position:inside; }
+  .lanes .lmore ul { margin:6px 0 0; padding-left:18px; font-size:calc(12px * var(--fs)); }
+  .lanes .lmore li { margin:3px 0; }
+  .lanes .lidle { text-align:center; margin:6px 0 0; }
   .launchbar { border-top:1px solid var(--line); background:var(--panel); padding:10px 12px;
                display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; flex-shrink:0; }
   .launchbar #selmodes { flex-basis:100%; order:3; font-size:calc(11px * var(--fs)); }
@@ -3701,7 +3762,8 @@ function renderList() {
       const runBadges =
         (liveN ? '<span class="chip live">● ' + liveN + ' running</span>' : '') +
         (flightN ? '<span class="chip warn">⏳ ' + flightN + '</span>' : '');
-      return '<div class="phead pcx" data-toggle="' + esc(pr) + '"' + projStyle(pr) + '><span class="chev">' +
+      // one card per project: header, plans and worktrees end together at its bottom edge
+      return '<div class="pgrp pcx"' + projStyle(pr) + '><div class="phead pcx" data-toggle="' + esc(pr) + '"' + projStyle(pr) + '><span class="chev">' +
         (closed ? '▸' : '▾') + '</span>' + esc(pr) +
         (hasLanes ? '<button class="pbtn" data-suggest="' + esc(pr) +
           '" title="Suggest a parallel launch batch" aria-label="Suggest a parallel launch batch">⚡</button>' : '') +
@@ -3715,10 +3777,10 @@ function renderList() {
         '</span></div>' + (closed ? '' : (items.length ? items.map((p) => itemHtml(p)).join('')
           : filtering ? '' : '<div class="emptyproj">' + (projPlans.length ? 'All plans are archived.'
             : 'No plans yet — add a <code>.md</code> file to <code>' + esc(sp.plansDir) + '</code>.') + '</div>') +
-          wtSectionHtml(pr, visWts.filter((w) => w.project === pr)));
+          wtSectionHtml(pr, visWts.filter((w) => w.project === pr))) + '</div>';
     }).join('');
   }).join('') + (arch.length ? '<div class="ghead">📦 Archived' + (filtering ? ' — ' + arch.length + ' match' +
-    (arch.length === 1 ? '' : 'es') : '') + '</div>' + arch.map((p) => itemHtml(p, true)).join('') : '');
+    (arch.length === 1 ? '' : 'es') : '') + '</div><div class="pgrp">' + arch.map((p) => itemHtml(p, true)).join('') + '</div>' : '');
   byId('side').querySelectorAll('[data-guide]').forEach((el) =>
     el.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -6184,62 +6246,132 @@ async function openSettings() {
   render();
 }
 byId('settingsbtn').addEventListener('click', openSettings);
-// suggest-batch: deterministic lane analysis (plan-lanes.mjs), rendered in the drawer
-const LANES_WRAP = '<div style="font-family:-apple-system,sans-serif;font-size:13px;line-height:1.7;white-space:normal;color:var(--fg)">';
-// one project's lanes; queueBtn is the label of its queue button, or '' for none
-function lanesHtml(projName, d, queueBtn) {
-  const K = (s) => projName + '/' + s;
-  let h = '<p><b>' + d.schedulableCount + '</b> schedulable · <b>' + d.laneCount +
-       '</b> independent lanes · up to <b>' + d.maxParallel + '</b> safely in parallel</p>';
-  if (d.recommendedBatch && d.recommendedBatch.length) {
-    h += '<p><b>Recommended batch:</b></p><ul>';
-    for (const p of d.recommendedBatch) {
-      const v = p.validation || {};
-      // the skill takes the plan file as its argument, so bake it into the copied command
-      const vcmd = '/skill-auto-validate-plan ' + (p.file || '.plans/' + p.slug + '.md');
-      h += '<li><code class="plink" data-open="' + esc(K(p.slug)) + '">' + esc(p.slug) + '</code><br><span class="dim">areas: ' +
-        esc((p.areas || []).join(', ') || '—') +
-        ((v.claude || v.codex)
-          ? ' · validated ' + (v.claude || 0) + '×claude / ' + (v.codex || 0) + '×codex'
-          : ' · <b class="copycmd" data-copy="' + escA(vcmd) + '" title="click to copy: ' + escA(vcmd) + '">'
-            + 'not validated — click to copy /skill-auto-validate-plan</b>') +
-        '</span></li>';
-    }
-    h += '</ul>' + (queueBtn ? '<button class="primary" data-queue="' + esc(projName) + '">' + queueBtn + '</button>' : '');
-  } else h += '<p>No launchable batch right now.</p>';
-  const multi = (d.lanes || []).filter((l) => (l.members || []).length > 1);
-  if (multi.length) {
-    h += '<p style="margin-top:16px"><b>Serialize — same-file conflicts, one at a time:</b></p><ul>';
-    for (const l of multi)
-      h += '<li>' + esc(l.label || 'lane ' + l.lane) + ': ' +
-        (l.members || []).map((m) => '<code class="plink" data-open="' + esc(K(m.slug || m)) + '">' + esc(m.slug || m) + '</code>').join(' → ') + '</li>';
-    h += '</ul>';
-  }
-  if (d.inFlight && d.inFlight.length) {
-    h += '<p style="margin-top:16px"><b>In flight / awaiting review:</b></p><ul>' +
-      d.inFlight.map((p) => '<li><code class="plink" data-open="' + esc(K(p.slug)) + '">' + esc(p.slug) + '</code> — ' +
-        esc((p.autoRunStatus || '').split(/[.—]/)[0].trim()) + '</li>').join('') + '</ul>';
-  }
-  return h;
+// suggest-batch: deterministic lane analysis (plan-lanes.mjs), rendered in the drawer as grouped lists.
+// The last run per scope ('*' = all projects, else a project name) stays in localStorage together with
+// the plans you ticked (none by default), so reopening shows it at once. Re-run fetches a fresh analysis and clears the ticks.
+let lanesRuns = {};
+try { lanesRuns = JSON.parse(localStorage.getItem('dash-lanes') || '{}'); } catch {}
+const saveLanes = () => { try { localStorage.setItem('dash-lanes', JSON.stringify(lanesRuns)); } catch {} };
+const lanesTitle = (scope) => '⚡ suggested launch batch — ' + (scope === '*' ? 'all projects' : scope);
+// inline() turns #123 into a link to the repo of the plan opened last, and a link inside the
+// clickable subtitle would also unfold it: the subtitle shows the text only
+function noLinks(html) {
+  const d = document.createElement('div');
+  d.innerHTML = html;
+  d.querySelectorAll('a').forEach((a) => a.replaceWith(a.textContent));
+  return d.innerHTML;
 }
-// queues the recommended batch of each project in byProj ({ name: lanes }) and closes the drawer
-function queueBatches(byProj) {
-  for (const [projName, d] of Object.entries(byProj))
-    for (const p of d.recommendedBatch || []) {
-      const pl = find(projName + '/' + p.slug);
-      if (pl && !pl.live && !pl.worktree) picked.add(pl.key);
-    }
+// one plan of a recommended batch; plans started or archived since the run can no longer be ticked
+function laneRowHtml(projName, b, run) {
+  const k = projName + '/' + b.slug, pl = find(k), v = b.validation || {};
+  const gone = !pl ? 'no longer listed' : pl.live || pl.worktree ? 'already started' : '';
+  const areas = b.areas || [];
+  // the skill takes the plan file as its argument, so bake it into the copied command
+  const vcmd = '/skill-auto-validate-plan ' + (b.file || '.plans/' + b.slug + '.md');
+  return '<div class="lrow' + (gone ? ' gone' : '') + '">' +
+    '<input type="checkbox" aria-label="queue this plan" data-bpick="' + escA(k) + '" data-bproj="' + escA(projName) + '"' +
+    (!gone && (run.on || []).includes(k) ? ' checked' : '') + (gone ? ' disabled' : '') + '>' +
+    '<div class="t">' + (gone ? '<span class="lname">' : '<span class="plink lname" data-open="' + escA(k) + '">') + esc(b.slug) + '</span>' +
+    // the title as a one-line subtitle; a click unfolds the full title and the summary
+    (pl && (pl.title || pl.summary) ? '<div class="lsubt" role="button" tabindex="0" aria-expanded="false" data-lexp>' +
+      (pl.title ? noLinks(inline(pl.title)) : 'details') + '</div>' : '') +
+    (pl && pl.summary ? '<div class="ldesc">' + esc(pl.summary) + '</div>' : '') +
+    '<div class="lmeta">' +
+    (gone ? '<span class="chip live">' + gone + '</span>'
+      : (v.claude || v.codex)
+        ? '<span class="chip ok">✓ validated ' + (v.claude || 0) + '× claude · ' + (v.codex || 0) + '× codex</span>'
+        : '<span class="chip warn copycmd" data-copy="' + escA(vcmd) + '" title="click to copy: ' + escA(vcmd) + '">not validated · copy command</span>') +
+    '<span class="lareas" title="' + escA(areas.join(', ')) + '">' +
+    esc(areas.slice(0, 3).join(' · ') || 'no areas') + (areas.length > 3 ? ' +' + (areas.length - 3) + ' more' : '') + '</span>' +
+    '</div></div></div>';
+}
+// one project as a grouped card: header with a select-all tick, the batch rows, then folded extras
+function laneCardHtml(p, run) {
+  const look = escA(projLook(p.name).style);
+  if (p.error) return '<div class="lcard pcx" style="' + look + '"><div class="lhead"><b>' + esc(p.name) + '</b></div>' +
+    '<div class="lnote">⚠️ ' + esc(p.error) + '</div></div>';
+  const batch = p.recommendedBatch || [];
+  const multi = (p.lanes || []).filter((l) => (l.members || []).length > 1);
+  const fl = p.inFlight || [];
+  const link = (s) => '<span class="plink" data-open="' + escA(p.name + '/' + s) + '">' + esc(s) + '</span>';
+  let h = '<div class="lcard pcx" style="' + look + '"><div class="lhead">' +
+    (batch.length ? '<input type="checkbox" aria-label="select all plans of ' + escA(p.name) + '" data-ball="' + escA(p.name) + '">' : '') +
+    '<div class="lhtx"><b>' + esc(p.name) + '</b><span class="lstat">' + p.schedulableCount + ' ready · ' + p.laneCount +
+    ' lanes · up to ' + p.maxParallel + ' in parallel</span></div></div>';
+  h += batch.length ? batch.map((b) => laneRowHtml(p.name, b, run)).join('') : '<div class="lnote">Nothing to start right now.</div>';
+  if (multi.length)
+    h += '<details class="lmore" open><summary>One at a time — same files (' + multi.length + ')</summary><ul>' +
+      multi.map((l) => '<li><span class="dim">' + esc(l.label || 'lane ' + l.lane) + ':</span> ' +
+        (l.members || []).map((m) => link(m.slug || m)).join(' → ') + '</li>').join('') + '</ul></details>';
+  if (fl.length)
+    h += '<details class="lmore"><summary>In flight / awaiting review (' + fl.length + ')</summary><ul>' +
+      fl.map((f) => '<li>' + link(f.slug) + ' <span class="dim">— ' +
+        esc((f.autoRunStatus || '').split(/[.—]/)[0].trim()) + '</span></li>').join('') + '</ul></details>';
+  return h + '</div>';
+}
+function renderLanes(scope) {
+  const run = lanesRuns[scope];
+  const idle = [];
+  let cards = '';
+  for (const p of run.projects) {
+    const empty = !p.error && !(p.recommendedBatch || []).length && !(p.inFlight || []).length &&
+      !(p.lanes || []).some((l) => (l.members || []).length > 1);
+    if (empty && scope === '*') idle.push(p.name);
+    else cards += laneCardHtml(p, run);
+  }
+  byId('logbody').innerHTML = '<div class="lanes">' +
+    '<div class="lbar"><div class="lsum"><b id="lcount"></b><span class="lsub">analyzed ' + ago(run.at) + '</span></div>' +
+    '<button id="lrerun" title="Analyze the backlog again. Your ticks are cleared.">↻ Re-run</button>' +
+    '<button class="primary" id="queueAll"></button></div>' +
+    cards + (idle.length ? '<p class="lidle">Nothing to start in ' + idle.map(esc).join(', ') + '.</p>' : '') + '</div>';
+  wireLanes(scope);
+}
+// queues the ticked plans (keys "<project>/<slug>") and closes the drawer
+function queueBatches(keys) {
+  for (const k of keys) {
+    const pl = find(k);
+    if (pl && !pl.live && !pl.worktree) picked.add(pl.key);
+  }
   renderBar(); renderList(); closeLog();
 }
-// clicks inside the drawer: open a plan, copy a command, queue one project's batch or all of them
-function wireLanes(byProj) {
-  byId('logbody').querySelectorAll('[data-open]').forEach((el) =>
+// clicks inside the drawer: open a plan, copy a command, tick plans, queue the ticked ones, re-run
+function wireLanes(scope) {
+  const run = lanesRuns[scope], body = byId('logbody');
+  const boxes = [...body.querySelectorAll('[data-bpick]')].filter((el) => !el.disabled);
+  const relabel = () => {
+    const n = boxes.filter((el) => el.checked).length, all = byId('queueAll');
+    byId('lcount').textContent = boxes.length ? n + ' of ' + boxes.length + ' plans selected' : 'No plans can start now';
+    all.textContent = n && n === boxes.length && n > 1 ? '✓ Queue all ' + n : '✓ Queue ' + n;
+    all.disabled = !n;
+    body.querySelectorAll('[data-ball]').forEach((el) => {
+      const mine = boxes.filter((b) => b.dataset.bproj === el.dataset.ball), on = mine.filter((b) => b.checked).length;
+      el.disabled = !mine.length;
+      el.checked = !!mine.length && on === mine.length;
+      el.indeterminate = on > 0 && on < mine.length;
+    });
+  };
+  const remember = () => {
+    const on = new Set(run.on || []);
+    for (const el of boxes) el.checked ? on.add(el.dataset.bpick) : on.delete(el.dataset.bpick);
+    run.on = [...on]; saveLanes(); relabel();
+  };
+  boxes.forEach((el) => el.addEventListener('change', remember));
+  body.querySelectorAll('[data-ball]').forEach((el) => el.addEventListener('change', () => {
+    for (const b of boxes) if (b.dataset.bproj === el.dataset.ball) b.checked = el.checked;
+    remember();
+  }));
+  body.querySelectorAll('[data-lexp]').forEach((el) => {
+    const flip = () => el.setAttribute('aria-expanded', el.closest('.lrow').classList.toggle('open'));
+    el.addEventListener('click', flip);
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } });
+  });
+  body.querySelectorAll('[data-open]').forEach((el) =>
     el.addEventListener('click', () => {
       const k = el.dataset.open;
       if (!find(k)) return; // e.g. archived plans no longer listed
       selected = k; renderList(); renderDetail(true); // drawer stays open for browsing
     }));
-  byId('logbody').querySelectorAll('[data-copy]').forEach((el) =>
+  body.querySelectorAll('[data-copy]').forEach((el) =>
     el.addEventListener('click', async () => {
       if (el.dataset.busy) return;
       const was = el.textContent, cmd = el.dataset.copy;
@@ -6253,63 +6385,48 @@ function wireLanes(byProj) {
       }
       setTimeout(() => { el.textContent = was; delete el.dataset.busy; }, 1600);
     }));
-  byId('logbody').querySelectorAll('[data-queue]').forEach((el) =>
-    el.addEventListener('click', () => queueBatches({ [el.dataset.queue]: byProj[el.dataset.queue] })));
-  const all = byId('queueAll');
-  if (all) all.addEventListener('click', () => queueBatches(byProj));
+  byId('queueAll').addEventListener('click', () => queueBatches(boxes.filter((el) => el.checked).map((el) => el.dataset.bpick)));
+  byId('lrerun').addEventListener('click', () => openLanes(scope, true));
+  relabel();
 }
-async function openSuggest(projName) {
-  if (!projName) return;
+// opens the drawer for one project or for all ('*'). Shows the remembered run unless fresh is set.
+// For all projects the server refuses until each project has a lane checker; then a dialog gives the prompt that adds them.
+// Plans in different repos never share files, so the batches of all projects just add up.
+async function openLanes(scope, fresh) {
   logKey = null;
   setBack(null);
-  byId('logtitle').textContent = '⚡ suggested launch batch — ' + projName;
+  const title = lanesTitle(scope);
+  byId('logtitle').textContent = title;
   byId('logpane').classList.add('open');
+  if (lanesRuns[scope] && !fresh) return renderLanes(scope);
   byId('logbody').textContent = 'analyzing plan backlog…';
-  const d = await (await fetch('/api/lanes?project=' + projName)).json();
-  if (d.error) { byId('logbody').textContent = '⚠️ ' + d.error; return; }
-  byId('logbody').innerHTML = LANES_WRAP + lanesHtml(projName, d, '✓ Queue this batch') + '</div>';
-  wireLanes({ [projName]: d });
-}
-// every project at once. Plans in different repos never share files, so the batches just add up.
-// The server refuses until each project has a lane checker; then a dialog gives the prompt that adds them.
-async function openSuggestAll() {
   const btn = byId('suggestAll');
-  if (btn.disabled) return;
-  btn.disabled = true; btn.textContent = '⚡ …';
+  if (scope === '*') { btn.disabled = true; btn.textContent = '⚡ …'; }
   let d;
-  try { d = await (await fetch('/api/lanes-all')).json(); }
+  try { d = await (await fetch(scope === '*' ? '/api/lanes-all' : '/api/lanes?project=' + encodeURIComponent(scope))).json(); }
   catch (e) { d = { error: String(e) }; }
-  finally { btn.disabled = false; btn.textContent = '⚡ All'; }
+  finally { if (scope === '*') { btn.disabled = false; btn.textContent = '⚡ All'; } }
+  // the drawer may show something else by now: then keep a good result, show nothing
+  const here = byId('logtitle').textContent === title && byId('logpane').classList.contains('open');
   if (d.missing) {
-    byId('seldlgt').textContent = '⚠️ Can\\u2019t suggest a batch for all projects';
+    if (!here) return;
+    closeLog();
+    byId('seldlgt').textContent = '⚠️ Can’t suggest a batch for all projects';
     const note = byId('seldlgnote');
     note.textContent = d.missing.map((m) => m.name).join(', ') + (d.missing.length === 1 ? ' has' : ' have') +
-      ' no lane checker (.claude/scripts/plan-lanes.mjs), so the dashboard can\\u2019t tell which plans can run in parallel. ' +
+      ' no lane checker (.claude/scripts/plan-lanes.mjs), so the dashboard can’t tell which plans can run in parallel. ' +
       'Copy this prompt into Claude Code to add ' + (d.missing.length === 1 ? 'it' : 'them') + ', then click ⚡ All again.';
     note.hidden = false;
     byId('seldlgbody').textContent = d.prompt;
     return byId('seldlg').showModal();
   }
-  logKey = null;
-  setBack(null);
-  byId('logtitle').textContent = '⚡ suggested launch batch — all projects';
-  byId('logpane').classList.add('open');
-  if (d.error) { byId('logbody').textContent = '⚠️ ' + d.error; return; }
-  const byProj = {};
-  let total = 0, h = '';
-  for (const p of d.projects) {
-    h += '<h3 class="pcx" style="' + escA(projLook(p.name).style) +
-      ';margin:18px 0 4px;padding-left:8px;font-size:14px;border-left:3px solid var(--pc)">' + esc(p.name) + '</h3>';
-    if (p.error) { h += '<p>⚠️ ' + esc(p.error) + '</p>'; continue; }
-    byProj[p.name] = p;
-    total += (p.recommendedBatch || []).length;
-    h += lanesHtml(p.name, p, '');
-  }
-  byId('logbody').innerHTML = LANES_WRAP + '<p><b>' + total + '</b> plan' + (total === 1 ? '' : 's') +
-    ' can start now across ' + d.projects.length + ' projects.' +
-    (total ? ' <button class="primary" id="queueAll">✓ Queue all ' + total + '</button>' : '') + '</p>' + h + '</div>';
-  wireLanes(byProj);
+  if (d.error) { if (here) byId('logbody').textContent = '⚠️ ' + d.error; return; }
+  lanesRuns[scope] = { at: Date.now(), projects: scope === '*' ? d.projects : [{ ...d, name: scope }], on: [] };
+  saveLanes();
+  if (here) renderLanes(scope);
 }
+const openSuggest = (projName) => projName && openLanes(projName);
+const openSuggestAll = () => { if (!byId('suggestAll').disabled) openLanes('*'); };
 document.addEventListener('keydown', (e) => {
   if (tourStep >= 0) {
     if (e.key === 'Escape') endTour();
