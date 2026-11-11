@@ -111,7 +111,8 @@ Part 2 adds what the dashboard does not check, but a run needs: valid `--describ
 Write the hand-off in this order. Use real paths and values.
 
 1. **TLDR** (1–3 sentences): what was set up and the one next action.
-2. **Files**: an ASCII tree of the written files, each marked `(new)`, `(changed)`, `(kept)` or `(merged)`.
+2. **Files**: an ASCII tree of the written files, each marked `(new)`, `(changed)`, `(kept)` or `(merged)`. Under each `(merged)` file, one line with the template features that moved in. Under each `(kept)` file, the reason the template adds nothing.
+2a. **Template updates**: the project features that went back into `templates/` (file and feature), or "none". These are claude-config changes, so they get their own `git add` line and commit message, run in the claude-config repo.
 3. **Verify**: the dashboard level and the count of passed required checks. List any tip that is still open.
 4. **Git and GitHub commands**, one copy-paste block, in this order. Leave out the lines that are already done (remote exists, branch exists):
 
