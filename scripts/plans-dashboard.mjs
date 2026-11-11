@@ -1708,7 +1708,8 @@ const userItems = (t, j, cwd) => {
       return;
     }
   }
-  if (you.length || sel.length || imgs) t.items.push({ k: 'you', text: you.join('\n\n'), sel, selText, imgs, at: j.timestamp, pid: j.promptId });
+  if (you.length || sel.length || imgs) t.items.push({ k: 'you', text: you.join('\n\n'), sel, selText, imgs,
+    ...(imgs && j.imgLine ? { img: j.imgLine } : {}), at: j.timestamp, pid: j.promptId });
 };
 const assistantItems = (t, j, cwd) => {
   for (const b of j.message?.content || []) {
@@ -1738,9 +1739,9 @@ const transcriptLine = (t, line, cwd) => {
   // the transcript has no size to replace it: its post_tokens leaves out the system prompt and tools.
   else if (j.type === 'system' && j.subtype === 'compact_boundary') t.used = null;
   else if (j.type === 'attachment' && j.attachment?.type === 'queued_command') {
-    userItems(t, { message: { content: j.attachment.prompt }, timestamp: j.attachment.timestamp || j.timestamp }, cwd);
+    userItems(t, { message: { content: j.attachment.prompt }, timestamp: j.attachment.timestamp || j.timestamp, imgLine: j.uuid }, cwd);
   }
-  else if (j.type === 'user') userItems(t, j, cwd);
+  else if (j.type === 'user') userItems(t, { ...j, imgLine: j.uuid }, cwd);
   else if (j.type === 'assistant') {
     t.used = usageTokens(j.message?.usage) || t.used;   // an API error's line reports zero tokens
     assistantItems(t, j, cwd);
@@ -1793,6 +1794,23 @@ const chatHistory = (proj, slug, q) => {
   if (ch) chatLanded(ch, items);
   // landed goes with these items: the page takes an answer out of the live area as it adds it to the list
   return { session: tr.id, landed: ch ? ch.landed : chatLandSeq, ...itemsPage(items, q) };
+};
+// a pasted picture of a message in the chat's transcript: the transcript keeps it as an image
+// block of the line with this uuid (a message sent during a turn keeps it in its attachment)
+const chatImage = (proj, slug, uuid, n) => {
+  const tr = chatTranscript(proj, slug);
+  if (!tr || !/^[0-9a-f-]{36}$/.test(uuid) || !/^\d{1,2}$/.test(n)) return null;
+  let all;
+  try { all = readFileSync(tr.file, 'utf8'); } catch { return null; }
+  const at = all.indexOf('"uuid":"' + uuid + '"');
+  if (at < 0) return null;
+  let j;
+  try { j = JSON.parse(all.slice(all.lastIndexOf('\n', at) + 1, (all.indexOf('\n', at) + 1 || all.length + 1) - 1)); } catch { return null; }
+  const c = j.message?.content || j.attachment?.prompt;
+  const b = (Array.isArray(c) ? c : []).filter((x) => x.type === 'image')[+n];
+  const type = b?.source?.media_type;
+  if (b?.source?.type !== 'base64' || !CHAT_IMG_TYPES.has(type)) return null;
+  return { type, data: Buffer.from(b.source.data, 'base64') };
 };
 
 // --- the live session ---
@@ -2403,6 +2421,12 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === '/api/chat/history') return json(res, 200, chatHistory(proj, slug,
         Object.fromEntries(['from', 'before', 'limit'].map((k) => [k, url.searchParams.get(k)]))));
       if (url.pathname === '/api/chat/meta') return json(res, 200, await chatMeta(proj, slug));
+      if (url.pathname === '/api/chat/image') {
+        const im = chatImage(proj, slug, url.searchParams.get('uuid') || '', url.searchParams.get('n') || '');
+        if (!im) return json(res, 404, { error: 'image not found' });
+        res.writeHead(200, { 'Content-Type': im.type, 'Cache-Control': 'private, max-age=604800' });
+        return res.end(im.data);
+      }
       if (url.pathname === '/api/chat/events') return chatEvents(req, res, proj, slug);
     }
     if (url.pathname === '/api/pr' || url.pathname === '/api/pr-diff') {
@@ -2633,28 +2657,25 @@ const PAGE = /* html */ `<!doctype html>
   .pgrp .item.sel, .pgrp .item.sel:hover { background:var(--sel); }
   /* the open plan; after the status rules, whose backgrounds would hide it */
   .item.sel, .item.sel:hover { background:var(--sel); box-shadow:inset 0 0 0 2px var(--accent); }
-  .runstrip { padding:8px 12px 10px; border-bottom:2px solid var(--line); display:none; }
+  /* the run strip: one card per status group, like a project card, with its rows laid out like plan rows */
+  .runstrip { padding:4px 0 2px; border-bottom:1px solid var(--line); display:none; }
   .runstrip.on { display:block; }
-  .runstrip .cap { font-size:calc(10px * var(--fs)); letter-spacing:.12em; color:var(--run); font-weight:700; margin-bottom:4px; }
-  .runstrip .rp { display:flex; flex-wrap:wrap; align-items:center; gap:9px; padding:7px 10px; border:1px solid var(--run);
-                  border-radius:9px; margin:4px 0; cursor:pointer; background:color-mix(in srgb, var(--run) 12%, transparent); }
-  .runstrip .rp:hover { background:color-mix(in srgb, var(--run) 22%, transparent); }
-  .runstrip .rp .n { font:600 calc(12px * var(--fs))/1.4 ui-monospace,monospace; word-break:break-all; flex:1 1 170px; min-width:0; }
-  .runstrip .rp .n .rst { display:block; font:400 calc(11px * var(--fs))/1.4 system-ui,sans-serif; color:var(--dim);
-    word-break:normal; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .runstrip .rp .mini { padding:3px 9px; font-size:calc(11px * var(--fs)); flex-shrink:0; }
-  .runstrip .rp .acts { display:flex; flex-wrap:wrap; gap:6px; margin-left:auto; min-width:0; max-width:100%; }
-  .runstrip .cap.okc { color:var(--ok); margin-top:8px; }
-  .runstrip .rp.okp { border-color:var(--ok); background:color-mix(in srgb, var(--ok) 10%, transparent); }
-  .runstrip .rp.okp:hover { background:color-mix(in srgb, var(--ok) 20%, transparent); }
-  .runstrip .cap.wc { color:var(--warn); margin-top:8px; }
-  .runstrip .rp.wp { border-color:var(--warn); background:color-mix(in srgb, var(--warn) 10%, transparent); }
-  .runstrip .rp.wp:hover { background:color-mix(in srgb, var(--warn) 18%, transparent); }
-  .runstrip .cap.bc { color:var(--bad); margin-top:8px; }
-  .runstrip .cap:first-child { margin-top:0; }
-  .runstrip .rp.bp { border-color:var(--bad); background:color-mix(in srgb, var(--bad) 10%, transparent); }
-  .runstrip .rp.bp:hover { background:color-mix(in srgb, var(--bad) 18%, transparent); }
-  .runstrip .rp.sel, .runstrip .rp.sel:hover { background:var(--panel); border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  .runstrip .cap { padding:12px 20px 6px; font-size:calc(11px * var(--fs)); letter-spacing:.08em; font-weight:600; color:var(--run); text-transform:uppercase; }
+  .runstrip .cap.okc { color:var(--ok); } .runstrip .cap.wc { color:var(--warn); } .runstrip .cap.bc { color:var(--bad); }
+  .runstrip .sgrp { --sc:var(--run); --pcard:color-mix(in srgb, var(--card) 55%, var(--panel)); margin:0 10px 10px;
+                    background:var(--pcard); border:1px solid var(--line); border-left:4px solid var(--sc);
+                    border-radius:12px; overflow:clip; box-shadow:0 1px 2px rgba(0,0,0,.14); }
+  .runstrip .sgrp.okc { --sc:var(--ok); } .runstrip .sgrp.wc { --sc:var(--warn); } .runstrip .sgrp.bc { --sc:var(--bad); }
+  .runstrip .rp { display:flex; gap:10px; padding:10px 12px; cursor:pointer; }
+  .runstrip .rp + .rp { border-top:1px solid var(--line); }
+  .runstrip .rp:hover { background:color-mix(in srgb, var(--fg) 6%, var(--pcard)); }
+  .runstrip .rp .t { flex:1; min-width:0; }
+  .runstrip .rp .n { font:600 calc(12px * var(--fs))/1.4 ui-monospace,monospace; word-break:break-all; }
+  .runstrip .rp .rst { margin-top:3px; font:400 calc(11px * var(--fs))/1.4 system-ui,sans-serif; color:var(--dim);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .runstrip .rp .acts { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+  .runstrip .rp .mini { padding:1px 8px; font-size:calc(10.5px * var(--fs)); border-radius:99px; }
+  .runstrip .rp.sel, .runstrip .rp.sel:hover { background:var(--sel); box-shadow:inset 0 0 0 2px var(--accent); }
   /* project look: --ph (hue) or an inline --pc from the registry; status keeps the other borders */
   .pcx { --pc:hsl(var(--ph, 210) 40% 66%); }
   :root[data-theme="light"] .pcx { --pc:hsl(var(--ph, 210) 45% 48%); }
@@ -2662,7 +2683,6 @@ const PAGE = /* html */ `<!doctype html>
            border-radius:99px; color:var(--pc); background:color-mix(in srgb, var(--pc) 12%, transparent);
            border:1px solid color-mix(in srgb, var(--pc) 35%, transparent); vertical-align:1px; margin-right:5px;
            white-space:nowrap; word-break:normal; }
-  .runstrip .rp.pcx, .runstrip .rp.pcx.sel, .runstrip .rp.pcx.sel:hover { border-left:4px solid var(--pc); }
   .phead.pcx { border-left:4px solid var(--pc); }
   section#detail.pcx { border-top:3px solid var(--pc); }
   .openmk { display:inline-block; font:700 calc(10px * var(--fs))/1.5 system-ui,sans-serif; letter-spacing:.06em;
@@ -3177,7 +3197,10 @@ const PAGE = /* html */ `<!doctype html>
   .cimgs { display:flex; flex-wrap:wrap; gap:6px; } .cimgs:not(:empty) { margin:0 0 6px; }
   .cimg { position:relative; display:inline-block; }
   .cimg img { display:block; max-height:72px; max-width:140px; border:1px solid var(--line); border-radius:6px; background:var(--card); }
-  .amsg .cimg img { max-height:160px; max-width:240px; }
+  .amsg .cimg img { max-height:160px; max-width:240px; cursor:zoom-in; }
+  .imgview { position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; padding:24px;
+             background:rgba(0,0,0,.78); cursor:zoom-out; }
+  .imgview img { max-width:100%; max-height:100%; border-radius:6px; box-shadow:0 8px 40px rgba(0,0,0,.5); }
   .cimg button { position:absolute; top:-6px; right:-6px; padding:0 5px; line-height:16px; font-size:11px; border-radius:99px; }
   .cchip.cview { cursor:pointer; color:inherit; } .cchip.cview:hover { border-color:var(--accent); }
   #seldlg { width:min(760px,calc(100vw - 32px)); max-height:min(80vh,700px); padding:0; background:var(--panel); color:var(--fg);
@@ -3690,31 +3713,25 @@ function renderList() {
     (sLive.length || sInflight.length || sReady.length || sBad.length || sLaunching.length || sFailed.length ? ' on' : '');
   let sh = '';
   const stripName = (p) => (p.key === selected ? openMark : '') + projPill(p.project) + p.file + chatChip(p);
-  if (sFailed.length) sh += '<div class="cap bc">⚠ DIDN’T START — ' + sFailed.length + '</div>' +
-    sFailed.map((p) => '<div class="rp bp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot bad"></span><span class="n">' +
-      stripName(p) + '</span><button class="mini" data-why="' + p.key + '">why?</button></div>').join('');
-  if (sLaunching.length) sh += '<div class="cap wc">⏳ STARTING — ' + sLaunching.length + '</div>' +
-    sLaunching.map((p) => '<div class="rp wp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot warn"></span><span class="n">' +
-      stripName(p) + '</span><span class="dim mini">setting up…</span></div>').join('');
-  if (sLive.length) sh += '<div class="cap">● RUNNING NOW — ' + sLive.length + '</div>' +
-    sLive.map((p) => '<div class="rp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot live"></span><span class="n">' +
-      stripName(p) + '</span><button class="mini" data-log="' + p.key + '">📄 log</button></div>').join('');
-  if (sInflight.length) sh += '<div class="cap wc">⏳ LAUNCHED — IN PROGRESS — ' + sInflight.length + '</div>' +
-    sInflight.map((p) => '<div class="rp wp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot warn"></span><span class="n">' +
-      stripName(p) + '</span><button class="mini" data-rep="' + p.key + '">' +
-      (p.hasPipeline ? '📋 report' : '📄 log') + '</button></div>').join('');
+  // one plan row: dot, name, the run's status line, then its buttons
+  const stripRow = (p, dot, sub, acts) => '<div class="rp" data-go="' + p.key + '"><span class="dot ' + dot + '"></span>' +
+    '<div class="t"><div class="n">' + stripName(p) + '</div>' +
+    (sub ? '<div class="rst" title="' + escA(sub) + '">' + esc(sub) + '</div>' : '') +
+    (acts ? '<div class="acts">' + acts + '</div>' : '') + '</div></div>';
+  const stripGroup = (cls, cap, list, row) => list.length ? '<div class="cap ' + cls + '">' + cap + ' · ' + list.length + '</div>' +
+    '<div class="sgrp ' + cls + '">' + list.map(row).join('') + '</div>' : '';
+  const repBtn = (p) => '<button class="mini" data-rep="' + p.key + '">' + (p.hasPipeline ? '📋 report' : '📄 log') + '</button>';
   // the run's own status says what it waits for ("VERIFIED", "PR OPEN — 3 DECISIONS WAITING",
   // "BLOCKED: step 10 …"); a run that stopped blocked or failed needs you as much as a finished one
-  const doneRow = (p, cls, dot) => '<div class="rp pcx ' + cls + '" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot ' + dot + '"></span><span class="n">' +
-      stripName(p) + '<span class="rst" title="' + escA(p.run.status || '') + '">' + esc(p.run.status || '') + '</span></span>' +
-      '<span class="acts">' + (p.run.links || []).map((l) => '<button class="mini" data-url="' + escA(l.url) + '">' +
-        esc(l.label.replace(/^Ticket\\s+(?=#)/i, '')) + '</button>').join('') +
-      '<button class="mini" data-rep="' + p.key + '">' +
-      (p.hasPipeline ? '📋 report' : '📄 log') + '</button></span></div>';
-  if (sBad.length) sh += '<div class="cap bc">✕ STOPPED — BLOCKED OR FAILED — ' + sBad.length + '</div>' +
-    sBad.map((p) => doneRow(p, 'bp', 'bad')).join('');
-  if (sReady.length) sh += '<div class="cap okc">✓ WAITING ON YOU — ' + sReady.length + '</div>' +
-    sReady.map((p) => doneRow(p, 'okp', 'ok')).join('');
+  const doneRow = (dot) => (p) => stripRow(p, dot, p.run.status || '',
+    (p.run.links || []).map((l) => '<button class="mini" data-url="' + escA(l.url) + '">' +
+      esc(l.label.replace(/^Ticket\\s+(?=#)/i, '')) + '</button>').join('') + repBtn(p));
+  sh += stripGroup('bc', '⚠ Didn’t start', sFailed, (p) => stripRow(p, 'bad', '', '<button class="mini" data-why="' + p.key + '">why?</button>'));
+  sh += stripGroup('wc', '⏳ Starting', sLaunching, (p) => stripRow(p, 'warn', 'setting up…', ''));
+  sh += stripGroup('', '● Running now', sLive, (p) => stripRow(p, 'live', '', '<button class="mini" data-log="' + p.key + '">📄 log</button>'));
+  sh += stripGroup('wc', '⏳ Launched, in progress', sInflight, (p) => stripRow(p, 'warn', '', repBtn(p)));
+  sh += stripGroup('bc', '✕ Stopped, blocked or failed', sBad, doneRow('bad'));
+  sh += stripGroup('okc', '✓ Waiting on you', sReady, doneRow('ok'));
   rs.innerHTML = sh;
   rs.querySelectorAll('[data-go]').forEach((el) => {
     if (el.dataset.go === selected) { el.classList.add('sel'); el.setAttribute('aria-current', 'true'); }
@@ -4559,6 +4576,8 @@ function chatItemHtml(it, c) {
   if (it.k === 'you') return '<div class="cyou" data-i="' + it.i + '">' + (it.at ? '<div class="ctime">' + esc(chatTime(it.at)) + '</div>' : '') +
     '<div class="amsg you">' + (it.sel || []).map((s, n) => selChip(s, (it.selText || [])[n])).join('') +
     (it.urls && it.urls.length ? '<div class="cimgs">' + it.urls.map((u) => '<span class="cimg"><img src="' + escA(u) + '" alt="Pasted image"></span>').join('') + '</div>'
+      : it.img ? '<div class="cimgs">' + Array.from({ length: it.imgs }, (_, n) => '<span class="cimg"><img loading="lazy" src="/api/chat/image?project=' +
+        encodeURIComponent(c.p.project) + '&slug=' + encodeURIComponent(c.p.slug) + '&uuid=' + it.img + '&n=' + n + '" alt="Pasted image ' + (n + 1) + '"></span>').join('') + '</div>'
       : it.imgs ? '<span class="cchip">🖼 ' + (it.imgs === 1 ? 'image' : it.imgs + ' images') + '</span>' : '') +
     (it.text ? (/^\\/[\\w:-]+/.test(it.text) ? '<code>' + esc(it.text.split(' ')[0]) + '</code> ' + esc(it.text.split(' ').slice(1).join(' ')) : esc(it.text)) : '') + '</div></div>';
   if (it.k === 'agent') return '<div class="amsg agent mdc" data-i="' + it.i + '">' + md(it.text) +
@@ -6454,6 +6473,21 @@ document.addEventListener('keydown', (e) => {
   // nothing else is open: Esc closes the open plan (not while typing in a box)
   if (selected && !(e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"]'))) goHome();
 });
+// a click on a picture in a chat message shows it full size; a click or Esc closes it
+document.addEventListener('click', (e) => {
+  const im = e.target.closest && e.target.closest('.amsg .cimg img');
+  if (!im) return;
+  e.preventDefault(); e.stopPropagation();
+  const v = document.createElement('div');
+  v.className = 'imgview';
+  v.innerHTML = '<img alt="' + escA(im.alt) + '">';
+  v.firstChild.src = im.src;
+  const close = () => { v.remove(); document.removeEventListener('keydown', onKey, true); };
+  const onKey = (k) => { if (k.key === 'Escape') { k.preventDefault(); k.stopPropagation(); close(); } };
+  v.addEventListener('click', close);
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(v);
+}, true);
 // the empty home screen: no plan open, no drawer
 function goHome() { closeLog(); selected = null; renderList(); renderDetail(false); }
 byId('home').addEventListener('click', (e) => {
