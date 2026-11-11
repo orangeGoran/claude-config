@@ -29,7 +29,7 @@ Bootstrap this repo: $ARGUMENTS
 
 ## Step 1 — Interview
 
-Ask the questions in `references/checklist.md`, section "Interview", one question per message. Show the pre-filled value and ask the owner to confirm or change it. Use the decision format only for real choices (branch model, modules, contracts). Write the answers to `<repo>/.claude/bootstrap.json` with the Write tool after each answer, in the shape of `references/bootstrap.example.json` (schema: `references/contracts.md`, "bootstrap.json"). Then run `node $SKILL_DIR/scripts/render.mjs <repo>` once: it checks the answers file and fails with a list of problems.
+Follow `references/checklist.md`, section "Interview". Ask only what the owner alone can decide (max 5 questions, one per message). Start each question with one plain sentence that says what you need and why. Never use internal words or field names in a question. In adopt and upgrade mode, also copy each hard rule's detailed checks and tests, and the validator limits, from the repo's existing skills into `bootstrap.json` (`details`, `tests`, `validatorLimits`), so no file needs a hand merge. Find everything else in the repo yourself, and show it once in a short plain summary before the render ("reply OK, or name what is wrong"). Save each answer to `<repo>/.claude/bootstrap.json` at once, in the shape of `references/bootstrap.example.json`. Then run `node $SKILL_DIR/scripts/render.mjs <repo>` once: it checks the answers file and fails with a list of problems.
 
 ## Step 2 — Render
 

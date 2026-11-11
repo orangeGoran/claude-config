@@ -13,7 +13,9 @@
     "summary": "Node.js 24, NestJS, PostgreSQL. Package manager: pnpm.",
     "packageManager": "pnpm",
     "manifest": "package.json",
-    "lockfiles": ["pnpm-lock.yaml"],
+    "lockfiles": [
+      "pnpm-lock.yaml"
+    ],
     "installCmd": "pnpm install --prefer-offline",
     "commands": {
       "test": "pnpm test",
@@ -27,7 +29,11 @@
     "postEditLint": {
       "fix": "npx oxlint --fix",
       "format": "npx oxfmt",
-      "extensions": ["ts", "tsx", "mts"]
+      "extensions": [
+        "ts",
+        "tsx",
+        "mts"
+      ]
     }
   },
   "git": {
@@ -41,7 +47,13 @@
       {
         "title": "Tenant scoping",
         "rule": "Every database query that reads or writes customer data filters by the tenant id of the signed-in user.",
-        "check": "Grep the changed repositories and services for queries without a tenant filter."
+        "check": "Grep the changed repositories and services for queries without a tenant filter.",
+        "details": [
+          "Repository methods take the tenant id as a parameter; a method without it is a finding."
+        ],
+        "tests": [
+          "A test that a user of tenant A gets 404 for a record of tenant B."
+        ]
       },
       {
         "title": "Error codes only",
@@ -50,20 +62,36 @@
     ],
     "parentPlan": "docs/ARCHITECTURE.md",
     "rulesDocs": [],
-    "contracts": { "source": "", "direction": "" },
+    "contracts": {
+      "source": "",
+      "direction": ""
+    },
     "testData": "",
     "exampleActor": "Ana (Member) on the order portal",
     "protectedPaths": [],
-    "extraAllow": []
+    "extraAllow": [],
+    "validatorLimits": [
+      "run a database migration against a shared database"
+    ]
   },
   "layout": {
     "folders": [
-      { "path": "src/", "what": "Application code" },
-      { "path": "test/", "what": "End-to-end tests" }
+      {
+        "path": "src/",
+        "what": "Application code"
+      },
+      {
+        "path": "test/",
+        "what": "End-to-end tests"
+      }
     ],
-    "rootFiles": ["tsconfig.json"],
+    "rootFiles": [
+      "tsconfig.json"
+    ],
     "softFiles": [],
-    "envFiles": [".env"]
+    "envFiles": [
+      ".env"
+    ]
   },
   "modules": {
     "codex": true,

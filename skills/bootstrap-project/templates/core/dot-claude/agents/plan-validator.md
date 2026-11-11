@@ -17,6 +17,9 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 
 - **Never:** sign in to an app, send a mutating request (POST, PUT, PATCH, DELETE) to a running service, open a browser, start or stop a service or container, run a migration, or change a database row or a file outside `.plans/.validations/`.
 - **Never read or print secrets or real data:** no keys, tokens or passwords from `.env` files or the shell environment, no customer data from a database.
+@@IF HAS_VALIDATOR_LIMITS@@
+@@VALIDATOR_LIMITS@@
+@@END@@
 - **Allowed:** reading the repo's files, git read commands, `ls` and `grep`.
 - A claim you cannot prove within these limits is "not verified". Say what would prove it. Do not work around the limits.
 - Run shell commands bare: one command per call, no pipes, `&&`, redirection or heredocs.

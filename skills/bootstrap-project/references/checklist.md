@@ -39,23 +39,55 @@ Not made by the skill (the owner adds them in the first plans): CI workflow, dep
 
 ## Interview
 
-One question per message. Pre-fill every answer you can find (Step 0 of SKILL.md) and ask the owner to confirm. Save the answer to `.claude/bootstrap.json` at once.
+The owner is not a template expert. Ask only what the owner alone can decide. Find everything else yourself and show it once, at the end, in plain words.
 
-| # | Question | Fields | Pre-fill from | Notes |
-| --- | --- | --- | --- | --- |
-| 1 | Name, title, one-sentence summary, client (dashboard group), short label (max 12), GitHub remote `owner/repo`, visibility | `project.*` | folder name, `origin`, README first line | Check the parent plan for names of people, machines or clients before "public": history cannot be un-leaked |
-| 2 | Stack and package manager; the real commands: install, test (full), test (one file, with `<file>`), test (end to end), lint, format, type check, build | `stack.summary`, `stack.packageManager`, `stack.manifest`, `stack.lockfiles`, `stack.installCmd`, `stack.commands.*` | manifest scripts, lock files | Leave a command empty when it does not exist yet. Never invent one. One bare command each (no `&&`, `|`) |
-| 3 | Post-edit lint: the command that fixes one file, the command that formats one file, the file extensions | `stack.postEditLint.*` | lint and format tools in the manifest | Empty = the hook does nothing |
-| 4 | Branch model (decision format): base branch, production branch, staging; merge style | `git.*` | `git branch -a`, `origin/HEAD` | Default: `develop` base + `main`, squash. A free private GitHub repo cannot use rulesets (403): say so |
-| 5 | Hard rules: 3–8 rules, each a title + one sentence (+ optional "how to check") | `rules.hard[]` | existing AGENTS.md, parent plan | They feed AGENTS.md, the validator hunt list, the skill-1 rule check and the skill-4 audit rows |
-| 6 | Parent plan: `PLAN.md`, `.plans/<file>-parent.md` or `docs/ARCHITECTURE.md` | `rules.parentPlan`, `rules.rulesDocs` | existing files | The skill does not write its content |
-| 7 | Contracts (decision format): where types come from (`packages/contracts`, an OpenAPI file, none) and the direction (code → OpenAPI, schema → code) | `rules.contracts.*` | folders, generators in the manifest | |
-| 8 | Test data rule and the example actor for decision questions (for example `Ana (Member) on the order portal`) | `rules.testData`, `rules.exampleActor` | roles in the code | Empty = a generic default |
-| 9 | Layout: top-level folders with one line each; extra root files; append-only files (registrations, barrels, generated types); env files to copy into worktrees | `layout.*` | top-level folders, `.env.example` | Feeds AGENTS.md Layout and the plan-lanes CONFIG block |
-| 10 | Modules (decision format). Default: all on, Codex on | `modules.*` | — | A module the owner turns off is `false`; a missing key is on |
-| 11 | Pipeline: default mode (`pr`, `commit`, `verify`) and extra run allow rules (services, migrations, docker) | `pipeline.*` | docker compose files, migration scripts | A command that "How to verify" needs must be allowed, or the first run is BLOCKED |
-| 12 | Registrations: dashboard (yes), color, browser-usability-test profile (yes when the project has a web UI or an API), role, app URL | `registry.*` | ports in config | |
-| 13 | Protected paths (generated files Claude must not edit) and extra allow rules | `rules.protectedPaths`, `rules.extraAllow` | generated folders | Never a push or PR rule |
+### How to ask
+
+- **Max 5 questions.** Skip a question when the repo already answers it (say so in the summary instead).
+- **Start each question with one plain sentence: what you need and why.** Example: "I need to know which rules every change in this project must follow, so the reviewer can check them."
+- **No internal words in a question.** Never write field names (`rules.hard`, `stack.manifest`), or words like "manifest", "root files", "append-only", "CONFIG block", "hunt list", "audit rows", "parent plan", "post-edit lint". Say what it does for the owner instead ("the big plan of the project", "the command that runs the tests").
+- **A real choice uses the decision format** (`## Question N of M`, the facts, one example step by step with real values, Option A (recommended) and Option B, why A; "Please reply with A or B"). Write it for this project, with real names from the repo.
+- **A confirmation is not a question.** Do not ask "confirm or change" for values you found. Put them in the summary.
+- If the owner says "explain", "what?" or "I do not know": explain in 3 plain sentences with one example, give your recommendation, and offer "reply OK to take my recommendation".
+- Save each answer to `.claude/bootstrap.json` at once.
+
+### The questions (in this order, skip when the repo answers them)
+
+| # | Ask in plain words | Fields | Ask only when |
+| --- | --- | --- | --- |
+| 1 | "Which rules must every change follow? I found these in your files: <list>. Add, remove or OK." (3–8 rules, each a short title + one sentence) | `rules.hard[]` | Always. It is the most important answer: the reviewer and the checks use these rules. |
+| 2 | Modules (decision format): which extra parts to add. Default: all on, Codex on. One line per module, in plain words (what it does for the owner) | `modules.*` | Always |
+| 3 | Branches and merge (decision format): which branch the work goes to, and squash or merge commit | `git.*` | The repo has no `develop` + `main`, or the merge style is unclear. Mention that a free private GitHub repo cannot protect branches (403). |
+| 4 | Contracts (decision format): where shared data shapes come from | `rules.contracts.*` | The repo has more than one app or package that shares data, and the files do not show the answer |
+| 5 | Public or private, when the repo has no remote yet | `project.visibility` | No remote. Check the big plan for names of people, machines or clients first: history cannot be un-leaked. |
+
+### Find these yourself (never ask; show in the summary)
+
+| What | Fields | Where to find it |
+| --- | --- | --- |
+| Name, title, one-sentence summary, dashboard group, short label, GitHub remote | `project.*` | folder name, `origin`, README first line, the dashboard registry (same root) |
+| Stack and the real commands (install, test, test one file, lint, format, type check, build) | `stack.*` | the scripts in `package.json` / `Package.swift` / `pyproject.toml`. A command that does not exist is empty ("not available yet"). |
+| The lint-on-edit commands and file types | `stack.postEditLint.*` | the lint and format tools in the scripts; empty when there is none |
+| The big plan of the project | `rules.parentPlan` | `PLAN.md`, `docs/PLAN.md`, `docs/ARCHITECTURE.md`, `.plans/*-parent.md`. None → `docs/ARCHITECTURE.md` (the skill writes a skeleton). Never move or rename the owner's files. |
+| Test data rule, example person for decision questions | `rules.testData`, `rules.exampleActor` | the hard rules and the roles in the code; else the defaults |
+| Folders, files that plans touch, files many plans only append to, env files for worktrees | `layout.*` | top-level folders, `plan-lanes.mjs` CONFIG when it exists, `.env.example` |
+| Default run mode, extra run rules | `pipeline.*` | default `pr`; extra rules from docker compose and migration scripts |
+| The project's own checks per hard rule, the tests each rule needs, the validator's extra "never" limits | `rules.hard[].details`, `rules.hard[].tests`, `rules.validatorLimits` | In adopt and upgrade mode: copy them from the repo's existing `plan-validator.md`, `skill-1-plan`, `skill-3-test`, `skill-4-verify` and `apply-validation` (one short line each). Then the render keeps them, and no file needs a hand merge. |
+| Registrations | `registry.*` | dashboard yes; browser-usability-test yes when there is a web UI or an API |
+| Protected files, extra allow rules | `rules.protectedPaths`, `rules.extraAllow` | generated files; the old `settings.json` allow rules that are still useful |
+
+### The summary (one message, after the questions)
+
+Before the render, show what you found as a short list in plain words, for example:
+
+```
+What I found (reply OK, or name what is wrong):
+- Project: Tracebook, private, GitHub orangeGoran/tracebook, dashboard group "Personal"
+- Commands: none yet (no package.json). I fill them in later with /bootstrap-project --upgrade.
+- Big plan: docs/PLAN.md
+- Folders: native/, packages/, apps/, scripts/, docs/
+- Runs copy apps/api/.env into each worktree (when the file exists)
+```
 
 ## Dashboard readiness checks
 

@@ -19,6 +19,9 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 
 - **Never:** sign in, send an authenticated request, send POST, PUT, PATCH or DELETE to any service, open a browser, or change a database row, a storage object or a file.
 - **Never read or print secrets:** no password, token, key or other secret from `.env` files, the shell environment or a database.
+@@IF HAS_VALIDATOR_LIMITS@@
+@@VALIDATOR_LIMITS@@
+@@END@@
 - **Allowed:** reading the repo's files, git read commands, `ls`, `rg` and `grep`.
 - A claim you cannot prove within these limits is "not verified". Say what would prove it. Do not work around the limits.
 - Run shell commands bare: one command per call, no pipes, `&&`, redirection or heredocs.

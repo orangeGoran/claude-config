@@ -79,9 +79,13 @@ export function checkParams(p) {
   const r = p.rules || {};
   const hard = arr(r.hard);
   if (hard.length < 1) errs.push('rules.hard needs at least one rule');
+  const strList = (v) => v === undefined || (Array.isArray(v) && v.every((x) => typeof x === 'string'));
   hard.forEach((h, i) => {
     if (!str(h.title) || !str(h.rule)) errs.push(`rules.hard[${i}] needs "title" and "rule"`);
+    if (!strList(h.details)) errs.push(`rules.hard[${i}].details must be a list of texts`);
+    if (!strList(h.tests)) errs.push(`rules.hard[${i}].tests must be a list of texts`);
   });
+  if (!strList(r.validatorLimits)) errs.push('rules.validatorLimits must be a list of texts');
   if (!str(r.parentPlan)) errs.push('rules.parentPlan is required (for example "PLAN.md" or "docs/ARCHITECTURE.md")');
   const mode = p.pipeline?.defaultMode ?? 'pr';
   if (!MODES.includes(mode)) errs.push(`pipeline.defaultMode must be one of ${MODES.join(', ')}`);
@@ -113,7 +117,12 @@ export function buildVars(p, now = new Date()) {
   const pr = p.project, g = p.git || {}, st = p.stack || {}, r = p.rules || {}, ly = p.layout || {};
   const cmd = st.commands || {};
   const base = str(g.base, 'develop'), prod = str(g.prod, 'main'), staging = str(g.staging);
-  const hard = arr(r.hard).map((h) => ({ title: str(h.title), rule: str(h.rule), check: str(h.check) }));
+  // details: the project's own checks for a rule (what to look for, which values pass);
+  // tests: the tests a change that touches the rule must have. Both are kept on every
+  // re-render, so project text never needs a hand merge.
+  const hard = arr(r.hard).map((h) => ({ title: str(h.title), rule: str(h.rule), check: str(h.check),
+    details: arr(h.details).map((x) => str(x)).filter(Boolean), tests: arr(h.tests).map((x) => str(x)).filter(Boolean) }));
+  const sub = (xs) => xs.map((x) => '\n  - ' + x).join('');
   const contract = r.contracts || {};
   const contractSource = str(contract.source);
   const contractsRule = contractSource
@@ -166,13 +175,19 @@ export function buildVars(p, now = new Date()) {
   if (moduleOn(p, 'codex')) runExtra.push(...CODEX_ALLOW);
 
   // hard-rule blocks
-  const hardMd = hard.map((h) => `- **${h.title}.** ${h.rule}`).join('\n');
-  const huntMd = hard.map((h) => `- **${h.title}:** the plan breaks or skips the rule "${h.rule}"`).join('\n');
+  const hardMd = hard.map((h) => `- **${h.title}.** ${h.rule}` + sub(h.details)).join('\n');
+  const huntMd = hard.map((h) => `- **${h.title}:** the plan breaks or skips the rule "${h.rule}"` + sub(h.details)).join('\n');
   const checklistMd = hard.map((h) => `- [ ] ${h.title} respected`).join('\n');
-  const planCheckMd = hard.map((h) => `- **${h.title}.** ${h.rule} How does the plan keep this rule?`).join('\n');
+  const planCheckMd = hard.map((h) => `- **${h.title}.** ${h.rule} How does the plan keep this rule?` + sub(h.details)).join('\n');
+  const ruleTestsMd = hard.filter((h) => h.tests.length).map((h) => `- **${h.title}:**` + sub(h.tests)).join('\n');
+  const ruleDetailsMd = hard.filter((h) => h.details.length).map((h) => `- **${h.title}:**` + sub(h.details)).join('\n');
+  const limits = arr(r.validatorLimits).map((x) => str(x)).filter(Boolean);
   let n = 2;
   const auditRows = [`| ${n} | Lint and format | The repo's lint and format commands (AGENTS.md, Commands). Error and warning counts. |`];
-  for (const h of hard) auditRows.push(`| ${++n} | ${h.title} | ${h.rule}${h.check ? ' Check: ' + h.check : ' Name the file:line of each place you checked.'} |`);
+  for (const h of hard) {
+    const how = [h.check, ...h.details].filter(Boolean).map((x) => x.replace(/\|/g, '\\|'));
+    auditRows.push(`| ${++n} | ${h.title} | ${h.rule.replace(/\|/g, '\\|')}${how.length ? ' Check: ' + how.join(' ') : ''} Name the file:line of each place you checked. |`);
+  }
   auditRows.push(`| ${++n} | Contracts | ${contractsRule} |`);
   auditRows.push(`| ${++n} | JSDoc | Every new or changed public function has a doc comment in ASD-STE100. Report only what the diff added or changed. |`);
   auditRows.push(`| ${++n} | Tests | Every test in the plan's **Tests** list exists, and each rule above that the change touches has a test that fails when the rule breaks. |`);
@@ -221,6 +236,12 @@ export function buildVars(p, now = new Date()) {
     VALIDATOR_HUNT: huntMd,
     VALIDATOR_RULE_CHECKS: checklistMd,
     PLAN_RULE_CHECKS: planCheckMd,
+    RULE_TESTS: ruleTestsMd,
+    RULE_DETAILS: ruleDetailsMd,
+    VALIDATOR_LIMITS: limits.map((x) => '- **Never:** ' + x).join('\n'),
+    HAS_RULE_TESTS: Boolean(ruleTestsMd),
+    HAS_RULE_DETAILS: Boolean(ruleDetailsMd),
+    HAS_VALIDATOR_LIMITS: limits.length > 0,
     AUDIT_ROWS: auditRows.join('\n'),
     AUDIT_LAST: String(n),
     CONTRACTS_RULE: contractsRule,

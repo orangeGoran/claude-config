@@ -34,7 +34,10 @@ Extract every distinct finding with its severity as given (Blocking / Should fix
   - **VALID:** a real problem. Fix it.
   - **PARTIALLY VALID:** part of it is true, but the proposed fix or scope is wrong. Say what the correct fix is.
   - **INVALID:** the reviewer misread the code, missed a rule, or the case is already handled. Cite the `file:line` or the rule that proves it.
-- Give the highest priority to findings about the hard rules in `AGENTS.md` (@@HARD_RULE_TITLES@@) and about secrets.
+- Give the highest priority to findings about the hard rules in `AGENTS.md` (@@HARD_RULE_TITLES@@) and about secrets. A reviewer's "fine" is INVALID when the code misses one of these checks:
+@@IF HAS_RULE_DETAILS@@
+@@RULE_DETAILS@@
+@@END@@
 
 ### 4. Apply the valid fixes
 

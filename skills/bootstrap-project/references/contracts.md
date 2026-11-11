@@ -89,7 +89,8 @@ The dashboard's "⚡ All" refuses until every registered project has this script
 | `stack.commands.{test,testScoped,testE2e,lint,format,typecheck,build}` | string | no | One bare command each; `<file>` allowed; empty = "not available yet" |
 | `stack.postEditLint.{fix,format,extensions[]}` | string / list | no | The post-edit hook |
 | `git.base`, `git.prod`, `git.staging`, `git.mergeStyle` | string | no | Defaults `develop`, `main`, none, `squash` |
-| `rules.hard[]` | `{title, rule, check?}` | at least 1 | Hard rules |
+| `rules.hard[]` | `{title, rule, check?, details?[], tests?[]}` | at least 1 | Hard rules. `details`: the project's own checks (validator, plan check, verify audit, apply-validation). `tests`: the tests a change that touches the rule needs (skill-3-test) |
+| `rules.validatorLimits[]` | list | no | Extra "Never" lines for the plan validators (for example "start a capture") |
 | `rules.parentPlan` | string | yes | Path of the parent plan |
 | `rules.rulesDocs[]` | list | no | More rule documents the validator reads |
 | `rules.contracts.{source,direction}` | string | no | Contract source path and direction |

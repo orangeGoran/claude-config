@@ -28,6 +28,10 @@ You run the **Test** step: `/skill-1-plan` → `/skill-2-implement` → `/skill-
 - `/skill-2-implement` writes tests with each step. Here, compare the plan's **Tests** list with the test files, and write only the missing ones.
 - Put tests where the package's existing tests are. Follow their pattern. If the package has no tests yet, follow the pattern the plan names.
 - **Hard rules need a negative test.** When the change touches a hard rule in `AGENTS.md` (@@HARD_RULE_TITLES@@), add a test that fails when the rule breaks. A test that only checks the happy path is not enough.
+@@IF HAS_RULE_TESTS@@
+- **The tests this project needs for its rules** (when the change touches the rule):
+@@RULE_TESTS@@
+@@END@@
 - **Contracts:** a contract change needs a test that accepts a valid sample and rejects an invalid one.
 - Do not change an existing test to make it pass unless the plan changes that behavior. Say which tests you changed and why.
 - For each new test, ask: would it still pass if the feature were not built? If yes, rewrite it.
