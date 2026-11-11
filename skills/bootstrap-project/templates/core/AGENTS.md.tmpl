@@ -1,0 +1,85 @@
+# @@PROJECT_TITLE@@
+
+@@PROJECT_SUMMARY@@ Required reading: `@@PARENT_PLAN@@` (the parent plan: goals, architecture, open decisions).
+
+Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS.md`) next to it. Never write rules into a `CLAUDE.md`. When a folder gets its own rules, add an `AGENTS.md` + `CLAUDE.md` pair in that folder.
+
+## Status
+
+Set up on @@TODAY@@ with `/bootstrap-project`. Update this section when the state of the project changes (for example: "Phase 1 in progress").
+
+## Hard rules
+
+@@HARD_RULES@@
+- **Contracts.** @@CONTRACTS_RULE@@
+- **Test data.** @@TEST_DATA_RULE@@
+
+## Layout
+
+@@LAYOUT_TABLE@@
+
+## Code rules
+
+- Follow the existing pattern. Before you design something new, find how the repo solves the same problem and match it. If you diverge, say why.
+- Never hardcode a value that a contract, an enum, a config or an API response gives. Import it.
+- After you fix a defect, search sibling code for the same defect, and fix it or report it.
+- Doc comments on public functions, in ASD-STE100.
+- Use the latest package versions: install them with the package manager, never type a version by hand.
+- No secrets in code, config fallbacks or fixtures.
+
+## Plans
+
+- Plans live in `.plans/`, named `YYYYMMDD-HHMMSS-<kebab-slug>.md`. Finished plans move to `.plans/done/`.
+- Validation reports live in `.plans/.validations/`. Run reports live in `.plans/auto-runs/` (gitignored).
+- `@@PARENT_PLAN@@` is the parent plan. Child plans are written one step ahead.
+- Every plan starts only after an explicit "go" from the owner. One plan per run.
+- When a plan needs an owner decision, do not guess. Write the question down and continue with the steps that do not depend on it.
+
+## Workflow
+
+`/skill-1-plan <what>` (writes the plan, then validates it) → push the plan to `@@BASE_BRANCH@@` → launch it in the plans dashboard → review the draft PR → merge → `bash .claude/scripts/auto-pipeline.sh --cleanup <slug>`.
+
+- `/skill-1-plan` asks the owner one decision at a time, saves `.plans/<file>.md`, then runs `/skill-auto-validate-plan`.
+@@IF MOD_CODEX@@
+- `/skill-auto-validate-plan` loops (max 4 rounds): the `plan-validator` agent and Codex (when `codex` is installed) each write a report in `.plans/.validations/`, the valid findings go into the plan, and each round leaves a `-round-<n>.md` decision log. `/skill-validate-plan` is one Claude round with no edits.
+@@END@@
+@@IFNOT MOD_CODEX@@
+- `/skill-auto-validate-plan` loops (max 4 rounds): the `plan-validator` agent writes `.plans/.validations/<plan-basename>-validation-<n>.md`, the valid findings go into the plan, and each round leaves a `-round-<n>.md` decision log. `/skill-validate-plan` is one round with no edits.
+@@END@@
+- `/apply-validation` checks a pasted review (another agent, another session, a person) against the repo and writes `-external-<n>.md`.
+- The dashboard runs `.claude/scripts/auto-pipeline.sh <mode> <plan>`. It creates a worktree `../worktrees/@@PROJECT_NAME@@/<slug>` on branch `auto/<slug>` from `origin/@@BASE_BRANCH@@` and runs `/skill-auto-pipeline` headless: `/skill-2-implement --commit-per-step` → `/skill-3-test` → `/skill-4-verify` (`/code-review` loop + rule audit) → plan to `.plans/done/` → `/skill-5-ship` (draft PR). Modes: stop at verify, full (local commit), to PR. The report is `.plans/auto-runs/<slug>.md`.
+- `/skill-2-implement <plan file>` alone implements one plan in the current tree, with no commits.
+- `/skill-3-test` and `/skill-4-verify` also run alone, after a manual `/skill-2-implement`.
+- `/skill-5-ship` merges `@@BASE_BRANCH@@`, runs the checks, pushes the branch and opens a draft PR. Only when the owner asks.
+@@IF MOD_TEST_REVIEW@@
+- `/test-review` checks the tests of a change against the plan (the `test-reviewer` agent). The pipeline runs it after `/skill-3-test`.
+@@END@@
+@@IF MOD_CHANGELOG@@
+- `/changelog-entry` writes the `changelog.d/` entry of a change. Every PR adds one, or carries the `no-changelog` label.
+@@END@@
+@@IF MOD_DECISION_SHEET@@
+- `/decision-sheet` writes the decisions of a change for the reviewer. `/skill-5-ship` adds it to the PR.
+@@END@@
+@@IF MOD_PLANS_PARALLEL@@
+- `/plans-parallel` reads `node .claude/scripts/plan-lanes.mjs --json` and proposes which plans can run at the same time.
+@@END@@
+@@IF MOD_PR_FEEDBACK@@
+- `/pr-feedback <PR>` works the review comments of a PR in its run worktree.
+@@END@@
+- The skill names are a contract with the plans dashboard (it looks for `/skill-auto-pipeline <slug>.md` to see a live run, and copies `/skill-auto-validate-plan`). Do not rename them.
+- Every skill runs shell commands bare: one command per call, no pipes, `&&`, redirection or heredocs. Headless runs auto-deny compound commands.
+
+## Git
+
+- Branches: @@BRANCH_CHAIN@@. `@@BASE_BRANCH@@` is the base branch. PRs go to `@@BASE_BRANCH@@`.
+- Push only when the owner says so. The "to PR" mode counts as that permission, for its own `auto/<slug>` branch only. Never push `@@BASE_BRANCH@@` or `@@PROD_BRANCH@@` from an automated run. Never force-push.
+- Merge style: @@MERGE_STYLE@@ (@@MERGE_HINT@@).
+- Commit messages use Conventional Commits, with no AI attribution.
+
+## Commands
+
+The stack: @@STACK_SUMMARY@@
+
+@@COMMANDS_TABLE@@
+
+Skills take commands from this table and from @@MANIFESTS@@. A command that is "not available yet" does not exist: never invent one. Add it here (and to `.claude/settings.json` `permissions.allow`) in the same change that adds it.

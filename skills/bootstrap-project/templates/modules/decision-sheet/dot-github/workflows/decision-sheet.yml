@@ -1,0 +1,57 @@
+# .github/workflows/decision-sheet.yml
+# Fails a pull request while its decision sheet has a box that is not ticked.
+#
+# /skill-5-ship --unattended writes the sheet into the PR body between two
+# markers (format: .claude/skills/decision-sheet/SKILL.md). Each box is one
+# question that only a person can answer. A PR without the markers passes, so
+# a PR written by hand is not affected.
+#
+# A separate workflow: it listens for `edited`, so a ticked box runs the check
+# again by itself. It reads only the event payload: no checkout, no token, no
+# dependencies.
+#
+# It blocks a merge only through branch protection: "Decision Sheet" must be a
+# required status check on @@BASE_BRANCH@@. Otherwise a red result only reports.
+
+name: Decision Sheet
+
+on:
+  pull_request:
+    # `edited` is not in the default set. Without it, a ticked box in the PR
+    # body does not run the check again.
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+    branches: [@@BASE_BRANCH@@]
+
+permissions: {}
+
+concurrency:
+  group: decision-sheet-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  decision-sheet:
+    name: Decision Sheet
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check that every decision is ticked
+        env:
+          # passed through env, never put into the script: the body is
+          # user-controlled text
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          sheet="$(printf '%s\n' "$BODY" | tr -d '\r' \
+            | sed -n '/<!-- decision-sheet:start/,/<!-- decision-sheet:end -->/p')"
+          if [ -z "$sheet" ]; then
+            echo "No decision sheet in the PR body. Nothing to check."
+            exit 0
+          fi
+          open="$(printf '%s\n' "$sheet" | grep -E '^- \[ \] [0-9]+\.' || true)"
+          done_n="$(printf '%s\n' "$sheet" | grep -cE '^- \[[xX]\] [0-9]+\.' || true)"
+          if [ -n "$open" ]; then
+            open_n="$(printf '%s\n' "$open" | wc -l | tr -d ' ')"
+            echo "::error::$open_n decision(s) open, $done_n ticked. Tick each box you agree with, or comment and run /pr-feedback."
+            printf '%s\n' "$open"
+            exit 1
+          fi
+          echo "All $done_n decision(s) ticked."

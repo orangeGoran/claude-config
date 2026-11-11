@@ -6,6 +6,8 @@ A project is a repository that the dashboard shows. You can add a project in thr
 - **With Claude Code.** See [Add a project with Claude Code](#add-a-project-with-claude-code).
 - **By hand.** Use the ⚙ Settings panel, or edit the file in [The registry](plans-dashboard.md#the-registry).
 
+For a new repository, run `/bootstrap-project` in Claude Code first. It writes the full setup (skills, pipeline scripts, plans folder) and registers the project, so every check in the guide is green.
+
 ## Add a project with the guide
 
 1. Open the guide. Use the line that applies to you:

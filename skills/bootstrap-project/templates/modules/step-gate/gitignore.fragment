@@ -1,0 +1,2 @@
+# Workflow step flags of open plans (local to each checkout)
+.plans/.workflow-state/

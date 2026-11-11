@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "project": {
+    "name": "acme-api",
+    "title": "Acme API",
+    "summary": "The REST API behind the Acme order portal.",
+    "client": "Acme",
+    "short": "acme-api",
+    "remote": "acme-co/acme-api",
+    "visibility": "private"
+  },
+  "stack": {
+    "summary": "Node.js 24, NestJS, PostgreSQL. Package manager: pnpm.",
+    "packageManager": "pnpm",
+    "manifest": "package.json",
+    "lockfiles": ["pnpm-lock.yaml"],
+    "installCmd": "pnpm install --prefer-offline",
+    "commands": {
+      "test": "pnpm test",
+      "testScoped": "pnpm exec vitest run <file>",
+      "testE2e": "",
+      "lint": "pnpm lint",
+      "format": "",
+      "typecheck": "pnpm typecheck",
+      "build": "pnpm build"
+    },
+    "postEditLint": {
+      "fix": "npx oxlint --fix",
+      "format": "npx oxfmt",
+      "extensions": ["ts", "tsx", "mts"]
+    }
+  },
+  "git": {
+    "base": "develop",
+    "prod": "main",
+    "staging": "",
+    "mergeStyle": "squash"
+  },
+  "rules": {
+    "hard": [
+      {
+        "title": "Tenant scoping",
+        "rule": "Every database query that reads or writes customer data filters by the tenant id of the signed-in user.",
+        "check": "Grep the changed repositories and services for queries without a tenant filter."
+      },
+      {
+        "title": "Error codes only",
+        "rule": "An error response carries a stable error code from the error-code enum, never a free-text message."
+      }
+    ],
+    "parentPlan": "docs/ARCHITECTURE.md",
+    "rulesDocs": [],
+    "contracts": { "source": "", "direction": "" },
+    "testData": "",
+    "exampleActor": "Ana (Member) on the order portal",
+    "protectedPaths": [],
+    "extraAllow": []
+  },
+  "layout": {
+    "folders": [
+      { "path": "src/", "what": "Application code" },
+      { "path": "test/", "what": "End-to-end tests" }
+    ],
+    "rootFiles": ["tsconfig.json"],
+    "softFiles": [],
+    "envFiles": [".env"]
+  },
+  "modules": {
+    "codex": true,
+    "changelog": true,
+    "decision-sheet": true,
+    "test-review": true,
+    "step-gate": true,
+    "post-edit-lint": true,
+    "plans-parallel": true,
+    "pr-feedback": true,
+    "run-skill": true
+  },
+  "pipeline": {
+    "defaultMode": "pr",
+    "runAllow": []
+  },
+  "registry": {
+    "dashboard": true,
+    "color": "",
+    "browserTest": true,
+    "role": "backend",
+    "appUrl": ""
+  }
+}

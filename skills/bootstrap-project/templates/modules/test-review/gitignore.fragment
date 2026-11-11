@@ -1,0 +1,2 @@
+# Test-review reports of interactive runs (pipeline runs write to .plans/auto-runs/)
+.plans/.test-review/

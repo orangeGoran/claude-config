@@ -1,0 +1,63 @@
+# .github/workflows/changelog-gate.yml
+# Fails a pull request that adds no file under changelog.d/.
+#
+# A separate workflow, not a job in a CI workflow: it listens for `labeled` and
+# `unlabeled`, so the `no-changelog` label runs the check again by itself
+# without a new push. It needs no secrets and no dependencies.
+#
+# It blocks a merge only through branch protection: "Changelog Gate" must be a
+# required status check on @@BASE_BRANCH@@. Otherwise a red result only reports.
+#
+# Escape hatch: put the label `no-changelog` on the PR.
+
+name: Changelog Gate
+
+on:
+  pull_request:
+    # `labeled` and `unlabeled` are not in the default set. Without them, the
+    # `no-changelog` label does not run the check again.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [@@BASE_BRANCH@@]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: changelog-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changelog-gate:
+    name: Changelog Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Skip when the PR has the no-changelog label
+        id: skip
+        env:
+          SKIP: ${{ contains(github.event.pull_request.labels.*.name, 'no-changelog') }}
+        run: |
+          if [ "$SKIP" = "true" ]; then
+            echo "The PR has the no-changelog label. Nothing to check."
+          fi
+          echo "skip=$SKIP" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.skip.outputs.skip != 'true'
+        with:
+          # the check compares with the merge base, which a shallow clone does not have
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check for a new changelog entry
+        if: steps.skip.outputs.skip != 'true'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          added="$(git diff --name-only --diff-filter=A "origin/$BASE_REF...HEAD" -- changelog.d/ | grep -v -e '/README.md$' -e '/AGENTS.md$' -e '/CLAUDE.md$' || true)"
+          if [ -z "$added" ]; then
+            echo "::error::This PR adds no file under changelog.d/. Add one (see changelog.d/README.md, or run /changelog-entry), or put the label no-changelog on the PR."
+            exit 1
+          fi
+          echo "New changelog entries:"
+          printf '%s\n' "$added"

@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS and editors
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Pipeline run reports, logs and per-run settings (local only)
+.plans/auto-runs/
+
+# Plan snapshots that /skill-auto-validate-plan uses for rollback
+.plans/.validations/*-pre-round-*.md
+
+# Local Claude Code settings (per machine, never committed)
+.claude/settings.local.json

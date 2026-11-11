@@ -42,7 +42,7 @@ That's it. Setup opens your dashboard in the browser at **[https://plans.test](h
 1. **Add your first project.** The guide on the dashboard finds your repos and walks you through it. Step by step with screenshots: [Add a project to the dashboard](docs/add-project.md).
 2. **Write a plan.** Put a Markdown file in the project's plans folder (`.plans` by default) that says what to change and how to check it. It shows up on the dashboard.
 3. **Launch it.** Open the plan and click **▶ Launch now**. Come back to a finished diff.
-4. **Use the skills.** In Claude Code, in any project, type `/commit-message`, `/pr`, `/hand-review`, `/merge-review`, `/merge-parent` or `/browser-usability-test`.
+4. **Use the skills.** In Claude Code, in any project, type `/commit-message`, `/pr`, `/hand-review`, `/merge-review`, `/merge-parent`, `/browser-usability-test` or `/bootstrap-project`.
 
 Skipped the dashboard part? Run `node scripts/plans-dashboard.mjs` and open [http://127.0.0.1:4899](http://127.0.0.1:4899).
 
@@ -62,6 +62,9 @@ To change your choices later, run `scripts/setup.sh` again. Every question it as
 | [`/merge-review`](skills/merge-review/SKILL.md)     | Explains a merge: what users see, what to check, what changed inside.  |
 | [`/merge-parent`](skills/merge-parent/SKILL.md)    | Merges the parent branch (usually `develop`) in, fixes conflicts, checks and pushes. |
 | [`/browser-usability-test`](skills/browser-usability-test/SKILL.md) | Tests a page of your local app in a real browser and reports bugs with evidence. Needs `npm install --prefix skills/browser-usability-test` once. |
+| [`/bootstrap-project`](skills/bootstrap-project/SKILL.md) | Sets up a repo for the plans dashboard in one go: AGENTS.md, the numbered skill chain, the pipeline scripts, `.plans/` and the registration. Asks a short interview first. `--upgrade` shows what changed in the templates. |
+
+To install a skill that was added after your setup, run `scripts/setup-claude.sh` again, or link it by hand: `ln -s ~/Workspace/claude-config/skills/<name> ~/.claude/skills/<name>`. Start a new Claude Code session after that.
 
 ## Author
 
