@@ -1165,3 +1165,37 @@ test('the worktrees section lists a worktree a session made, with its PR and the
     assert.equal((await (await get('/api/local?project=wtdemo&slug=wt.feat-x')).json()).none, true);
   } finally { writeFileSync(reg, was); }
 });
+
+test("a plan that names its branch shows that branch's PR, and its worktree leaves the worktrees section", async () => {
+  const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', env: { ...process.env,
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+  const root = path.join(tmp, 'branchrepo'), wt = path.join(root, '.claude', 'worktrees', 'feat-x');
+  mkdirSync(path.join(root, '.plans'), { recursive: true });
+  git(root, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(root, 'a.txt'), 'a');
+  git(root, 'add', 'a.txt'); git(root, 'commit', '-qm', 'base');
+  git(root, 'remote', 'add', 'origin', 'git@github.com:o/r.git');
+  git(root, 'worktree', 'add', '-q', '-b', 'feature/x', wt);
+  // the PR on feature/x (#9 in the fake list) was opened before this plan was written
+  writeFileSync(path.join(root, '.plans', '20261109-120000-feat-x.md'),
+    '# Feature X\n\n- **Type**: ticket\n- **Branch**: feature/x\n\nDone by hand.\n');
+  writeFileSync(path.join(root, '.plans', '20261111-120000-new-work.md'),
+    '# New work\n\n- **Branch**: auto/20261111-120000-new-work\n');
+  const reg = path.join(home, '.claude', 'pipeline-projects.json'), was = readFileSync(reg, 'utf8');
+  writeFileSync(reg, JSON.stringify({ projects: [...JSON.parse(was).projects,
+    { name: 'branchdemo', client: 'Test', root, plansDir: path.join(root, '.plans'), launchers: [] }] }));
+  try {
+    let proj, plan;
+    for (const end = Date.now() + 8000; Date.now() < end; await sleep(200)) {
+      proj = (await state()).find((p) => p.name === 'branchdemo') || {};
+      plan = (proj.plans || []).find((p) => p.slug === '20261109-120000-feat-x');
+      if (plan && plan.pr) break;
+    }
+    assert.equal(plan?.pr?.number, 9, 'the plan shows the PR of the branch it names: ' + JSON.stringify(plan));
+    assert.equal((proj.plans.find((p) => p.slug === '20261111-120000-new-work') || {}).pr, null,
+      'a plan on its own auto/<slug> branch is looked up as before');
+    assert.deepEqual(proj.worktrees, [], 'the worktree shows as the plan, not twice');
+    // the local-changes view finds the worktree through the plan's branch
+    assert.equal((await (await get('/api/local?project=branchdemo&slug=20261109-120000-feat-x')).json()).none, true);
+  } finally { writeFileSync(reg, was); }
+});
