@@ -2627,7 +2627,7 @@ const PAGE = /* html */ `<!doctype html>
   .runstrip .rp .n .rst { display:block; font:400 calc(11px * var(--fs))/1.4 system-ui,sans-serif; color:var(--dim);
     word-break:normal; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .runstrip .rp .mini { padding:3px 9px; font-size:calc(11px * var(--fs)); flex-shrink:0; }
-  .runstrip .rp .acts { display:flex; gap:6px; margin-left:auto; }
+  .runstrip .rp .acts { display:flex; flex-wrap:wrap; gap:6px; margin-left:auto; min-width:0; max-width:100%; }
   .runstrip .cap.okc { color:var(--ok); margin-top:8px; }
   .runstrip .rp.okp { border-color:var(--ok); background:color-mix(in srgb, var(--ok) 10%, transparent); }
   .runstrip .rp.okp:hover { background:color-mix(in srgb, var(--ok) 20%, transparent); }
