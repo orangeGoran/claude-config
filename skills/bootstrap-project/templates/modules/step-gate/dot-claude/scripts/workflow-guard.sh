@@ -9,7 +9,7 @@
 # by .claude/scripts/workflow-complete-step.sh.
 #
 # Allowed without flags:
-#   - commits on an auto/* branch (the pipeline commits once per plan step there),
+#   - commits on an auto/* branch (the pipeline makes one commit for the plan there),
 #   - commits that stage only files under .plans/ (plans and validation files),
 #   - a commit that adds a plan to .plans/done/ (the plan is finished),
 #   - follow-up commits on a branch that already finished its plan.
@@ -57,8 +57,8 @@ if [ -z "$VERDICT" ]; then
   exit 0
 fi
 
-# Allow commits on a pipeline branch. /skill-2-implement --commit-per-step and
-# /skill-auto-pipeline commit each plan step on auto/<slug>; the review is the PR.
+# Allow commits on a pipeline branch. /skill-auto-pipeline makes one commit for
+# the whole plan on auto/<slug>; the review is the PR.
 BRANCH=$(git -C "$REPO_ROOT" branch --show-current 2>/dev/null || true)
 case "$BRANCH" in
   auto/*) exit 0 ;;

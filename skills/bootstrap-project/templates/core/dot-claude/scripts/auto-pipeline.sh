@@ -3,7 +3,7 @@
 #
 # Each plan gets its own worktree + auto/<slug> branch (from origin/$BASE_BRANCH; push the plan first)
 # and a background headless Claude session that runs /skill-auto-pipeline:
-# /skill-2-implement (one commit per plan step) -> /skill-3-test -> /skill-4-verify -> plan to done/ ->
+# /skill-2-implement -> /skill-3-test -> /skill-4-verify -> plan to done/ + one commit for the plan ->
 # optionally /skill-5-ship (merge the base branch, push auto/<slug>, open a DRAFT PR).
 # Progress goes to .plans/auto-runs/<slug>.md. Only --to-pr pushes, and only auto/<slug>.
 # Template: claude-config skills/bootstrap-project. The project values are in the
@@ -17,8 +17,8 @@
 #
 #   <plan-file>       filename in .plans/ (basename or path)
 #   --resume <slug>   continue a BLOCKED/FAILED/ENDED run in its existing worktree
-#   --stop-at-verify  stop after checks + code review; commits stay local, nothing is pushed
-#   --full            also move the plan to .plans/done/ and commit; nothing is pushed
+#   --stop-at-verify  stop after checks + code review; nothing is committed or pushed
+#   --full            also move the plan to .plans/done/ and make one commit; nothing is pushed
 #   --to-pr           also merge the base branch, push auto/<slug> and open a DRAFT PR
 #   (no mode flag)    asks in a terminal [default: stop at verify]
 #   --status          list all runs and their status
@@ -122,9 +122,9 @@ sync_report_outcome() { # $1 = report path
 
 mode_label() {
   case "$1" in
-    verify) echo 'stop at verify (local commits, nothing pushed)' ;;
+    verify) echo 'stop at verify (nothing committed or pushed)' ;;
     pr) echo "to PR (ship: merge $BASE_BRANCH, push auto/*, draft PR)" ;;
-    *) echo 'full (plan to done/ + local commit, nothing pushed)' ;;
+    *) echo 'full (plan to done/ + one local commit, nothing pushed)' ;;
   esac
 }
 

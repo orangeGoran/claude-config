@@ -222,7 +222,7 @@ export function buildVars(p, now = new Date()) {
     PROD_BRANCH: prod,
     BRANCH_CHAIN: branchChain,
     MERGE_STYLE: merge,
-    MERGE_HINT: merge === 'squash' ? `a squash merge keeps ${base} to one commit per PR` : 'use a merge commit, so each plan step stays visible',
+    MERGE_HINT: merge === 'squash' ? `a squash merge keeps ${base} to one commit per PR` : 'use a merge commit, so the branch history stays as it was',
     PARENT_PLAN: parent,
     RULES_DOCS: rulesDocs.map(code).join(', '),
     STACK_SUMMARY: str(st.summary, 'Not decided yet.'),

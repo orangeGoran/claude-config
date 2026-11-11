@@ -135,10 +135,10 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 
 ## Steps
 
-1. <one concrete action with exact paths; small enough for one commit>
+1. <one concrete action with exact paths>
 2. ...
 
-> `/skill-2-implement --commit-per-step` makes one commit per step. Order the steps so the tree builds after each one.
+> Order the steps so the tree builds after each one. The whole plan becomes one commit and one PR.
 
 ## Tests
 
@@ -161,7 +161,7 @@ Before you show the plan, check it. Fix the plan if any item fails.
 - [ ] No open decision is taken without the owner's answer in this session
 - [ ] The Hard rules section answers every rule
 - [ ] The Contracts section is filled
-- [ ] Each step has exact paths and is one commit; the tree builds after each step
+- [ ] Each step has exact paths; the tree builds after each step
 - [ ] Affected files lists every file the steps and tests touch
 - [ ] Every symbol, path and section was opened in this session
 - [ ] Every number has the command that measured it

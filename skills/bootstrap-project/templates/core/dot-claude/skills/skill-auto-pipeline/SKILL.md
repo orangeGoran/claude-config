@@ -1,6 +1,6 @@
 ---
 name: skill-auto-pipeline
-description: Unattended pipeline runner. Runs /skill-2-implement (one commit per plan step) → /skill-3-test → /skill-4-verify (/code-review loop + rule audit) → plan to done/ → optionally /skill-5-ship to a draft PR, for one plan inside a dedicated auto/* worktree, and keeps a status report. Launched headlessly by .claude/scripts/auto-pipeline.sh — not for interactive use.
+description: Unattended pipeline runner. Runs /skill-2-implement → /skill-3-test → /skill-4-verify (/code-review loop + rule audit) → plan to done/ and one commit for the whole plan → optionally /skill-5-ship to a draft PR, for one plan inside a dedicated auto/* worktree, and keeps a status report. Launched headlessly by .claude/scripts/auto-pipeline.sh — not for interactive use.
 disable-model-invocation: true
 argument-hint: "<plan-file> --report=<abs-path> --stop-after=verify|commit|pr [--base=<branch>] [--resume]"
 ---
@@ -11,7 +11,9 @@ Run the unattended pipeline for: $ARGUMENTS
 
 You run **unattended** (headless `claude -p`, nobody watching) inside a dedicated **git worktree** on a branch `auto/<slug>`, created from `origin/<base>` by `.claude/scripts/auto-pipeline.sh`. `<base>` is `--base` (default `@@BASE_BRANCH@@`). Other runs may work in sibling worktrees. Never touch anything outside this worktree, except the report files in the main repo's `.plans/auto-runs/`.
 
-**Authorization (owner-granted, this skill only):** you may `git add` and `git commit` on the current `auto/*` branch. This is an exception to the global "never commit" rule.
+**Authorization (owner-granted, this skill only):** you may `git add` and `git commit` on the current `auto/*` branch, in the **Commit** phase only. This is an exception to the global "never commit" rule.
+
+**One commit per plan.** Phases 1–3 commit nothing: their work stays uncommitted in the worktree, and a resumed run finds it there. The Commit phase makes the one commit for the whole plan. `/skill-5-ship` adds no commit of its own, except the merge commit when `<base>` moved.
 
 **Hard rules:**
 
@@ -38,7 +40,7 @@ Preflight (on failure: status `FAILED: preflight` with the reason, then end):
 - The plan file exists in `.plans/`, and the report file exists.
 - Set the report status to `RUNNING` and add a Timeline entry.
 
-**Resume:** read the report's Status and Timeline, `git log --oneline` and `git status`. Continue from the first incomplete phase. Do not redo completed phases. Add a Timeline entry that says where you resumed and why the earlier session stopped.
+**Resume:** read the report's Status and Timeline, `git status` and `git diff` (the work of finished phases is uncommitted until the Commit phase). Continue from the first incomplete phase. Do not redo completed phases. Add a Timeline entry that says where you resumed and why the earlier session stopped.
 
 ## Report protocol
 
@@ -51,15 +53,14 @@ The report is the owner's window into this run. The plans dashboard reads it.
 
 ## Phases
 
-1. **Implement** — invoke `/skill-2-implement <plan-file> --commit-per-step`. It makes one commit per plan step on this branch. Copy its summary into the report under `## Implementation`. Status `IMPLEMENTED`.
+1. **Implement** — invoke `/skill-2-implement <plan-file>`. It commits nothing. Copy its summary into the report under `## Implementation`. Status `IMPLEMENTED`.
    - If it reports open questions, go to **Needs decision**.
-2. **Test** — invoke `/skill-3-test <plan-file> --unattended`. It writes the missing tests, runs the scoped fix loop and one full run as evidence. Commit its changes as `test: add missing tests for <slug>` (or `fix: …` when it fixed code). Copy its summary under `## Tests`. Status `TESTED`. Tests still failing → `FAILED: test`. Open questions → **Needs decision**.
+2. **Test** — invoke `/skill-3-test <plan-file> --unattended`. It writes the missing tests, runs the scoped fix loop and one full run as evidence. Copy its summary under `## Tests`. Status `TESTED`. Tests still failing → `FAILED: test`. Open questions → **Needs decision**.
 3. **Verify** — invoke `/skill-4-verify <plan-file> --unattended`. It runs the `/code-review` loop (max 2 rounds) and the rule audit (hard rules, contracts, doc comments, tests, secrets, plan scope).
 @@IF MOD_TEST_REVIEW@@
-   - It also runs `/test-review --fix`. Commit its test fixes as `test: strengthen tests for <slug>`, and copy its `## Summary for the PR` under `## Test review`.
+   - It also runs `/test-review --fix`. Copy its `## Summary for the PR` under `## Test review`.
 @@END@@
    - Run every command in the plan's "How to verify" yourself, as bare commands.
-   - Commit its changes as one commit `fix: address code review findings`.
    - Copy its review order, table, rounds and open items under `## Verification` and `## Code review`.
    - Any row still Fail after its fixes → `FAILED: verify`. Open items that need the owner → **Needs decision**. Otherwise status `VERIFIED`.
 
@@ -76,23 +77,30 @@ Set status `VERIFIED — AWAITING REVIEW`, then append and end the session:
 ```markdown
 ## Take over
 
-The work is committed on `auto/<slug>`, one commit per plan step. Nothing is pushed.
+The work is in the worktree on `auto/<slug>`, not committed. Nothing is pushed.
 
     cd <worktree-path>
-    git log --oneline <base>..HEAD
-    git diff <base>...HEAD
+    git status
+    git diff
 
-To ship: resume this run in "to PR" mode, or run `/skill-5-ship` in that worktree.
+To ship: resume this run in "to PR" mode. It makes the one commit, then opens the PR.
 ```
 
 ## If `--stop-after=commit` or `pr` — document
 
 @@IFNOT MOD_STEP_GATE@@
-4. **Document** — `git mv .plans/<plan-file> .plans/done/<plan-file>`, then commit it as `docs(plans): move <slug> to done`. Status `DOCUMENTED`.
+4. **Document** — `git mv .plans/<plan-file> .plans/done/<plan-file>`. Do not commit yet. Status `DOCUMENTED`.
 @@END@@
 @@IF MOD_STEP_GATE@@
-4. **Document** — run `bash .claude/scripts/workflow-complete-step.sh <slug> document`. After the fourth step mark, the script moves the plan to `.plans/done/` itself. Do not run `git mv`. Stage the move with `git add -A .plans/<plan-file> .plans/done/<plan-file>`, then commit it as `docs(plans): move <slug> to done`. If the plan is still in `.plans/`, a step mark is missing: run the missing marks (`implement`, `test`, `verify`) only when that phase passed, else `FAILED: document`. Status `DOCUMENTED`.
+4. **Document** — run `bash .claude/scripts/workflow-complete-step.sh <slug> document`. After the fourth step mark, the script moves the plan to `.plans/done/` itself. Do not run `git mv`, and do not commit yet. If the plan is still in `.plans/`, a step mark is missing: run the missing marks (`implement`, `test`, `verify`) only when that phase passed, else `FAILED: document`. Status `DOCUMENTED`.
 @@END@@
+@@IF MOD_CHANGELOG@@
+   - When the work adds no file under `changelog.d/`, read `.claude/skills/changelog-entry/SKILL.md` and follow it now, so the entry is part of the one commit. If it decides that no entry is necessary, write that in the Timeline.
+@@END@@
+5. **Commit** — one commit for the whole plan:
+   1. `git status --porcelain`. Every path must belong to this plan: the files it changed, its tests, the plan's move to `.plans/done/`, and a changelog entry if one was written. A path that does not belong (for example a tool's output file) → `FAILED: commit`, with the list under `## Diagnosis`.
+   2. `git add -- <path> <path> …`, naming every path (a deleted or moved path too). Never `git add -A` or `git add .`.
+   3. `git commit -m "<type>(<scope>): <what the plan does, in plain words>"`. Conventional Commits, no AI attribution. One commit: never split the work into several.
 
 **commit mode:** set status `COMMITTED — READY TO PUSH`, append, and end the session:
 
@@ -108,15 +116,15 @@ Nothing is pushed. To open the PR, resume this run in "to PR" mode, or:
 **pr mode:**
 
 @@IF MOD_DECISION_SHEET@@
-5. **Decision sheet** — read `.claude/skills/decision-sheet/SKILL.md` and follow it with `--base <base> --plan .plans/done/<plan-file> --report <report> --out <report dir>/<slug>-decision-sheet.md`. It never blocks: when it fails, write one Timeline line and continue.
+6. **Decision sheet** — read `.claude/skills/decision-sheet/SKILL.md` and follow it with `--base <base> --plan .plans/done/<plan-file> --report <report> --out <report dir>/<slug>-decision-sheet.md`. It never blocks: when it fails, write one Timeline line and continue.
 @@END@@
-6. **Ship** — `/skill-5-ship` cannot be invoked as a skill from here (`disable-model-invocation`). Read `.claude/skills/skill-5-ship/SKILL.md` and follow it end to end with `--unattended --report <report> --base <base>`. It sets the final status: `PR OPEN — <url>` (with a `PR: <url>` line) or `BLOCKED: …`.
-7. On `PR OPEN`, append and end the session:
+7. **Ship** — `/skill-5-ship` cannot be invoked as a skill from here (`disable-model-invocation`). Read `.claude/skills/skill-5-ship/SKILL.md` and follow it end to end with `--unattended --report <report> --base <base>`. It sets the final status: `PR OPEN — <url>` (with a `PR: <url>` line) or `BLOCKED: …`.
+8. On `PR OPEN`, append and end the session:
 
 ```markdown
 ## Next — your part
 
-1. Open the PR and review it ("Files changed" shows the whole change; "Commits" shows each step).
+1. Open the PR and review it ("Files changed" shows the whole change, in one commit).
 2. Mark it "Ready for review" and merge it (@@MERGE_STYLE@@: @@MERGE_HINT@@).
 3. After the merge: `git pull`, then `bash .claude/scripts/auto-pipeline.sh --cleanup <slug>`.
 @@IF MOD_PR_FEEDBACK@@
