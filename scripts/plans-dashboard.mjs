@@ -3681,21 +3681,26 @@ function renderList() {
   const bad = plans.filter((p) => !p.live && !p.launch && outOf(p) === 'failed');
   setMood({ live: live.length, inflight: inflight.length, bad: bad.length, ready: ready.length });
   const rs = byId('runstrip');
+  // the search box narrows the strip too; the header counters above keep the full counts
+  const sq = byId('q').value.toLowerCase();
+  const strip = (list) => sq ? list.filter((p) => matchesQ(p, sq)) : list;
+  const sLive = strip(live), sInflight = strip(inflight), sReady = strip(ready),
+    sLaunching = strip(launching), sFailed = strip(failed), sBad = strip(bad);
   rs.className = 'runstrip' +
-    (live.length || inflight.length || ready.length || bad.length || launching.length || failed.length ? ' on' : '');
+    (sLive.length || sInflight.length || sReady.length || sBad.length || sLaunching.length || sFailed.length ? ' on' : '');
   let sh = '';
   const stripName = (p) => (p.key === selected ? openMark : '') + projPill(p.project) + p.file + chatChip(p);
-  if (failed.length) sh += '<div class="cap bc">⚠ DIDN’T START — ' + failed.length + '</div>' +
-    failed.map((p) => '<div class="rp bp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot bad"></span><span class="n">' +
+  if (sFailed.length) sh += '<div class="cap bc">⚠ DIDN’T START — ' + sFailed.length + '</div>' +
+    sFailed.map((p) => '<div class="rp bp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot bad"></span><span class="n">' +
       stripName(p) + '</span><button class="mini" data-why="' + p.key + '">why?</button></div>').join('');
-  if (launching.length) sh += '<div class="cap wc">⏳ STARTING — ' + launching.length + '</div>' +
-    launching.map((p) => '<div class="rp wp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot warn"></span><span class="n">' +
+  if (sLaunching.length) sh += '<div class="cap wc">⏳ STARTING — ' + sLaunching.length + '</div>' +
+    sLaunching.map((p) => '<div class="rp wp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot warn"></span><span class="n">' +
       stripName(p) + '</span><span class="dim mini">setting up…</span></div>').join('');
-  if (live.length) sh += '<div class="cap">● RUNNING NOW — ' + live.length + '</div>' +
-    live.map((p) => '<div class="rp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot live"></span><span class="n">' +
+  if (sLive.length) sh += '<div class="cap">● RUNNING NOW — ' + sLive.length + '</div>' +
+    sLive.map((p) => '<div class="rp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot live"></span><span class="n">' +
       stripName(p) + '</span><button class="mini" data-log="' + p.key + '">📄 log</button></div>').join('');
-  if (inflight.length) sh += '<div class="cap wc">⏳ LAUNCHED — IN PROGRESS — ' + inflight.length + '</div>' +
-    inflight.map((p) => '<div class="rp wp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot warn"></span><span class="n">' +
+  if (sInflight.length) sh += '<div class="cap wc">⏳ LAUNCHED — IN PROGRESS — ' + sInflight.length + '</div>' +
+    sInflight.map((p) => '<div class="rp wp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot warn"></span><span class="n">' +
       stripName(p) + '</span><button class="mini" data-rep="' + p.key + '">' +
       (p.hasPipeline ? '📋 report' : '📄 log') + '</button></div>').join('');
   // the run's own status says what it waits for ("VERIFIED", "PR OPEN — 3 DECISIONS WAITING",
@@ -3706,10 +3711,10 @@ function renderList() {
         esc(l.label.replace(/^Ticket\\s+(?=#)/i, '')) + '</button>').join('') +
       '<button class="mini" data-rep="' + p.key + '">' +
       (p.hasPipeline ? '📋 report' : '📄 log') + '</button></span></div>';
-  if (bad.length) sh += '<div class="cap bc">✕ STOPPED — BLOCKED OR FAILED — ' + bad.length + '</div>' +
-    bad.map((p) => doneRow(p, 'bp', 'bad')).join('');
-  if (ready.length) sh += '<div class="cap okc">✓ WAITING ON YOU — ' + ready.length + '</div>' +
-    ready.map((p) => doneRow(p, 'okp', 'ok')).join('');
+  if (sBad.length) sh += '<div class="cap bc">✕ STOPPED — BLOCKED OR FAILED — ' + sBad.length + '</div>' +
+    sBad.map((p) => doneRow(p, 'bp', 'bad')).join('');
+  if (sReady.length) sh += '<div class="cap okc">✓ WAITING ON YOU — ' + sReady.length + '</div>' +
+    sReady.map((p) => doneRow(p, 'okp', 'ok')).join('');
   rs.innerHTML = sh;
   rs.querySelectorAll('[data-go]').forEach((el) => {
     if (el.dataset.go === selected) { el.classList.add('sel'); el.setAttribute('aria-current', 'true'); }
