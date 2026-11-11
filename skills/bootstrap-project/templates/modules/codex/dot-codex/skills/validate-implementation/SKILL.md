@@ -50,7 +50,9 @@ Say which base and which plan you use before you continue.
 
 ### Project rules (`AGENTS.md`, Hard rules)
 @@VALIDATOR_HUNT@@
+@@IFNOT CONTRACT_IN_RULES@@
 - Contracts: @@CONTRACTS_RULE@@
+@@END@@
 
 ### Discrepancies
 - The code differs from the plan or from the reference pattern the plan cites: deviations without a reason, renamed fields, dropped steps.

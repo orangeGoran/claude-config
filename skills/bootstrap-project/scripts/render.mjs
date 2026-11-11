@@ -33,7 +33,7 @@
 //
 // The render fails on an unknown placeholder, an unclosed block, a leftover "@@"
 // directive in the output, an invalid params file, or settings.json that is not JSON.
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, chmodSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, chmodSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -188,7 +188,9 @@ export function buildVars(p, now = new Date()) {
     const how = [h.check, ...h.details].filter(Boolean).map((x) => x.replace(/\|/g, '\\|'));
     auditRows.push(`| ${++n} | ${h.title} | ${h.rule.replace(/\|/g, '\\|')}${how.length ? ' Check: ' + how.join(' ') : ''} Name the file:line of each place you checked. |`);
   }
-  auditRows.push(`| ${++n} | Contracts | ${contractsRule} |`);
+  // a hard rule about contracts already covers this row (no duplicate rule)
+  const contractInRules = hard.some((h) => /contract/i.test(h.title));
+  if (!contractInRules) auditRows.push(`| ${++n} | Contracts | ${contractsRule} |`);
   auditRows.push(`| ${++n} | JSDoc | Every new or changed public function has a doc comment in ASD-STE100. Report only what the diff added or changed. |`);
   auditRows.push(`| ${++n} | Tests | Every test in the plan's **Tests** list exists, and each rule above that the change touches has a test that fails when the rule breaks. |`);
   auditRows.push(`| ${++n} | Secrets | No keys, passwords, tokens or private paths in the code or fixtures. Fixtures use made-up data only. |`);
@@ -268,6 +270,7 @@ export function buildVars(p, now = new Date()) {
     STAGING_BRANCH: staging,
     HAS_INSTALL: Boolean(str(st.installCmd)),
     HAS_CONTRACTS: Boolean(contractSource),
+    CONTRACT_IN_RULES: contractInRules,
     MOD_CODEX: moduleOn(p, 'codex'),
     MOD_CHANGELOG: moduleOn(p, 'changelog'),
     MOD_DECISION_SHEET: moduleOn(p, 'decision-sheet'),
@@ -541,4 +544,5 @@ function main(argv) {
   if (!opt.apply && count('changed')) console.log(`compare one file: diff -u "${repo}/<path>" "${stage}/<path>"`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main(process.argv.slice(2));
+// realpath: the skill is usually called through the ~/.claude/skills symlink
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) main(process.argv.slice(2));

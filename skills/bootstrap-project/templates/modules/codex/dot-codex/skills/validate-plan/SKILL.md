@@ -35,7 +35,9 @@ Review by reading. A live test belongs to the plan's own run, not to this review
    - **Reference pattern:** open the "closest existing pattern" files the plan cites. Confirm the plan follows them. Flag deviations the plan does not explain.
    - **Integration shape:** when the plan says "mirror", "same as" or "follow X", compare the control flow of the reference file and the target file. Flag each place where a literal copy would duplicate a side effect, skip a central normalization, bypass a guard, or break an ownership comment.
    - **Affected files:** search for the consumers of each changed symbol (`rg <symbol>`). Flag breaking changes the plan does not list.
+@@IFNOT CONTRACT_IN_RULES@@
    - **Contracts:** @@CONTRACTS_RULE@@ Flag a plan that writes a type or enum value by hand.
+@@END@@
    - **Schema:** when the plan adds tables, columns or enums, confirm it has a migration step and follows the schema rules in `AGENTS.md`.
 4. **Check the "How to verify" commands.** Each command must exist when it runs (AGENTS.md, Commands, or the manifest) and must be able to fail.
 
@@ -71,7 +73,9 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 - [ ] The reference pattern is followed (deviations explained)
 - [ ] Breaking changes for changed symbols are listed
 @@VALIDATOR_RULE_CHECKS@@
+@@IFNOT CONTRACT_IN_RULES@@
 - [ ] Contracts respected
+@@END@@
 - [ ] "How to verify" commands are real and can fail
 ```
 

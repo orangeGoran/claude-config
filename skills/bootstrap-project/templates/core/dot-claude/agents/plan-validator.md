@@ -35,7 +35,9 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 
 - **Discrepancies:** the plan says X; the file says otherwise. Wrong line numbers or quotes.
 @@VALIDATOR_HUNT@@
+@@IFNOT CONTRACT_IN_RULES@@
 - **Contracts:** @@CONTRACTS_RULE@@ Flag types or enum values that the plan writes by hand.
+@@END@@
 - **Scope:** the plan does more than its goal, or more than one step of the parent plan, or skips an explicit "go".
 - **Commands:** a command that is "not available yet" in AGENTS.md, or that the plan invents.
 - **Estimates vs measurements:** the plan states a count or size without the command that measured it.
@@ -65,7 +67,9 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 - [ ] All referenced files, lines, sections and symbols exist as stated
 - [ ] Scope stays inside the goal; no open decision is taken silently
 @@VALIDATOR_RULE_CHECKS@@
+@@IFNOT CONTRACT_IN_RULES@@
 - [ ] Contracts respected
+@@END@@
 - [ ] "How to verify" commands are real and can fail
 ```
 
