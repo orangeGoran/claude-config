@@ -3632,19 +3632,19 @@ function renderList() {
       stripName(p) + '</span><span class="dim mini">setting up…</span></div>').join('');
   if (live.length) sh += '<div class="cap">● RUNNING NOW — ' + live.length + '</div>' +
     live.map((p) => '<div class="rp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot live"></span><span class="n">' +
-      stripName(p) + '</span><button class="mini" data-log="' + p.key + '">📜 log</button></div>').join('');
+      stripName(p) + '</span><button class="mini" data-log="' + p.key + '">📄 log</button></div>').join('');
   if (inflight.length) sh += '<div class="cap wc">⏳ LAUNCHED — IN PROGRESS — ' + inflight.length + '</div>' +
     inflight.map((p) => '<div class="rp wp pcx" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot warn"></span><span class="n">' +
       stripName(p) + '</span><button class="mini" data-rep="' + p.key + '">' +
-      (p.hasPipeline ? '📋 report' : '📜 log') + '</button></div>').join('');
+      (p.hasPipeline ? '📋 report' : '📄 log') + '</button></div>').join('');
   // the run's own status says what it waits for ("VERIFIED", "PR OPEN — 3 DECISIONS WAITING",
   // "BLOCKED: step 10 …"); a run that stopped blocked or failed needs you as much as a finished one
   const doneRow = (p, cls, dot) => '<div class="rp pcx ' + cls + '" data-go="' + p.key + '"' + projStyle(p.project) + '><span class="dot ' + dot + '"></span><span class="n">' +
       stripName(p) + '<span class="rst" title="' + escA(p.run.status || '') + '">' + esc(p.run.status || '') + '</span></span>' +
-      '<span class="acts">' + (p.run.links || []).map((l) => '<button class="mini" data-url="' + escA(l.url) + '">🔗 ' +
-        esc(l.label) + '</button>').join('') +
+      '<span class="acts">' + (p.run.links || []).map((l) => '<button class="mini" data-url="' + escA(l.url) + '">' +
+        esc(l.label.replace(/^Ticket\\s+(?=#)/i, '')) + '</button>').join('') +
       '<button class="mini" data-rep="' + p.key + '">' +
-      (p.hasPipeline ? '📋 report' : '📜 log') + '</button></span></div>';
+      (p.hasPipeline ? '📋 report' : '📄 log') + '</button></span></div>';
   if (bad.length) sh += '<div class="cap bc">✕ STOPPED — BLOCKED OR FAILED — ' + bad.length + '</div>' +
     bad.map((p) => doneRow(p, 'bp', 'bad')).join('');
   if (ready.length) sh += '<div class="cap okc">✓ WAITING ON YOU — ' + ready.length + '</div>' +
@@ -3704,7 +3704,7 @@ function renderList() {
       return '<div class="phead pcx" data-toggle="' + esc(pr) + '"' + projStyle(pr) + '><span class="chev">' +
         (closed ? '▸' : '▾') + '</span>' + esc(pr) +
         (hasLanes ? '<button class="pbtn" data-suggest="' + esc(pr) +
-          '" title="Suggest a parallel launch batch" aria-label="Suggest a parallel launch batch">🧭</button>' : '') +
+          '" title="Suggest a parallel launch batch" aria-label="Suggest a parallel launch batch">⚡</button>' : '') +
         '<button class="pbtn" data-pull="' + esc(pr) + '" title="Pull: git pull --ff-only in ' + escA(sp.root) +
           ' (the branch it is on, from its remote)" aria-label="Pull">📥</button>' +
         '<button class="pbtn" data-vscode="' + esc(pr) + '" title="Open ' + escA(sp.root) +
@@ -3911,7 +3911,7 @@ async function renderDetail(loadPlan) {
   for (const l of (p.run && p.run.links) || []) {
     // the run's link to its own PR would open this tab: ↗ GitHub in the bar is the PR on the web
     if (p.pr && l.url.replace(/[/]+$/, '') === p.pr.url.replace(/[/]+$/, '')) continue;
-    btn('🔗 ' + l.label, () => openRunLink(p, l.url), 'primary');
+    btn(l.label.replace(/^Ticket\\s+(?=#)/i, ''), () => openRunLink(p, l.url), 'primary');
   }
   if (stt === 'starting') {
     btn('⏳ Starting… setting up the worktree', () => {}).disabled = true;
@@ -3920,13 +3920,13 @@ async function renderDetail(loadPlan) {
     btn('🖥 Open in VS Code', vsc, null, moreWrap);
   } else if (p.hasPipeline) {
     if (stt === 'live') {
-      btn('📋 Report', rep); btn('📜 Log', log);
+      btn('📋 Report', rep); btn('📄 Log', log);
     } else if (stt === 'review') {
       btn('📋 Report', rep); btn('🖥 Open in VS Code', vsc);
-      btn('📜 Log', log, null, moreWrap);
+      btn('📄 Log', log, null, moreWrap);
       btn('🗑 Clean up run', clean, 'danger', moreWrap);
     } else if (stt === 'stuck') {
-      btn('📋 Report', rep); btn('📜 Log', log);
+      btn('📋 Report', rep); btn('📄 Log', log);
       btn('⟳ Resume', () => post('/api/resume', { project: p.project, slug: p.slug, mode: modeOf(p) }).then(afterLaunch));
       btn('🖥 Open in VS Code', vsc, null, moreWrap);
       btn('🗑 Clean up run', clean, 'danger', moreWrap);
@@ -3942,13 +3942,13 @@ async function renderDetail(loadPlan) {
     }
   } else {
     if (stt === 'live') {
-      btn('📜 Log', log);
+      btn('📄 Log', log);
     } else if (stt === 'review') {
-      btn('📜 Log', log); btn('🖥 Open in VS Code', vsc);
+      btn('📄 Log', log); btn('🖥 Open in VS Code', vsc);
       btn('🗑 Clear run record', clean, 'danger', moreWrap);
       btn('📦 Archive plan → done/', () => archive(p), 'danger', moreWrap);
     } else if (stt === 'stuck') {
-      btn('📜 Log', log);
+      btn('📄 Log', log);
       if ((p.launchers || []).length) btn('▶ Launch again', launchNow);
       btn('🖥 Open in VS Code', vsc, null, moreWrap);
       btn('🗑 Clear run record', clean, 'danger', moreWrap);
@@ -6262,7 +6262,7 @@ async function openSuggest(projName) {
   if (!projName) return;
   logKey = null;
   setBack(null);
-  byId('logtitle').textContent = '🧭 suggested launch batch — ' + projName;
+  byId('logtitle').textContent = '⚡ suggested launch batch — ' + projName;
   byId('logpane').classList.add('open');
   byId('logbody').textContent = 'analyzing plan backlog…';
   const d = await (await fetch('/api/lanes?project=' + projName)).json();
