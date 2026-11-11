@@ -1098,21 +1098,34 @@ const gh = (proj, args, input) =>
   });
 const ghProblem = (out) => /ENOENT/.test(out) ? 'gh is not installed'
   : /auth login|not logged/i.test(out) ? 'gh is not logged in' : out.split('\n')[0].slice(0, 160);
+// The REST API, not `gh pr list`/`gh pr diff`: those use GraphQL, and when GitHub refuses
+// GraphQL for the account (other tools and agents share it) the PR tabs went blank.
+// The newest 200 PRs, newest first, in the shape `gh pr list --json` gave.
+const PR_JQ = '[.[] | {number, title, url: .html_url, isDraft: .draft, headRefName: .head.ref, headRefOid: .head.sha,' +
+  ' baseRefName: .base.ref, mergedAt: .merged_at, state: (if .merged_at then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end)}]';
+const listPrs = async (proj) => {
+  const all = [];
+  for (const page of [1, 2]) {
+    const r = await gh(proj, ['api', 'repos/{owner}/{repo}/pulls?state=all&sort=created&direction=desc&per_page=100&page=' + page, '--jq', PR_JQ]);
+    if (!r.ok) return r;
+    const rows = JSON.parse(r.out);
+    all.push(...rows);
+    if (rows.length < 100) break;
+  }
+  return { ok: true, prs: all };
+};
 const refreshPrList = (proj) => {
   const c = prLists[proj.root] = prLists[proj.root] || { at: 0, byBranch: {} };
   if (c.loading) return c.loading;
-  return c.loading = gh(proj, ['pr', 'list', '--state', 'all', '--limit', '200',
-    '--json', 'number,headRefName,headRefOid,isDraft,state,title,url,changedFiles,baseRefName,mergedAt']).then((r) => {
+  return c.loading = listPrs(proj).catch((e) => ({ ok: false, output: String(e.message) })).then((r) => {
     // byBranch: the plans' auto/ branches; allByBranch: every branch, for the worktrees section
     const byBranch = {}, allByBranch = {};
-    if (r.ok) try {
-      for (const p of JSON.parse(r.out)) {   // newest first: keep the first PR per branch
-        if (allByBranch[p.headRefName]) continue;
-        const pr = allByBranch[p.headRefName] = { number: p.number, state: p.state, isDraft: p.isDraft, title: p.title,
-          url: p.url, head: p.headRefOid, changedFiles: p.changedFiles, base: p.baseRefName, mergedAt: p.mergedAt || null };
-        if (p.headRefName.startsWith('auto/')) byBranch[p.headRefName] = pr;
-      }
-    } catch {}
+    if (r.ok) for (const p of r.prs) {   // newest first: keep the first PR per branch
+      if (allByBranch[p.headRefName]) continue;
+      const pr = allByBranch[p.headRefName] = { number: p.number, state: p.state, isDraft: p.isDraft, title: p.title,
+        url: p.url, head: p.headRefOid, base: p.baseRefName, mergedAt: p.mergedAt || null };
+      if (p.headRefName.startsWith('auto/')) byBranch[p.headRefName] = pr;
+    }
     Object.assign(c, { at: Date.now(), byBranch: r.ok ? byBranch : c.byBranch,
       allByBranch: r.ok ? allByBranch : c.allByBranch || {}, loading: null,
       error: r.ok ? '' : ghProblem(r.output) });
@@ -2434,7 +2447,7 @@ const server = http.createServer(async (req, res) => {
       const n = url.searchParams.get('number') || '';
       if (!proj || !/^\d{1,7}$/.test(n)) return json(res, 400, { error: 'bad request' });
       if (url.pathname === '/api/pr') return json(res, 200, await prDetail(proj, n));
-      const r = await gh(proj, ['pr', 'diff', n]);
+      const r = await gh(proj, ['api', '-H', 'Accept: application/vnd.github.diff', 'repos/{owner}/{repo}/pulls/' + n]);
       return json(res, 200, r.ok ? { ok: true, diff: r.out } : r);
     }
     if (url.pathname === '/api/local' || url.pathname === '/api/local-file') {
@@ -4218,7 +4231,8 @@ const prTabs = (p, tab, inBar) => !p.pr && !hasChat(p) ? '' : '<div class="prtab
   // the plan and its PR are one tab; in the review bar it is the way back, beside ‹ Plan
   (!inBar || p.pr) && ['plan', (p.kind === 'wt' ? 'Worktree' : 'Plan') + (p.pr ? ' · PR <span class="n">#' + p.pr.number + '</span>' : '')],
   p.pr && ['files', 'Files changed' + (inBar === true ? '' : ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
-    prData[p.key] && prData[p.key].changedFiles != null ? prData[p.key].changedFiles : p.pr.changedFiles))],
+    prData[p.key] && prData[p.key].changedFiles != null ? prData[p.key].changedFiles
+      : prDiff[p.key] && prDiff[p.key].files ? prDiff[p.key].files.length : null))],
 ].filter(Boolean).map(([id, label]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '">' + label + '</button>').join('') +
   (inBar ? '' : chatBtn(p)) + '</div>';
 // the same switch in the main header, so the plan view has it where Files changed has it

@@ -31,7 +31,7 @@ const fs = require('fs'), path = require('path');
 const dir = process.env.FAKE_GH_DIR, a = process.argv.slice(2);
 fs.appendFileSync(path.join(dir, 'calls.log'), a.join(' ') + '\\n');
 const body = path.join(dir, 'body.md');
-if (a[1] === 'list') process.stdout.write(fs.existsSync(path.join(dir, 'list.json')) ? fs.readFileSync(path.join(dir, 'list.json')) : '[]');
+if (a[0] === 'api' && /^repos\\/\\{owner\\}\\/\\{repo\\}\\/pulls\\?/.test(a[1])) process.stdout.write(fs.existsSync(path.join(dir, 'list.json')) ? fs.readFileSync(path.join(dir, 'list.json')) : '[]');
 else if (a[1] === 'view') process.stdout.write(JSON.stringify({ body: fs.existsSync(body) ? fs.readFileSync(body, 'utf8') : '',
   baseRefName: 'main', headRefName: 'auto/demo-plan' }));
 else if (a[1] === 'edit') fs.writeFileSync(body, fs.readFileSync(0));
@@ -959,7 +959,7 @@ test("shows the PR on the plan's auto/<slug> branch and acts on it through gh", 
   assert.deepEqual(await act({ action: 'ready' }), { ok: true });
   // the list is read again before the answer: the plan never shows without its PR in between
   assert.equal((await onlyPlan()).pr?.number, 7, 'the PR stays on the plan right after an action');
-  assert.match(calls().split('\n').slice(-3).join('\n'), /^pr list /m, 'the action re-reads the PR list');
+  assert.match(calls().split('\n').slice(-3).join('\n'), /^api repos\/\{owner\}\/\{repo\}\/pulls\?state=all/m, 'the action re-reads the PR list');
   assert.deepEqual(await act({ action: 'close', deleteBranch: true }), { ok: true });
   assert.match(calls(), /^pr ready 7$/m);
   assert.match(calls(), /^pr close 7 --delete-branch$/m);
