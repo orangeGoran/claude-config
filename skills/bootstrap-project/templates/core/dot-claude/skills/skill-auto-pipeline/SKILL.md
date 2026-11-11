@@ -19,7 +19,7 @@ You run **unattended** (headless `claude -p`, nobody watching) inside a dedicate
 - **Never** switch branches, touch `<base>` or `@@PROD_BRANCH@@`, or change other worktrees.
 - **Never** use AskUserQuestion. Nobody can answer it.
 - **Never** delete or reset anything on failure. Leave the worktree as it is.
-- **Never** edit files under `.claude/` or `~/.claude/`. A headless run cannot write there. If the plan needs it, set `BLOCKED` with the reason.
+- **Never** edit files under `.claude/`, `.vscode/` or `~/.claude/`. A headless run cannot write there (Claude Code protects these folders). If the plan needs such a file, do the other steps and list the file under Open items for the owner.
 
 **Run commands bare.** Allow rules match command prefixes. `git status` is allowed, but `git status && git log` or `<test command> 2>&1 | tail` is auto-denied headless. Run one bare command per call, with no pipes, `&&`, redirection or heredocs. A denied command is not a missing tool: write the exact command in the diagnosis.
 

@@ -92,6 +92,7 @@ If an answer is not clear from the parent plan or the code, it is a question for
 - **Open every symbol you name** (file, function, schema, table, script, section). Never write a name you have not seen in this session.
 - **Cite by symbol or section, not by line.** Add `:line` only when the line itself matters, and check it again after each edit to the plan.
 - **Never state a count or size you did not measure.** Put the command next to the number.
+- **Owner-only files.** A headless run cannot write `.claude/` or `.vscode/` (Claude Code protects them). A step that changes them is marked "(owner, by hand)" and is not part of the run.
 - **Commands must exist.** A "How to verify" command must be in AGENTS.md **Commands** or the manifest when it runs, or be a plain tool (`grep`, `git`). If the plan adds the script, the step that adds it comes first. A command that is "not available yet" cannot be a check.
 
 ## Step 4 — Write the plan

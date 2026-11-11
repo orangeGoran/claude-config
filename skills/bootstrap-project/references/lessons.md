@@ -14,6 +14,7 @@ TLDR: two projects were set up by hand by copying from the last repo. Most error
 8. **Skill names are functional.** The dashboard live check and the VS Code session copy match `skill-auto-pipeline` as text; the lanes drawer copies `/skill-auto-validate-plan`. → Fixed names (contracts.md); `verify.mjs` checks them. Also do not name a skill `/plan`: it clashes with the built-in command.
 9. **zsh does not split words** in `$VAR` loops: a bulk `sed` over `$FILES` silently changed nothing. → Templates are rendered by `render.mjs`, not by shell loops. After any bulk edit, check the result with a search.
 10. **Run needs must be in the overlay or the allow list** (services, docker, migrations, `git mv`, every "How to verify" command), or the first headless run is BLOCKED. → Interview question 11 (`pipeline.runAllow`). The first plan uses only `grep`, which is allowed.
+10a. **Headless runs cannot write `.claude/` or `.vscode/`**, even with `Edit(./**)` allowed: the first real Phase 0a run could not create `.vscode/settings.json`. → `skill-1-plan` marks such steps "(owner, by hand)", and `skill-auto-pipeline` lists them as Open items instead of failing.
 
 ## Process
 
