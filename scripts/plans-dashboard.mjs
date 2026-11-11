@@ -270,6 +270,19 @@ const planTitle = (content) => {
   const m = content.match(/^#\s*(?:Plan:\s*)?(.+)$/m);
   return m ? m[1].trim() : null;
 };
+// A plan may name its branch ("- **Branch**: fix/case-overview") when its PR is not on the
+// pipeline's auto/<slug>, for example a PR opened before the plan was written. Such a plan
+// gets that branch's PR and the worktree on that branch.
+const planBranch = (content) => {
+  const m = content.match(/^\s*[-*]\s*\*\*Branch\*\*:\s*`?([\w./-]+)`?\s*$/m);
+  return m ? m[1] : null;
+};
+const planBranches = {};   // root -> { slug: branch named in the plan }
+// the branch a plan names, when it is not the pipeline's own auto/<slug>
+const ownBranch = (proj, slug) => {
+  const b = (planBranches[proj.root] || {})[slug];
+  return b && b !== 'auto/' + slug ? b : null;
+};
 const validationRounds = (proj, slug) => {
   try {
     return readdirSync(proj.validDir).filter(
@@ -442,11 +455,15 @@ const listPlans = async (proj) => {
   const summaries = loadSummaries(proj);
   const meta = loadMeta(proj);
   const prs = prsFor(proj);
+  const allPrs = (prLists[proj.root] || {}).allByBranch || {};
+  const branches = planBranches[proj.root] = {};
+  const prOf = (slug) => { const b = ownBranch(proj, slug); return (b ? allPrs[b] : prs['auto/' + slug]) || null; };
   const active = await Promise.all(
     planFiles(proj).map(async (f) => {
       const slug = f.replace(/\.md$/, '');
       const key = proj.name + '/' + slug;
       const content = readFileSync(path.join(proj.plansDir, f), 'utf8');
+      branches[slug] = planBranch(content);
       let run, live;
       if (proj.hasPipeline) {
         run = pipelineRunInfo(proj, slug);
@@ -467,7 +484,7 @@ const listPlans = async (proj) => {
         asked: existsSync(chatFile(proj, slug)),
         chatting: !!chats.get(key)?.busy,
         chatWaits: chats.get(key)?.waits.size || 0,
-        pr: prs['auto/' + slug] || null,
+        pr: prOf(slug),
       };
     }),
   );
@@ -478,7 +495,11 @@ const listPlans = async (proj) => {
     .filter((slug) => !activeSlugs.has(slug))
     .map((slug) => {
       let title = slug;
-      try { title = planTitle(readFileSync(path.join(proj.doneDir, slug + '.md'), 'utf8')) || slug; } catch {}
+      try {
+        const content = readFileSync(path.join(proj.doneDir, slug + '.md'), 'utf8');
+        title = planTitle(content) || slug;
+        branches[slug] = planBranch(content);
+      } catch {}
       const key = proj.name + '/' + slug;
       return {
         slug, file: slug + '.md', key, title,
@@ -490,7 +511,7 @@ const listPlans = async (proj) => {
         asked: existsSync(chatFile(proj, slug)),
         chatting: !!chats.get(key)?.busy,
         chatWaits: chats.get(key)?.waits.size || 0,
-        pr: prs['auto/' + slug] || null,
+        pr: prOf(slug),
       };
     });
   return [...active, ...archived];
@@ -510,7 +531,9 @@ const fullState = async () => {
       prError: proj.issuesUrl ? (prLists[proj.root] || {}).error || '' : '',
       setupLevel: projectHealth(proj.root, entry).level,
       plans: await listPlans(proj),
-      worktrees: proj.issuesUrl ? worktreesFor(proj) : [],
+      // a worktree on a branch that a plan names shows as that plan, not twice
+      worktrees: proj.issuesUrl ? worktreesFor(proj)
+        .filter((w) => !Object.values(planBranches[proj.root] || {}).includes(w.branch)) : [],
     });
   }
   return out;
@@ -1171,9 +1194,14 @@ const worktreesFor = (proj) => {
   const prs = (prLists[proj.root] || {}).allByBranch || {};
   return ((c && c.list) || []).map((w) => ({ ...w, slug: wtSlug(w.name), pr: (w.branch && prs[w.branch]) || null }));
 };
-// a worktree item's slug ("wt.<name>") -> that worktree, or null for a plan's slug
-const extWorktree = (proj, slug) =>
-  String(slug || '').startsWith('wt.') ? worktreesFor(proj).find((w) => w.slug === slug) || null : null;
+// a worktree item's slug ("wt.<name>") -> that worktree; a plan that names its own branch ->
+// the worktree on that branch, so its PR tab, push and chat work in it; else null
+const extWorktree = (proj, slug) => {
+  const s = String(slug || '');
+  if (s.startsWith('wt.')) return worktreesFor(proj).find((w) => w.slug === s) || null;
+  const b = ownBranch(proj, s);
+  return b ? worktreesFor(proj).find((w) => w.branch === b) || null : null;
+};
 // the merge methods a repo allows and the viewer's default, read once per server run
 const repoMerge = {};
 const mergeSettings = async (proj) => {
