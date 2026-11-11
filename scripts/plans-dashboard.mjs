@@ -510,6 +510,7 @@ const fullState = async () => {
       prError: proj.issuesUrl ? (prLists[proj.root] || {}).error || '' : '',
       setupLevel: projectHealth(proj.root, entry).level,
       plans: await listPlans(proj),
+      worktrees: proj.issuesUrl ? worktreesFor(proj) : [],
     });
   }
   return out;
@@ -1001,8 +1002,9 @@ const cleanup = (proj, slug, artifacts) =>
   });
 // with no slug (the project header's button) it opens the project's main checkout
 const openInVsCode = (proj, slug) => {
-  const wt = slug ? worktreeOf(proj, slug) : '';
-  const target = proj.hasPipeline && wt && existsSync(wt) ? wt : proj.root;
+  const ext = extWorktree(proj, slug);
+  const wt = ext ? ext.path : slug ? worktreeOf(proj, slug) : '';
+  const target = (ext || proj.hasPipeline) && wt && existsSync(wt) ? wt : proj.root;
   execFile('code', [target], { env: ENV }, (err) => {
     if (err) execFile('open', ['-a', 'Visual Studio Code', target], () => {});
   });
@@ -1050,14 +1052,18 @@ const refreshPrList = (proj) => {
   if (c.loading) return c.loading;
   return c.loading = gh(proj, ['pr', 'list', '--state', 'all', '--limit', '200',
     '--json', 'number,headRefName,headRefOid,isDraft,state,title,url,changedFiles,baseRefName,mergedAt']).then((r) => {
-    const byBranch = {};
+    // byBranch: the plans' auto/ branches; allByBranch: every branch, for the worktrees section
+    const byBranch = {}, allByBranch = {};
     if (r.ok) try {
-      for (const p of JSON.parse(r.out))   // newest first: keep the first PR per branch
-        if (p.headRefName.startsWith('auto/') && !byBranch[p.headRefName])
-          byBranch[p.headRefName] = { number: p.number, state: p.state, isDraft: p.isDraft, title: p.title,
-            url: p.url, head: p.headRefOid, changedFiles: p.changedFiles, base: p.baseRefName, mergedAt: p.mergedAt || null };
+      for (const p of JSON.parse(r.out)) {   // newest first: keep the first PR per branch
+        if (allByBranch[p.headRefName]) continue;
+        const pr = allByBranch[p.headRefName] = { number: p.number, state: p.state, isDraft: p.isDraft, title: p.title,
+          url: p.url, head: p.headRefOid, changedFiles: p.changedFiles, base: p.baseRefName, mergedAt: p.mergedAt || null };
+        if (p.headRefName.startsWith('auto/')) byBranch[p.headRefName] = pr;
+      }
     } catch {}
-    Object.assign(c, { at: Date.now(), byBranch: r.ok ? byBranch : c.byBranch, loading: null,
+    Object.assign(c, { at: Date.now(), byBranch: r.ok ? byBranch : c.byBranch,
+      allByBranch: r.ok ? allByBranch : c.allByBranch || {}, loading: null,
       error: r.ok ? '' : ghProblem(r.output) });
   });
 };
@@ -1066,6 +1072,108 @@ const prsFor = (proj) => {
   if (!c || Date.now() - c.at > PR_TTL) refreshPrList(proj);
   return (c && c.byBranch) || {};
 };
+
+// ---------- worktrees outside the plan pipeline ----------
+// A Claude Code session can make its own worktree (EnterWorktree, claude --worktree), work
+// there and open a PR on any branch. No plan names it, so the plan list never showed it. This
+// lists every worktree of the repo except the main checkout and the pipeline's auto/ runs (those
+// are plans already), with its PR and the sessions that worked in it. Such a session usually
+// runs with the repo root as its cwd and only moves into the worktree, so its transcript is in
+// the root's transcript dir: every event carries the cwd, and a session belongs to each
+// worktree it had as its cwd. Served from a cache like the PR list: the 5s poll never waits for git.
+const WT_TTL = 15000;
+const WT_SESSION_DAYS = 14;        // older transcripts are not read
+const WT_WORKING_MS = 2 * 60 * 1000;   // a transcript written this recently: the agent is working
+const wtLists = {};   // root -> { at, list, loading }
+const wtSlug = (name) => 'wt.' + name;
+// the cwds a transcript had, read on from where the last read stopped (a live one grows each second)
+const transcriptCwds = {};   // file -> { size, cwds: Set, rest }
+const cwdsOf = (file, size) => {
+  const t = transcriptCwds[file] = transcriptCwds[file] && transcriptCwds[file].size <= size
+    ? transcriptCwds[file] : { size: 0, cwds: new Set(), rest: '' };
+  if (t.size === size) return t.cwds;
+  let fd;
+  try {
+    fd = openSync(file, 'r');
+    const buf = Buffer.alloc(size - t.size);
+    readSync(fd, buf, 0, buf.length, t.size);
+    const text = t.rest + buf.toString('utf8');
+    const cut = text.lastIndexOf('\n') + 1;   // a half-written last line is read next time
+    for (const m of text.slice(0, cut).matchAll(/"cwd":"((?:[^"\\]|\\.)*)"/g)) t.cwds.add(JSON.parse('"' + m[1] + '"'));
+    t.rest = text.slice(cut);
+    t.size = size;
+  } catch {} finally { if (fd != null) try { closeSync(fd); } catch {} }
+  return t.cwds;
+};
+// session id -> { id, mtime, dir (where claude --resume finds it) } for each worktree path
+const worktreeSessions = (root, paths) => {
+  const out = Object.fromEntries(paths.map((p) => [p, []]));
+  const since = Date.now() - WT_SESSION_DAYS * 86400000;
+  for (const cwd of [root, ...paths]) {
+    const dir = transcriptDirFor(cwd);
+    let files = [];
+    try { files = readdirSync(dir).filter((f) => f.endsWith('.jsonl')); } catch { continue; }
+    for (const f of files) {
+      let st;
+      try { st = statSync(path.join(dir, f)); } catch { continue; }
+      if (st.mtimeMs < since) continue;
+      const cwds = cwdsOf(path.join(dir, f), st.size);
+      for (const p of paths)
+        if ([...cwds].some((c) => c === p || c.startsWith(p + path.sep)))
+          out[p].push({ id: f.replace(/\.jsonl$/, ''), mtime: st.mtimeMs, dir: cwd });
+    }
+  }
+  for (const p of paths) out[p].sort((a, b) => a.mtime - b.mtime);
+  return out;
+};
+const parseWorktrees = (out) => out.split('\n\n').map((block) => {
+  const w = {};
+  for (const line of block.split('\n')) {
+    const [k, ...v] = line.split(' ');
+    if (k) w[k] = v.join(' ') || true;
+  }
+  return w;
+}).filter((w) => w.worktree);
+// a plan's run worktree whose branch is no longer auto/<slug>: the plan's card shows it already
+const planRunWorktree = (proj, wtPath) => {
+  const name = path.basename(wtPath);
+  return [proj.worktrees, proj.legacyWorktrees].includes(path.dirname(wtPath))
+    && [proj.plansDir, proj.doneDir].some((d) => existsSync(path.join(d, name + '.md')));
+};
+const refreshWorktrees = (proj) => {
+  const c = wtLists[proj.root] = wtLists[proj.root] || { at: 0, list: [] };
+  if (c.loading) return c.loading;
+  return c.loading = (async () => {
+    const r = await gitRaw(proj.root, ['worktree', 'list', '--porcelain']);
+    if (!r.ok) return Object.assign(c, { at: Date.now(), loading: null });
+    const wts = parseWorktrees(r.out).slice(1)   // the first one is the main checkout
+      .map((w) => ({ path: w.worktree, head: w.HEAD || '', branch: typeof w.branch === 'string' ? w.branch.replace(/^refs\/heads\//, '') : '' }))
+      .filter((w) => !w.branch.startsWith('auto/') && existsSync(w.path) && !planRunWorktree(proj, w.path));
+    const sessions = worktreeSessions(proj.root, wts.map((w) => w.path));
+    const list = await Promise.all(wts.map(async (w) => {
+      const [log, st] = await Promise.all([gitRaw(w.path, ['log', '-1', '--format=%s%x00%cI']),
+        gitRaw(w.path, ['status', '--porcelain'])]);
+      const [subject = '', committedAt = ''] = log.ok ? log.out.trim().split('\0') : [];
+      const ss = sessions[w.path];
+      const last = ss.at(-1);
+      return { name: path.basename(w.path), path: w.path, branch: w.branch, head: w.head, subject, committedAt,
+        dirty: st.ok ? st.out.split('\n').filter(Boolean).length : 0,
+        sessions: ss.map((s) => ({ ...s, dir: tilde(s.dir) })),
+        agent: !last ? null : Date.now() - last.mtime < WT_WORKING_MS ? 'working' : 'idle',
+        lastActive: last ? new Date(last.mtime).toISOString() : null };
+    }));
+    Object.assign(c, { at: Date.now(), list, loading: null });
+  })();
+};
+const worktreesFor = (proj) => {
+  const c = wtLists[proj.root];
+  if (!c || Date.now() - c.at > WT_TTL) refreshWorktrees(proj);
+  const prs = (prLists[proj.root] || {}).allByBranch || {};
+  return ((c && c.list) || []).map((w) => ({ ...w, slug: wtSlug(w.name), pr: (w.branch && prs[w.branch]) || null }));
+};
+// a worktree item's slug ("wt.<name>") -> that worktree, or null for a plan's slug
+const extWorktree = (proj, slug) =>
+  String(slug || '').startsWith('wt.') ? worktreesFor(proj).find((w) => w.slug === slug) || null : null;
 // the merge methods a repo allows and the viewer's default, read once per server run
 const repoMerge = {};
 const mergeSettings = async (proj) => {
@@ -1197,6 +1305,11 @@ const localFetchAt = new Map();   // worktree -> when it last fetched the PR's h
 // a plan whose Push or Discard runs now: the chat does not start a turn meanwhile
 const localLocks = new Set();
 const localTarget = (proj, slug) => {
+  const ext = extWorktree(proj, slug);
+  if (ext) {   // a worktree from the worktrees section: its own branch and its PR
+    if (!ext.pr || ext.pr.state !== 'OPEN' || !/^[0-9a-f]{40}$/.test(ext.pr.head || '')) return null;
+    return { pr: ext.pr, wt: ext.path, branch: ext.branch };
+  }
   const branch = 'auto/' + slug, pr = prsFor(proj)[branch];
   const wt = proj.hasPipeline ? worktreeOf(proj, slug) : null;
   if (!pr || pr.state !== 'OPEN' || !/^[0-9a-f]{40}$/.test(pr.head || '') || !wt || !existsSync(wt)) return null;
@@ -2560,6 +2673,12 @@ const PAGE = /* html */ `<!doctype html>
   input, select, textarea, button { transition:border-color .15s, background .15s, color .15s; }
   input:focus-visible, select:focus-visible, textarea:focus-visible {
              outline:2px solid var(--accent); outline-offset:-1px; }
+  .wthead { padding:5px 13px 5px 34px; font-size:calc(11px * var(--fs)); color:var(--dim); border-bottom:1px solid var(--line);
+            cursor:pointer; user-select:none; display:flex; gap:6px; align-items:center; }
+  .wthead:hover { background:var(--hover); }
+  .wthead .cnt { margin-left:auto; }
+  .item.wtrow { padding-left:34px; }
+  .item.wtrow .sub { font-size:calc(11px * var(--fs)); color:var(--dim); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .emptyproj { padding:10px 14px 12px 34px; font-size:calc(12px * var(--fs)); color:var(--dim); border-bottom:1px solid var(--line); }
   .emptyproj code, .welcome code { background:var(--codechip); border-radius:5px; padding:1px 5px; font:calc(11px * var(--fs)) ui-monospace,monospace; }
   .welcome { max-width:560px; margin:8vh auto 0; text-align:center; }
@@ -3055,7 +3174,8 @@ const STATUSES = ['ready', 'in-refinement', 'needs-validation', 'waiting-on-exte
 const TAG_SUGGESTIONS = ['small', 'big', 'db-migration', 'frontend-needed', 'ai', 'risky', 'tech-debt'];
 const BT = String.fromCharCode(96); // backtick, kept out of this template literal
 
-let state = [], plans = [], selected = null, logKey = null, logKind = 'log', planCache = {};
+// wts: the worktrees section's items, apart from plans so the run strip, alerts and queue never count them
+let state = [], plans = [], wts = [], selected = null, logKey = null, logKind = 'log', planCache = {};
 let CUR_ISSUES = '';
 const picked = new Set(); // keys: "<project>/<slug>"
 // collapsed project sections, remembered per browser
@@ -3137,7 +3257,7 @@ async function copyText(text) {
     return ok;
   } catch { return false; }
 }
-const find = (key) => plans.find((p) => p.key === key);
+const find = (key) => plans.find((p) => p.key === key) || wts.find((w) => w.key === key);
 // the server sets run.outcome: 'running' | 'needs-you' | 'failed'
 const outOf = (p) => p.run ? p.run.outcome : null;
 const OUT_CLASS = { 'needs-you': 'ok', failed: 'bad', running: 'warn' };
@@ -3333,6 +3453,40 @@ function modeLabel(p) {
   const l = (p.launchers || [])[+modeOf(p)];
   return l ? (l.label || 'launcher ' + (+modeOf(p) + 1)) : 'no launcher';
 }
+// ---- worktrees section: worktrees a Claude Code session made itself, with their PR and sessions ----
+const ago = (t) => {
+  const s = Math.max(0, (Date.now() - new Date(t).getTime()) / 1000);
+  return s < 60 ? 'just now' : s < 3600 ? Math.round(s / 60) + 'm ago' : s < 86400 ? Math.round(s / 3600) + 'h ago'
+    : Math.round(s / 86400) + 'd ago';
+};
+function visibleWts() {
+  const q = byId('q').value.toLowerCase();
+  return wts.filter((w) => !q || [w.name, w.branch, w.title, w.project, w.client, w.pr ? '#' + w.pr.number : '']
+    .some((s) => String(s || '').toLowerCase().includes(q)));
+}
+const agentChip = (w) => w.agent === 'working' ? '<span class="chip live">● agent working</span>'
+  : w.agent === 'idle' ? '<span class="chip" title="the last session wrote ' + escA(new Date(w.lastActive).toLocaleString()) +
+    '">agent idle · ' + ago(w.lastActive) + '</span>' : '';
+const wtChips = (w) => agentChip(w) + (w.pr ? prChip(w.pr) : '<span class="chip">no PR</span>') +
+  (w.dirty ? '<span class="chip warn" title="files changed and not committed">' + w.dirty + ' uncommitted</span>' : '');
+const wtItemHtml = (w) => \`
+    <div class="item wtrow \${selected === w.key ? 'sel' : ''} \${w.agent === 'working' ? 'live' : ''}" data-key="\${escA(w.key)}"\${selected === w.key ? ' aria-current="true"' : ''}>
+      <div class="t">
+        <div class="name">\${selected === w.key ? openMark : ''}\${esc(w.name)}</div>
+        <div class="sub" title="\${escA(w.title)}">\${esc(w.title)}</div>
+        <div class="chiprow">\${wtChips(w)}</div>
+      </div>
+      <div class="dot \${w.agent === 'working' ? 'live' : ''}"></div>
+    </div>\`;
+const wtSectionHtml = (proj, list) => {
+  if (!list.length) return '';
+  const closed = collapsedProjects.has('wt:' + proj);
+  const working = list.filter((w) => w.agent === 'working').length;
+  return '<div class="wthead" data-wtfold="' + escA(proj) + '" title="Worktrees made outside the plans, with their PRs">' +
+    '<span class="chev">' + (closed ? '▸' : '▾') + '</span>Worktrees' +
+    (working ? '<span class="chip live">● ' + working + '</span>' : '') +
+    '<span class="cnt">' + list.length + '</span></div>' + (closed ? '' : list.map(wtItemHtml).join(''));
+};
 // ---- favicon mood ring ----
 // the 16px tab should answer "is the fleet working, or does it want me?" on its own.
 // running/waiting = machine's turn; dead/done = your turn, most urgent first.
@@ -3432,7 +3586,9 @@ function renderList() {
   // added a moment ago doesn't look like it failed to register.
   const filtering = byId('q').value;
   const arch = archivedMatches();
-  const shownProjs = state.filter((s) => !filtering || vis.some((p) => p.project === s.name));
+  const visWts = visibleWts();
+  const shownProjs = state.filter((s) => !filtering || vis.some((p) => p.project === s.name)
+    || visWts.some((w) => w.project === s.name));
   const clients = [...new Set(shownProjs.map((s) => s.client))];
   byId('side').innerHTML = !state.length
     ? '<div class="emptyproj" style="padding:18px 16px">No projects on the dashboard yet.<br><br>' +
@@ -3462,9 +3618,10 @@ function renderList() {
         (sp.setupLevel === 'red' ? '<span class="chip bad x" data-guide="' + escA(sp.root) +
           '" title="something required is missing — see what and how to fix it">needs setup</span>' : '') +
         '<span class="cnt">' + items.length + ' plan' + (items.length === 1 ? '' : 's') +
-        '</span></div>' + (closed ? '' : items.length ? items.map((p) => itemHtml(p)).join('')
-          : '<div class="emptyproj">' + (projPlans.length ? 'All plans are archived.'
-            : 'No plans yet — add a <code>.md</code> file to <code>' + esc(sp.plansDir) + '</code>.') + '</div>');
+        '</span></div>' + (closed ? '' : (items.length ? items.map((p) => itemHtml(p)).join('')
+          : filtering ? '' : '<div class="emptyproj">' + (projPlans.length ? 'All plans are archived.'
+            : 'No plans yet — add a <code>.md</code> file to <code>' + esc(sp.plansDir) + '</code>.') + '</div>') +
+          wtSectionHtml(pr, visWts.filter((w) => w.project === pr)));
     }).join('');
   }).join('') + (arch.length ? '<div class="ghead">📦 Archived' + (filtering ? ' — ' + arch.length + ' match' +
     (arch.length === 1 ? '' : 'es') : '') + '</div>' + arch.map((p) => itemHtml(p, true)).join('') : '');
@@ -3488,7 +3645,7 @@ function renderList() {
       e.stopPropagation();
       post('/api/vscode-project', { project: el.dataset.vscode });
     }));
-  const allProjNames = [...new Set(plans.map((p) => p.project))];
+  const allProjNames = state.map((s) => s.name);
   byId('collapseAll').textContent =
     allProjNames.length && allProjNames.every((n) => collapsedProjects.has(n))
       ? 'Expand all' : 'Collapse all';
@@ -3498,7 +3655,15 @@ function renderList() {
       collapsedProjects.has(pr) ? collapsedProjects.delete(pr) : collapsedProjects.add(pr);
       saveCollapsed(); renderList();
     }));
-  byId('side').querySelectorAll('.item').forEach((el) =>
+  byId('side').querySelectorAll('.wthead[data-wtfold]').forEach((el) =>
+    el.addEventListener('click', () => {
+      const k = 'wt:' + el.dataset.wtfold;
+      collapsedProjects.has(k) ? collapsedProjects.delete(k) : collapsedProjects.add(k);
+      saveCollapsed(); renderList();
+    }));
+  byId('side').querySelectorAll('.item.wtrow').forEach((el) =>
+    el.addEventListener('click', () => { selected = el.dataset.key; renderList(); renderDetail(true); }));
+  byId('side').querySelectorAll('.item:not(.wtrow)').forEach((el) =>
     el.addEventListener('click', (e) => {
       if (e.target.dataset.check) return;
       const key = el.dataset.key, now = Date.now();
@@ -3561,6 +3726,7 @@ async function renderDetail(loadPlan) {
   drawHdTabs(p);
   if (tab !== 'plan') return renderPrTab(p, tab, loadPlan);
   lastPrDraw = null;
+  if (p.kind === 'wt') return renderWtDetail(p, loadPlan);
   const launcherModes = !p.hasPipeline && !p.archived
     ? ((p.launchers || []).length ? \`
     <div class="modes"><b>Launcher:</b>
@@ -3717,24 +3883,7 @@ async function renderDetail(loadPlan) {
     box.style.flexDirection = 'column';
     box.style.alignItems = 'stretch';
     const last = p.sessions[p.sessions.length - 1];
-    const addCmd = (label, cmd) => {
-      const l = document.createElement('div'); l.className = 'dim'; l.style.marginTop = '6px';
-      l.textContent = label; box.appendChild(l);
-      const row = document.createElement('div');
-      row.style.display = 'flex'; row.style.gap = '8px';
-      const inp = document.createElement('input');
-      inp.readOnly = true; inp.value = cmd; inp.style.flex = '1';
-      inp.style.font = '12px ui-monospace,monospace';
-      inp.addEventListener('focus', () => inp.select());
-      const b = document.createElement('button'); b.textContent = 'copy';
-      b.addEventListener('click', async () => {
-        const ok = await copyText(cmd);
-        b.textContent = ok ? '✓' : 'press ⌘C';
-        if (!ok) { inp.focus(); inp.select(); }   // leave it selected to copy by hand
-        setTimeout(() => (b.textContent = 'copy'), 1600);
-      });
-      row.appendChild(inp); row.appendChild(b); box.appendChild(row);
-    };
+    const addCmd = (label, cmd) => addCopyRow(box, label, cmd);
     addCmd('Reopen the latest session with its full history (ask it why it did things):',
       'cd ' + p.wtPath + ' && claude --resume ' + last.id);
     addCmd('Independent evaluation of what it produced (fresh reviewer, diff + transcript cross-check):',
@@ -3765,6 +3914,84 @@ async function renderDetail(loadPlan) {
     planCache[p.key] = await (await fetch('/api/plan?project=' + p.project + '&slug=' + p.slug)).text();
   const pm = byId('planmd');   // gone when another plan or tab opened while the text loaded
   if (pm && selected === p.key) pm.innerHTML = md(planCache[p.key]);
+}
+
+// a label and a read-only command with a copy button, under it
+function addCopyRow(box, label, cmd) {
+  const l = document.createElement('div'); l.className = 'dim'; l.style.marginTop = '6px';
+  l.textContent = label; box.appendChild(l);
+  const row = document.createElement('div');
+  row.style.display = 'flex'; row.style.gap = '8px';
+  const inp = document.createElement('input');
+  inp.readOnly = true; inp.value = cmd; inp.style.flex = '1';
+  inp.style.font = '12px ui-monospace,monospace';
+  inp.addEventListener('focus', () => inp.select());
+  const b = document.createElement('button'); b.textContent = 'copy';
+  b.addEventListener('click', async () => {
+    const ok = await copyText(cmd);
+    b.textContent = ok ? '✓' : 'press ⌘C';
+    if (!ok) { inp.focus(); inp.select(); }   // leave it selected to copy by hand
+    setTimeout(() => (b.textContent = 'copy'), 1600);
+  });
+  row.appendChild(inp); row.appendChild(b); box.appendChild(row);
+}
+// A worktree from the worktrees section: where it is, the agent that worked in it, and its PR
+// (the same PR view and Files changed as a plan's). No plan text, status, tags or launch.
+function renderWtDetail(p, loadPr0) {
+  const withPr = !!p.pr;
+  byId('detail').innerHTML = \`
+    <div class="dhead"><div class="dtitle">
+      <div class="crumb">\${esc(p.client)} / \${projPill(p.project)}\${esc(p.project)} / worktree</div>
+      <h2 class="fname">\${esc(p.name)}</h2>
+      <div class="subtitle">\${inline(p.title)}</div></div>
+      <div class="btns" id="actions"></div></div>
+    \${withPr ? '<div class="prtabsrow"><div class="prtabs"></div><span class="btns" id="ract"></span></div>' : ''}
+    <div class="badges">\${wtChips(p)}</div>
+    <div class="metabox" style="flex-direction:column;align-items:stretch;gap:4px">
+      <div><b>Branch:</b> <code>\${esc(p.branch || '(detached)')}</code></div>
+      <div><b>Folder:</b> <code>\${esc(p.path)}</code></div>
+      \${p.subject ? '<div><b>Last commit:</b> ' + esc(p.subject) + (p.committedAt ? ' <span class="dim">· ' + ago(p.committedAt) + '</span>' : '') + '</div>' : ''}
+      \${p.dirty ? '<div><b>Not committed:</b> ' + p.dirty + ' file' + (p.dirty === 1 ? '' : 's') + '</div>' : ''}
+    </div>
+    <div id="sessbox"></div>
+    \${!withPr && p.prError ? '<div class="ghhint">PRs are not shown: ' + esc(p.prError) + '.</div>' : ''}
+    \${withPr && p.pr.state === 'MERGED' ? '<div class="mergedline"><span>✓ PR #' + p.pr.number +
+      ' was merged into <code>' + esc(p.pr.base || '?') + '</code>' + (p.pr.mergedAt ? ' on ' + esc(new Date(p.pr.mergedAt).toLocaleString()) : '') +
+      '</span><a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener">↗ GitHub</a></div>' : ''}
+    \${withPr ? '<div id="prview" class="pvpr"></div>'
+      : '<div class="summary dim">No PR for <code>' + esc(p.branch || p.name) + '</code> yet.</div>'}\`;
+  document.body.classList.remove('review');
+  bindPrTabs(p);
+  const A = byId('actions');
+  const vs = document.createElement('button');
+  vs.textContent = '🖥 Open in VS Code';
+  vs.addEventListener('click', () => post('/api/vscode', { project: p.project, slug: p.slug }));
+  A.appendChild(vs);
+  if (p.sessions && p.sessions.length) {
+    const box = document.createElement('div');
+    box.className = 'metabox';
+    box.style.flexDirection = 'column';
+    box.style.alignItems = 'stretch';
+    const last = p.sessions[p.sessions.length - 1];
+    addCopyRow(box, 'Reopen the latest session with its full history:', 'cd ' + last.dir + ' && claude --resume ' + last.id);
+    for (const s of p.sessions.slice(0, -1).reverse())
+      addCopyRow(box, 'Older session, last written ' + new Date(s.mtime).toLocaleString() + ':',
+        'cd ' + s.dir + ' && claude --resume ' + s.id);
+    const det = document.createElement('details');
+    const sum = document.createElement('summary');
+    sum.textContent = '🧠 Agent sessions — ' + p.sessions.length + ', latest ' + new Date(last.mtime).toLocaleString();
+    det.appendChild(sum); det.appendChild(box);
+    byId('sessbox').appendChild(det);
+  }
+  if (!withPr) return;
+  const prNow = () => selected === p.key && byId('prview') && (prTab[p.key] || 'plan') === 'plan';
+  const prOld = loadPr0 || !prData[p.key] || prData[p.key].from !== JSON.stringify(p.pr);
+  if (prData[p.key]) { drawBarAction(p, 'plan'); drawPr(p); }
+  else byId('prview').innerHTML = '<div class="dim">loading PR #' + p.pr.number + '…</div>';
+  if (prOld) {
+    busy(true);
+    loadPr(p).then(() => { if (prNow()) { drawBarAction(p, 'plan'); drawPr(p); } }).finally(() => busy(false));
+  }
 }
 
 // --- pull request tabs: the PR on the plan's branch (auto/<slug>), its text and its diff ---
@@ -3810,7 +4037,7 @@ try { diffFull = localStorage.getItem('dash-diff-full') !== '0'; } catch {}
 // inBar: the review toolbar, where ‹ Plan is the way back, the viewed line has the file count and Chat sits with the actions
 const prTabs = (p, tab, inBar) => !p.pr && !hasChat(p) ? '' : '<div class="prtabs">' + [
   // the plan and its PR are one tab; in the review bar it is the way back, beside ‹ Plan
-  (!inBar || p.pr) && ['plan', p.pr ? 'Plan · PR <span class="n">#' + p.pr.number + '</span>' : 'Plan'],
+  (!inBar || p.pr) && ['plan', (p.kind === 'wt' ? 'Worktree' : 'Plan') + (p.pr ? ' · PR <span class="n">#' + p.pr.number + '</span>' : '')],
   p.pr && ['files', 'Files changed' + (inBar ? '' : ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
     prData[p.key] && prData[p.key].changedFiles != null ? prData[p.key].changedFiles : p.pr.changedFiles))],
 ].filter(Boolean).map(([id, label]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '">' + label + '</button>').join('') +
@@ -3838,7 +4065,8 @@ function bindPrTabs(p) {
 // permission, / lists the session's skills and commands, @ the PR's files, and lines selected
 // in the diff or the plan go with the next message. The panel lives outside #detail, so
 // opening another file or tab does not touch it.
-const hasChat = (p) => !!(p && ((p.sessions && p.sessions.length) || p.asked));
+// a worktree item's sessions run outside the dashboard: they have resume commands, not the chat panel
+const hasChat = (p) => !!(p && p.kind !== 'wt' && ((p.sessions && p.sessions.length) || p.asked));
 // the modes are the server's; only their names on the picker are the page's
 const CHAT_MODE_NAMES = { default: 'Ask before edits', acceptEdits: 'Edit automatically', plan: 'Plan mode', auto: 'Auto' };
 const CHAT_MODES = ${JSON.stringify(CHAT_MODES)}.map((m) => [m, CHAT_MODE_NAMES[m] || m]);
@@ -4572,7 +4800,8 @@ async function closePr(p) {
   const d = prData[p.key];
   if (!confirm('Close PR #' + d.number + ' without merging?\\n\\n' + d.title)) return;
   const deleteBranch = p.worktree
-    ? (alert('The branch ' + d.headRefName + ' stays: the run\\u2019s worktree still uses it. Clean up run removes both.'), false)
+    ? (alert('The branch ' + d.headRefName + ' stays: ' + (p.kind === 'wt' ? 'the worktree ' + p.name + ' still uses it.'
+      : 'the run\\u2019s worktree still uses it. Clean up run removes both.')), false)
     : confirm('Also delete the branch ' + d.headRefName + ' on GitHub and on this Mac?\\n\\nOK = delete · Cancel = keep the branch');
   await prAct(p, { action: 'close', deleteBranch });
 }
@@ -5897,7 +6126,7 @@ byId('home').addEventListener('click', (e) => {
 });
 byId('q').addEventListener('input', renderList);
 byId('collapseAll').addEventListener('click', () => {
-  const names = [...new Set(plans.map((p) => p.project))];
+  const names = state.map((s) => s.name);
   if (names.every((n) => collapsedProjects.has(n))) collapsedProjects.clear();
   else names.forEach((n) => collapsedProjects.add(n));
   saveCollapsed(); renderList();
@@ -6464,7 +6693,15 @@ async function refreshOnce() {
       hasPipeline: proj.hasPipeline, modes: proj.modes, launchers: proj.launchers, issuesUrl: proj.issuesUrl,
       prError: proj.prError,
     })));
-    for (const p of plans) if (p.pr) knownPr[p.key] = p.pr;
+    // a worktree item looks like a plan to the PR tabs: key, slug ("wt.<name>"), file, title, pr
+    wts = state.flatMap((proj) => (proj.worktrees || []).map((w) => {
+      const key = proj.name + '/' + w.slug;
+      return { ...w, kind: 'wt', key, file: w.name, title: w.pr ? w.pr.title : w.branch || w.name,
+        pr: w.pr || knownPr[key] || null, worktree: true, wtPath: w.path, tags: [], status: null,
+        project: proj.name, client: proj.client, issuesUrl: proj.issuesUrl, prError: proj.prError };
+    }).sort((a, b) => (b.agent === 'working') - (a.agent === 'working')   // working first, then the latest active
+      || (Date.parse(b.lastActive || b.committedAt) || 0) - (Date.parse(a.lastActive || a.committedAt) || 0)));
+    for (const p of [...plans, ...wts]) if (p.pr) knownPr[p.key] = p.pr;
     // don't clobber the pane (and steal focus) while the user is typing in it
     const typing = byId('detail').contains(document.activeElement)
       && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);

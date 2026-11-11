@@ -1124,3 +1124,44 @@ test('the QA list shows ticket numbers, saved Claude artifacts and scratchpad dr
     '/drafts/-Users-me-Workspace-shop/sess-1/scratchpad/ba/img/a.png', '/solver/artifacts/..%2Freports%2Fx.html', '/solver/artifacts/nope.html'])
     assert.equal((await qa(p)).status, 404, p);
 });
+
+test('the worktrees section lists a worktree a session made, with its PR and the session that worked in it', async () => {
+  const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', env: { ...process.env,
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+  const root = path.join(tmp, 'wtrepo'), wt = path.join(root, '.claude', 'worktrees', 'feat-x');
+  mkdirSync(root, { recursive: true });
+  git(root, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(root, 'a.txt'), 'a');
+  git(root, 'add', '-A'); git(root, 'commit', '-qm', 'base');
+  git(root, 'remote', 'add', 'origin', 'git@github.com:o/r.git');   // only a GitHub repo has the section
+  git(root, 'worktree', 'add', '-q', '-b', 'feature/x', wt);
+  git(root, 'worktree', 'add', '-q', '-b', 'auto/some-plan', path.join(tmp, 'wt-auto'));   // a plan's run: not listed
+  writeFileSync(path.join(wt, 'b.txt'), 'b');
+  // sessions run in the root; one of them moved into the worktree
+  const tdir = path.join(home, '.claude', 'projects', root.replace(/[^a-zA-Z0-9]/g, '-'));
+  mkdirSync(tdir, { recursive: true });
+  writeFileSync(path.join(tdir, 'sess-in.jsonl'), JSON.stringify({ type: 'user', cwd: root }) + '\n' + JSON.stringify({ type: 'user', cwd: wt }) + '\n');
+  writeFileSync(path.join(tdir, 'sess-out.jsonl'), JSON.stringify({ type: 'user', cwd: root }) + '\n');
+  const reg = path.join(home, '.claude', 'pipeline-projects.json'), was = readFileSync(reg, 'utf8');
+  writeFileSync(reg, JSON.stringify({ projects: [...JSON.parse(was).projects,
+    { name: 'wtdemo', client: 'Test', root, plansDir: path.join(root, '.plans'), launchers: [] }] }));
+  try {
+    let w, list;
+    for (const end = Date.now() + 8000; Date.now() < end; await sleep(200)) {
+      list = ((await state()).find((p) => p.name === 'wtdemo') || {}).worktrees || [];
+      w = list.find((x) => x.name === 'feat-x');
+      if (w && w.pr) break;
+    }
+    assert.ok(w && w.pr, 'the worktree shows with its PR: ' + JSON.stringify(list));
+    assert.equal(list.length, 1, 'the main checkout and the auto/ run are not listed');
+    assert.equal(w.slug, 'wt.feat-x');
+    assert.equal(w.branch, 'feature/x');
+    assert.equal(w.pr.number, 9);
+    assert.equal(w.subject, 'base');
+    assert.equal(w.dirty, 1);
+    assert.deepEqual(w.sessions.map((s) => s.id), ['sess-in']);
+    assert.equal(w.agent, 'working');
+    // the local-changes view finds the worktree by its slug: the fake PR head is not a real commit here
+    assert.equal((await (await get('/api/local?project=wtdemo&slug=wt.feat-x')).json()).none, true);
+  } finally { writeFileSync(reg, was); }
+});
