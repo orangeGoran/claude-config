@@ -1603,13 +1603,14 @@ const userItems = (t, j, cwd) => {
   const c = j.message?.content;
   const blocks = typeof c === 'string' ? [{ type: 'text', text: c }] : Array.isArray(c) ? c : [];
   const you = [], sel = [], selText = [], n0 = t.items.length;
+  let imgs = 0;
   for (const b of blocks) {
     if (b.type === 'tool_result') {
       const it = t.tools.get(b.tool_use_id);
       if (it) { it.out = clip(resultText(b.content), 4000); it.err = !!b.is_error; it.done = true; it.end = j.timestamp; }
       continue;
     }
-    if (b.type === 'image') { you.push('[image]'); continue; }
+    if (b.type === 'image') { imgs++; continue; }
     if (b.type !== 'text' || !b.text) continue;
     const s = b.text;
     if (s.startsWith('<ide_selection>')) { const l = selLabel(s, cwd); if (l) { sel.push(l); selText.push(selBody(s)); } continue; }
@@ -1642,7 +1643,7 @@ const userItems = (t, j, cwd) => {
   for (const it of t.items.slice(n0)) if (!it.at) it.at = j.timestamp;
   // A slash command sent with a selection reaches the transcript as two entries of one prompt:
   // the command, then the selection alone. Put the selection on the command's bubble.
-  if (!you.length && sel.length) {
+  if (!you.length && !imgs && sel.length) {
     let i = t.items.length - 1;
     while (i >= 0 && t.items[i].k === 'note') i--;
     const prev = t.items[i];
@@ -1651,7 +1652,7 @@ const userItems = (t, j, cwd) => {
       return;
     }
   }
-  if (you.length || sel.length) t.items.push({ k: 'you', text: you.join('\n\n'), sel, selText, at: j.timestamp, pid: j.promptId });
+  if (you.length || sel.length || imgs) t.items.push({ k: 'you', text: you.join('\n\n'), sel, selText, imgs, at: j.timestamp, pid: j.promptId });
 };
 const assistantItems = (t, j, cwd) => {
   for (const b of j.message?.content || []) {
@@ -2027,7 +2028,9 @@ const chatAttach = (proj, slug, child, { session, fork, mode, model, metaFile, f
 const chatMessage = async (proj, slug, b) => {
   const key = proj.name + '/' + slug;
   const q = String(b.text || '').trim().slice(0, 20000);
-  if (!q) return { ok: false, output: 'Type a message first.' };
+  const imgs = chatImages(b.images);
+  if (imgs.error) return { ok: false, output: imgs.error };
+  if (!q && !imgs.length) return { ok: false, output: 'Type a message first.' };
   if (localLocks.has(key)) return { ok: false, output: 'A Push or Discard is running in this plan. Send it when that has finished.' };
   const { wtPath } = planSessions(proj, slug);
   let ch = chats.get(key);
@@ -2048,13 +2051,29 @@ const chatMessage = async (proj, slug, b) => {
   const content = [];
   const sel = selectionTag(proj, slug, wtPath, b.selection);
   if (sel) content.push({ type: 'text', text: sel });
-  content.push({ type: 'text', text: q });
+  content.push(...imgs);
+  if (q) content.push({ type: 'text', text: q });
   chatSend(ch, { type: 'user', session_id: '', parent_tool_use_id: null, message: { role: 'user', content } });
   ch.busy = true;
   ch.partial = '';
   chatIdle(ch);
   chatEmitState(proj, slug);
   return { ok: true };
+};
+// pasted pictures, as the image blocks the VS Code extension sends; the page scales them down first
+const CHAT_IMG_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const chatImages = (list) => {
+  if (!Array.isArray(list) || !list.length) return [];
+  if (list.length > 10) return { error: 'Send at most 10 images in one message.' };
+  const out = [];
+  for (const x of list) {
+    const type = String(x?.media_type || ''), data = String(x?.data || '');
+    if (!CHAT_IMG_TYPES.has(type) || !/^[A-Za-z0-9+/]+={0,2}$/.test(data))
+      return { error: 'An image is not a PNG, JPEG, GIF or WebP picture.' };
+    if (data.length > 7e6) return { error: 'An image is larger than 5 MB.' };
+    out.push({ type: 'image', source: { type: 'base64', media_type: type, data } });
+  }
+  return out;
 };
 // lines picked in the diff or the plan, in the words the VS Code extension uses for them
 const selectionTag = (proj, slug, wtPath, s) => {
@@ -2895,6 +2914,8 @@ const PAGE = /* html */ `<!doctype html>
   .rbar .chatbtn .n { border-radius:10px; padding:0 5px; margin-left:4px; font-size:calc(11px * var(--fs)); }
   #prview.pvpr { max-width:calc(1000px * var(--fs)); }
   .prtabsrow { display:flex; align-items:center; gap:12px; border-bottom:1px solid var(--line); margin:12px 0 16px; }
+  /* as wide as the PR text below, so GitHub, reload and Merge sit over it, not at the window's edge */
+  .dhead, .prtabsrow { max-width:calc(1000px * var(--fs)); }
   .prtabsrow .prtabs { flex:1; margin:0; border:0; }
   .prtabsrow .btns { margin:0; }
   #prview.pvfiles { flex:1; min-height:0; display:flex; }
@@ -3028,6 +3049,11 @@ const PAGE = /* html */ `<!doctype html>
            border-radius:6px; padding:1px 6px; margin:0 4px 4px 0; background:var(--card); white-space:normal; }
   .cchip.csel { display:flex; margin:0 0 6px; } .cchip.csel b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
   .cchip.csel .dim { margin-left:auto; white-space:nowrap; }
+  .cimgs { display:flex; flex-wrap:wrap; gap:6px; } .cimgs:not(:empty) { margin:0 0 6px; }
+  .cimg { position:relative; display:inline-block; }
+  .cimg img { display:block; max-height:72px; max-width:140px; border:1px solid var(--line); border-radius:6px; background:var(--card); }
+  .amsg .cimg img { max-height:160px; max-width:240px; }
+  .cimg button { position:absolute; top:-6px; right:-6px; padding:0 5px; line-height:16px; font-size:11px; border-radius:99px; }
   .cchip.cview { cursor:pointer; color:inherit; } .cchip.cview:hover { border-color:var(--accent); }
   #seldlg { width:min(760px,calc(100vw - 32px)); max-height:min(80vh,700px); padding:0; background:var(--panel); color:var(--fg);
             border:1px solid var(--line); border-radius:12px; box-shadow:0 24px 70px rgba(0,0,0,.45); }
@@ -4034,11 +4060,12 @@ let diffSplit = true, diffFull = true;
 try { diffSplit = localStorage.getItem('dash-diff-split') !== '0'; } catch {}
 try { diffFull = localStorage.getItem('dash-diff-full') !== '0'; } catch {}
 
-// inBar: the review toolbar, where ‹ Plan is the way back, the viewed line has the file count and Chat sits with the actions
+// inBar: the review toolbar, where ‹ Plan is the way back, the viewed line has the file count and Chat sits with the actions;
+// 'hd': the main header, laid out as the toolbar but with the file count (no viewed line there)
 const prTabs = (p, tab, inBar) => !p.pr && !hasChat(p) ? '' : '<div class="prtabs">' + [
   // the plan and its PR are one tab; in the review bar it is the way back, beside ‹ Plan
   (!inBar || p.pr) && ['plan', (p.kind === 'wt' ? 'Worktree' : 'Plan') + (p.pr ? ' · PR <span class="n">#' + p.pr.number + '</span>' : '')],
-  p.pr && ['files', 'Files changed' + (inBar ? '' : ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
+  p.pr && ['files', 'Files changed' + (inBar === true ? '' : ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
     prData[p.key] && prData[p.key].changedFiles != null ? prData[p.key].changedFiles : p.pr.changedFiles))],
 ].filter(Boolean).map(([id, label]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '">' + label + '</button>').join('') +
   (inBar ? '' : chatBtn(p)) + '</div>';
@@ -4046,7 +4073,7 @@ const prTabs = (p, tab, inBar) => !p.pr && !hasChat(p) ? '' : '<div class="prtab
 function drawHdTabs(p) {
   const h = byId('hdtabs');
   if (!h) return;
-  h.innerHTML = p && p.pr ? prTabs(p, 'plan', true) : '';
+  h.innerHTML = p && p.pr ? prTabs(p, 'plan', 'hd') : '';
   h.parentElement.classList.toggle('tabs', !!h.innerHTML);
   h.parentElement.style.setProperty('--tabsw', h.offsetWidth + 'px');
   h.querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => {
@@ -4080,7 +4107,7 @@ try {
 let ch = null;        // the chat on screen: { p, key, items, first, total, session, st, es }
 let chatLock = null;  // the lock on that chat: { key, release }
 let chatSel = null;   // the lines that go with the next message
-const chatDraft = {}, chatMetas = {};   // plan key -> unsent text; project -> commands and models
+const chatDraft = {}, chatImgs = {}, chatMetas = {};   // plan key -> unsent text, unsent images; project -> commands and models
 // sent messages, oldest first; ArrowUp on the first line steps back through them, like a terminal.
 // chatHistList is fixed while you step: the dashboard's own sends, then this chat's messages from its log
 let chatHist = [], chatHistAt = -1, chatHistDraft = '', chatHistList = [];
@@ -4155,7 +4182,7 @@ function chatBind(p) {
     '<div class="clog" id="clog" aria-live="polite"><div class="dim cmore" id="cmore"></div><div id="citems"></div>' +
       '<div id="clive"></div></div>' +
     '<div id="cwaits"></div>' +
-    '<div class="cbox"><div id="cmenu" class="cmenu" role="listbox" hidden></div><div id="csel"></div>' +
+    '<div class="cbox"><div id="cmenu" class="cmenu" role="listbox" hidden></div><div id="csel"></div><div id="cimgs" class="cimgs"></div>' +
       '<textarea id="cin" rows="3" aria-label="Message for the agent" placeholder="Ask or tell the agent what to do. / for skills and commands, @ for a file. Enter sends, Shift+Enter starts a new line."></textarea>' +
       '<div class="crow"><select id="cmode" aria-label="Permission mode" title="What the agent may do without asking (Shift+Tab switches)">' +
         CHAT_MODES.map(([v, l]) => '<option value="' + v + '"' + (v === chatMode ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
@@ -4169,6 +4196,22 @@ function chatBind(p) {
   inp.addEventListener('input', () => { chatDraft[c.key] = inp.value; chatHistAt = -1; chatMenu(); });
   inp.addEventListener('click', chatMenu);
   inp.addEventListener('keydown', chatKey);
+  // a pasted or dropped picture goes with the next message, as in the VS Code extension
+  inp.addEventListener('paste', (e) => {
+    const d = e.clipboardData, fs = [...(d ? d.files : [])].filter((f) => f.type.startsWith('image/'));
+    if (!fs.length) return;
+    if (!d.types.includes('text/plain')) e.preventDefault();
+    chatAddImgs(fs);
+  });
+  const box = inp.closest('.cbox');
+  box.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); });
+  box.addEventListener('drop', (e) => {
+    const fs = [...e.dataTransfer.files].filter((f) => f.type.startsWith('image/'));
+    if (!fs.length) return;
+    e.preventDefault();
+    chatAddImgs(fs);
+  });
+  paintImgs();
   inp.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== inp) byId('cmenu').hidden = true; }, 150));
   byId('cgo').addEventListener('click', () => chatSendMsg());
   byId('ccompact').addEventListener('click', (e) => {
@@ -4380,6 +4423,8 @@ function chatItemHtml(it, c) {
   const open = c.open.has(it.i) ? ' open' : '';
   if (it.k === 'you') return '<div class="cyou" data-i="' + it.i + '">' + (it.at ? '<div class="ctime">' + esc(chatTime(it.at)) + '</div>' : '') +
     '<div class="amsg you">' + (it.sel || []).map((s, n) => selChip(s, (it.selText || [])[n])).join('') +
+    (it.urls && it.urls.length ? '<div class="cimgs">' + it.urls.map((u) => '<span class="cimg"><img src="' + escA(u) + '" alt="Pasted image"></span>').join('') + '</div>'
+      : it.imgs ? '<span class="cchip">🖼 ' + (it.imgs === 1 ? 'image' : it.imgs + ' images') + '</span>' : '') +
     (it.text ? (/^\\/[\\w:-]+/.test(it.text) ? '<code>' + esc(it.text.split(' ')[0]) + '</code> ' + esc(it.text.split(' ').slice(1).join(' ')) : esc(it.text)) : '') + '</div></div>';
   if (it.k === 'agent') return '<div class="amsg agent mdc" data-i="' + it.i + '">' + md(it.text) +
     (it.at ? '<span class="cat">' + esc(clock(it.at)) + '</span>' : '') + '<button class="ccopy cmsg" data-copymsg="' + it.i + '" title="Copy the whole answer as Markdown">Copy</button></div>';
@@ -4421,7 +4466,7 @@ function paintLive() {
   const c = ch, st = c.st, V = byId('clive');
   if (!V) return;
   const L = byId('clog'), atEnd = L.scrollHeight - L.scrollTop - L.clientHeight < 80;
-  const sentHtml = (list) => list.map((s) => chatItemHtml({ k: 'you', i: '', text: s.text, sel: s.sel, selText: s.selText }, c)
+  const sentHtml = (list) => list.map((s) => chatItemHtml({ k: 'you', i: '', text: s.text, sel: s.sel, selText: s.selText, urls: s.urls }, c)
     .replace('>', '><div class="ctime">' + (!s.ok ? 'sending…' : s.queued ? 'queued: the agent reads it after this step' : 'sent') + '</div>')).join('');
   // the answer being written comes after a message sent to an idle agent, and before one that waits in the queue
   const cut = c.sent.findLastIndex((s) => !s.queued) + 1;
@@ -4505,26 +4550,30 @@ function askReady(card) {
 // a command from a button goes as it is: the draft and the selected lines stay for the next message
 async function chatSendMsg(command) {
   const c = ch, inp = byId('cin'), text = command || inp.value.trim();
-  if (!c || !text) return;
+  const imgs = command || !c ? [] : chatImgs[c.key] || [];
+  if (!c || (!text && !imgs.length)) return;
   byId('cmenu').hidden = true;
   const s = command ? null : chatSel;
   // shown at once; the session log has it only when the agent reads it
   const mine = { text, from: c.total, queued: !!c.st.busy,
     sel: s ? [(s.file ? s.file.slice(s.file.lastIndexOf('/') + 1) : 'selected text') +
       (s.start ? ':' + s.start + (s.end > s.start ? '-' + s.end : '') : '') + (s.side === 'old' ? ' (before)' : '')] : [],
-    selText: s ? [s.text] : [] };
+    selText: s ? [s.text] : [], urls: imgs.map((x) => x.url) };
   c.sent.push(mine);
   paintLive();
   byId('clog').scrollTop = byId('clog').scrollHeight;
   const r = await post('/api/chat/send', { project: c.p.project, slug: c.p.slug, text, mode: chatMode, model: chatModel || 'default',
-    selection: s ? { file: s.file, side: s.side, start: s.start, end: s.end, text: s.text } : null });
+    selection: s ? { file: s.file, side: s.side, start: s.start, end: s.end, text: s.text } : null,
+    images: imgs.map((x) => ({ media_type: x.media_type, data: x.data })) });
   if (!r.ok) c.sent = c.sent.filter((x) => x !== mine);
   else mine.ok = true;
   if (ch === c) paintLive();
   if (!r.ok || ch !== c) return;
   if (!command) {
-    chatHistPush(text);
+    if (text) chatHistPush(text);
     inp.value = ''; delete chatDraft[c.key];
+    delete chatImgs[c.key];
+    if (ch === c) paintImgs();
     setChatSel(null);
   }
   c.st.partial = ''; c.st.busy = true; c.st.error = '';
@@ -4613,6 +4662,50 @@ function chatKey(e) {
     return;
   }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); chatSendMsg(); }
+}
+// --- pasted images: scaled to at most 2000 px on the long side, so each stays under the API's 5 MB ---
+async function chatImgLoad(file) {
+  const url = await new Promise((r) => { const f = new FileReader(); f.onload = () => r(f.result); f.onerror = () => r(''); f.readAsDataURL(file); });
+  if (!url) return null;
+  let type = file.type, out = url;
+  if (type !== 'image/gif') {
+    const img = new Image();
+    img.src = url;
+    try { await img.decode(); } catch { return null; }
+    const big = Math.max(img.naturalWidth, img.naturalHeight), k = big > 2000 ? 2000 / big : 1;
+    if (k < 1 || url.length > 5e6 || !['image/png', 'image/jpeg', 'image/webp'].includes(type)) {
+      const cv = document.createElement('canvas'), g = cv.getContext('2d');
+      cv.width = Math.round(img.naturalWidth * k); cv.height = Math.round(img.naturalHeight * k);
+      g.drawImage(img, 0, 0, cv.width, cv.height);
+      out = cv.toDataURL('image/png'); type = 'image/png';
+      if (out.length > 5e6) {
+        g.globalCompositeOperation = 'destination-over'; g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);
+        out = cv.toDataURL('image/jpeg', 0.85); type = 'image/jpeg';
+      }
+    }
+  }
+  if (out.length > 6.9e6) return null;
+  return { media_type: type, data: out.slice(out.indexOf(',') + 1), url: out };
+}
+async function chatAddImgs(files) {
+  const c = ch;
+  if (!c) return;
+  const got = (await Promise.all(files.map(chatImgLoad)));
+  if (got.includes(null)) alert('⚠️ An image could not be read, or it is larger than 5 MB. It is not attached.');
+  const list = chatImgs[c.key] = [...(chatImgs[c.key] || []), ...got.filter(Boolean)];
+  if (list.length > 10) { list.length = 10; alert('⚠️ One message takes at most 10 images. The rest are not attached.'); }
+  if (ch === c) paintImgs();
+}
+function paintImgs() {
+  const S = byId('cimgs');
+  if (!S || !ch) return;
+  S.innerHTML = (chatImgs[ch.key] || []).map((x, n) => '<span class="cimg"><img src="' + escA(x.url) + '" alt="Pasted image ' + (n + 1) + '" title="Goes with the next message">' +
+    '<button data-imgx="' + n + '" aria-label="Do not send image ' + (n + 1) + '" title="Do not send this image">✕</button></span>').join('');
+  S.querySelectorAll('[data-imgx]').forEach((b) => b.addEventListener('click', () => {
+    chatImgs[ch.key].splice(+b.dataset.imgx, 1);
+    paintImgs();
+    byId('cin').focus();
+  }));
 }
 // --- selected lines: from VS Code's diff view, the table diff or the plan text ---
 function setChatSel(s) { chatSel = s; paintSel(); }
