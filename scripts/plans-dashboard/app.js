@@ -1626,8 +1626,9 @@ async function renderPrTab(p, tab, force) {
     return;
   }
   lastPrDraw = sig;
-  // ⟳ on the tab already open: keep it on screen while GitHub answers, instead of a blank "loading"
-  const pv = byId('prview'), again = force && pv && pv.dataset.of === p.key + tab;
+  // the same tab of the same PR already open (⟳, or a new commit after a push or a pull): keep it
+  // on screen while GitHub answers and redraw it in place, instead of a blank "loading" that flickers
+  const pv = byId('prview'), again = pv && pv.dataset.of === p.key + tab + '#' + p.pr.number;
   // only Files changed needs the whole window; the Pull request tab keeps the normal layout
   const review = tab === 'files';
   document.body.classList.toggle('review', review);
@@ -1642,7 +1643,7 @@ async function renderPrTab(p, tab, force) {
     <div class="subtitle">${inline(p.title)}</div>
     <div class="prtabsrow">${prTabs(p, tab)}<span class="btns" id="ract"></span></div>
     ${p.summary ? '<div class="summary prsum">💡 ' + esc(p.summary) + '</div>' : ''}`) + `
-    <div id="prview" class="dim" style="padding:16px 24px" data-of="${escA(p.key + tab)}">loading PR #${p.pr.number}…</div>`;
+    <div id="prview" class="dim" style="padding:16px 24px" data-of="${escA(p.key + tab + '#' + p.pr.number)}">loading PR #${p.pr.number}…</div>`;
   if (!again) {
     if (review) byId('rback').addEventListener('click', () => { prTab[p.key] = 'plan'; renderDetail(false); });
     bindPrTabs(p);
