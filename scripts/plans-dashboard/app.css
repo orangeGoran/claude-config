@@ -178,16 +178,19 @@
   .mdc pre code { background:none; padding:0; }
   /* a mermaid block: the drawing, its code folded under it */
   .mmd { margin:8px 0; }
-  .mmdsvg { position:relative; background:var(--codebg); border:1px solid var(--line); border-radius:10px; padding:13px; overflow-x:auto; text-align:center; }
+  .mmdsvg { background:var(--codebg); border:1px solid var(--line); border-radius:10px; padding:13px; overflow-x:auto; text-align:center; cursor:zoom-in; }
+  .mmdsvg:hover, .mmdsvg:focus-visible { border-color:var(--accent); }
   .mmdsvg svg { max-width:100%; height:auto; }
-  .mmdfs { position:absolute; top:6px; right:6px; font-size:calc(11.5px * var(--fs)); padding:2px 8px; cursor:pointer;
-           background:var(--btn); color:var(--fg); border:1px solid var(--line); border-radius:6px; opacity:.75; }
-  .mmdfs:hover, .mmdfs:focus-visible { opacity:1; }
-  /* full screen: the drawing scaled to fill the window (mermaid caps it with an inline max-width) */
-  .mmdfull { position:fixed; inset:0; z-index:10000; background:var(--bg); display:flex; align-items:center; justify-content:center; padding:40px 24px 24px; }
-  .mmdfull svg { width:100%; height:100%; max-width:100% !important; }
-  .mmdclose { position:absolute; top:10px; right:14px; font-size:calc(16px * var(--fs)); line-height:1; padding:4px 10px; cursor:pointer;
-              background:var(--btn); color:var(--fg); border:1px solid var(--line); border-radius:6px; }
+  /* full screen: the drawing at its own size, moved and scaled by a transform */
+  .mmdfull { position:fixed; inset:0; z-index:10000; background:var(--bg); }
+  .mmdstage { position:absolute; inset:0; overflow:hidden; cursor:grab; touch-action:none; user-select:none; }
+  .mmdstage.drag { cursor:grabbing; }
+  .mmdpan { position:absolute; left:0; top:0; transform-origin:0 0; }
+  .mmdpan svg { display:block; max-width:none !important; }
+  .mmdbar { position:absolute; top:10px; right:14px; z-index:1; display:flex; align-items:center; gap:6px; padding:5px; background:var(--bg); border:1px solid var(--line); border-radius:8px; }
+  .mmdbar button { font-size:calc(14px * var(--fs)); line-height:1; padding:5px 10px; cursor:pointer;
+                   background:var(--btn); color:var(--fg); border:1px solid var(--line); border-radius:6px; }
+  .mmdpct { min-width:44px; text-align:center; color:var(--dim); font-size:calc(12px * var(--fs)); }
   .mmd details summary { cursor:pointer; color:var(--dim); font-size:calc(12px * var(--fs)); margin-top:4px; }
   a { color:var(--link); }   /* every link, not only plan text: the browser's blue is unreadable on the dark theme */
   .mdc a { color:var(--link); }
@@ -735,3 +738,10 @@
   .tp-count { font-size:calc(11px * var(--fs)); color:var(--dim); }
   .tp-foot { display:flex; gap:8px; align-items:center; }
   @media (prefers-reduced-motion: reduce) { #tourhole, #tourpop { transition:none; } }
+  /* "Jump to bottom" over the foot of the chat and the run log */
+  .jumpwrap { position:relative; height:0; flex-shrink:0; }
+  .jumpbtn { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); z-index:3; white-space:nowrap;
+             padding:4px 12px; border-radius:999px; font-size:calc(12px * var(--fs));
+             background:var(--panel); border:1px solid var(--line); box-shadow:0 4px 14px rgba(0,0,0,.3); }
+  .jumpbtn:hover { border-color:var(--accent); color:var(--accent); }
+  .jumpbtn[hidden] { display:none; }

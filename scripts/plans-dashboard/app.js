@@ -52,6 +52,26 @@ const modeOf = (p) => {
 };
 const esc = (x) => (x || '').replace(/[&<>]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const byId = (i) => document.getElementById(i);
+// A "Jump to bottom" button over the foot of a scrolling list, shown while the list is not at its end.
+// It sits in a zero-height box right after the list, so a repaint of the list keeps it.
+function jumpToBottom(L) {
+  const wrap = document.createElement('div');
+  wrap.className = 'jumpwrap';
+  wrap.innerHTML = '<button class="jumpbtn" hidden title="Jump to the latest" aria-label="Jump to bottom">↓ Jump to bottom</button>';
+  L.after(wrap);
+  const b = wrap.firstChild;
+  let queued = false;
+  const update = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; b.hidden = L.scrollHeight - L.scrollTop - L.clientHeight < 80; });
+  };
+  b.addEventListener('click', () => L.scrollTo({ top: L.scrollHeight, behavior: 'smooth' }));
+  L.addEventListener('scroll', update, { passive: true });
+  new MutationObserver(update).observe(L, { childList: true, subtree: true, characterData: true });
+  new ResizeObserver(update).observe(L);
+  update();
+}
 // Every repaint assigns innerHTML, which replaces the nodes a selection is
 // anchored in and so silently drops whatever the user had highlighted. These
 // let a repaint hold off until the selection is released.
@@ -1068,6 +1088,7 @@ function chatBind(p) {
     setTimeout(() => { b.textContent = 'Copy'; }, 1400);
   });
   L.addEventListener('scroll', () => { if (L.scrollTop < 150) chatLoad('old'); }, { passive: true });
+  jumpToBottom(L);
   // a tool line keeps its open state when the list repaints
   L.addEventListener('toggle', (e) => {
     const i = e.target.dataset && e.target.dataset.i;
@@ -2197,36 +2218,107 @@ async function drawMermaid() {
     const code = document.createElement('details');
     code.innerHTML = '<summary>Mermaid code</summary>';
     code.append(...el.childNodes);
-    el.innerHTML = '<div class="mmdsvg"><button class="mmdfs" title="Open the diagram full screen (Esc closes it)">⛶ Full screen</button>' + svg + '</div>';
+    el.innerHTML = '<div class="mmdsvg" role="button" tabindex="0" title="Open full screen: drag to move, scroll or pinch to zoom">' + svg + '</div>';
     el.append(code);
   }
 }
-// full screen: a copy of the drawing in its own layer, so a chat redraw under it does not close it
-function openMermaidFull(svg) {
+// full screen: a copy of the drawing in its own layer, so a chat redraw under it does not close
+// it. Drag moves it; scroll pans; pinch or Ctrl/⌘ + scroll zooms at the pointer; + − 0 and the
+// arrow keys do the same from the keyboard.
+function openMermaidFull(svgHtml) {
   const box = document.createElement('div');
   box.className = 'mmdfull';
-  box.innerHTML = '<button class="mmdclose" title="Close (Esc)">✕</button>' + svg;
+  box.innerHTML = '<div class="mmdstage"><div class="mmdpan">' + svgHtml + '</div></div>' +
+    '<div class="mmdbar"><button data-z="out" title="Zoom out (−)">−</button><span class="mmdpct"></span>' +
+    '<button data-z="in" title="Zoom in (+)">+</button><button data-z="fit" title="Fit to the screen (0)">Fit</button>' +
+    '<button data-z="close" title="Close (Esc)">✕</button></div>';
+  const stage = box.querySelector('.mmdstage'), pan = box.querySelector('.mmdpan'), svg = pan.querySelector('svg');
+  // the drawing at its own size; the view scales it
+  const vb = svg.viewBox && svg.viewBox.baseVal;
+  const w = vb && vb.width || svg.getBoundingClientRect().width || 800, h = vb && vb.height || svg.getBoundingClientRect().height || 600;
+  svg.removeAttribute('style'); svg.setAttribute('width', w); svg.setAttribute('height', h);
+  let s = 1, tx = 0, ty = 0;
+  const draw = () => {
+    pan.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + s + ')';
+    box.querySelector('.mmdpct').textContent = Math.round(s * 100) + '%';
+  };
+  const fit = () => {
+    const r = stage.getBoundingClientRect();
+    s = Math.min(r.width / w, r.height / h) * 0.95;
+    tx = (r.width - w * s) / 2; ty = (r.height - h * s) / 2;
+    draw();
+  };
+  // zoom by f, keeping the point (px, py) of the stage where it is
+  const zoom = (f, px, py) => {
+    const r = stage.getBoundingClientRect();
+    if (px == null) { px = r.width / 2; py = r.height / 2; }
+    const n = Math.min(20, Math.max(0.05, s * f));
+    tx = px - (px - tx) * n / s; ty = py - (py - ty) * n / s; s = n;
+    draw();
+  };
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r = stage.getBoundingClientRect();
+    // a pinch sends small steps, a mouse wheel ~100 per notch: at most ×1.65 per step
+    if (e.ctrlKey || e.metaKey) zoom(Math.exp(-Math.max(-50, Math.min(50, e.deltaY)) * 0.01), e.clientX - r.left, e.clientY - r.top);
+    else { tx -= e.deltaX; ty -= e.deltaY; draw(); }
+  }, { passive: false });
+  let drag = null;
+  stage.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    drag = { x: e.clientX - tx, y: e.clientY - ty };
+    stage.setPointerCapture(e.pointerId); stage.classList.add('drag');
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    tx = e.clientX - drag.x; ty = e.clientY - drag.y; draw();
+  });
+  const endDrag = () => { drag = null; stage.classList.remove('drag'); };
+  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointercancel', endDrag);
+  stage.addEventListener('dblclick', (e) => {
+    const r = stage.getBoundingClientRect();
+    zoom(e.shiftKey ? 0.5 : 2, e.clientX - r.left, e.clientY - r.top);
+  });
   const close = () => {
     document.removeEventListener('keydown', onKey, true);
     if (document.fullscreenElement === box) document.exitFullscreen().catch(() => {});
     box.remove();
   };
-  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-  box.querySelector('.mmdclose').addEventListener('click', close);
+  const onKey = (e) => {
+    const k = e.key, step = 60;
+    if (k === 'Escape') close();
+    else if (k === '+' || k === '=') zoom(1.25);
+    else if (k === '-' || k === '_') zoom(0.8);
+    else if (k === '0') fit();
+    else if (k === 'ArrowLeft') { tx += step; draw(); } else if (k === 'ArrowRight') { tx -= step; draw(); }
+    else if (k === 'ArrowUp') { ty += step; draw(); } else if (k === 'ArrowDown') { ty -= step; draw(); }
+    else return;
+    e.preventDefault(); e.stopPropagation();
+  };
+  box.querySelector('.mmdbar').addEventListener('click', (e) => {
+    const z = e.target.closest('button')?.dataset.z;
+    if (z === 'in') zoom(1.25); else if (z === 'out') zoom(0.8); else if (z === 'fit') fit(); else if (z === 'close') close();
+  });
   // Esc in browser full screen only leaves full screen: close the layer with it
-  box.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) close(); });
+  box.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) close(); else fit(); });
   document.addEventListener('keydown', onKey, true);
   document.body.append(box);
+  fit();
   // the fixed layer already fills the window; browser full screen is a bonus where allowed
   box.requestFullscreen?.().catch(() => {});
 }
-document.addEventListener('click', (e) => {
-  const btn = e.target.closest('.mmdfs');
-  if (!btn) return;
+// a click (or Enter) on a drawing opens it full screen
+const mermaidOpen = (e) => {
+  const d = e.target.closest('.mmdsvg');
+  if (!d || (e.type === 'keydown' && e.key !== 'Enter')) return;
+  const svg = d.querySelector('svg');
+  if (!svg || (e.type === 'click' && String(getSelection()))) return;
   e.preventDefault(); e.stopPropagation();
-  const svg = btn.parentElement.querySelector('svg');
-  if (svg) openMermaidFull(svg.outerHTML);
-});
+  openMermaidFull(svg.outerHTML);
+};
+document.addEventListener('click', mermaidOpen);
+document.addEventListener('keydown', mermaidOpen);
 let mermaidTimer = null;
 new MutationObserver(() => {
   if (mermaidTimer || !document.querySelector('.mmd:not([data-drawn])')) return;
@@ -3857,3 +3949,4 @@ if (new URLSearchParams(location.search).get('tour')) {
   tourWhenPainted();
 }
 if (new URLSearchParams(location.search).get('guide')) openGuide(+new URLSearchParams(location.search).get('guide') - 1 || 0);
+jumpToBottom(byId('logbody'));
