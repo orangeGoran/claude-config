@@ -3785,10 +3785,13 @@ function paintCards() {
       (c.open ? '<button class="th" title="Hide. It waits behind the 🔔 pill." aria-label="Hide">–</button>' : '') +
       '<button class="tx" title="Close" aria-label="Close">×</button></div>';
   }).join('');
-  pill.hidden = !hidden.length;
-  pill.innerHTML = trayOpen ? 'Hide ' + hidden.length + ' <span class="clr" data-clear>Clear all</span>'
-    : '🔔 ' + hidden.length + ' hidden alert' + (hidden.length > 1 ? 's' : '');
-  pill.title = trayOpen ? 'Hide these alerts again' : 'Show the alerts you hid or did not get to';
+  // the pill shows when cards are hidden, or when two or more cards are on screen, so "Clear all" is always in reach
+  pill.hidden = !hidden.length && alertCards.length < 2;
+  const clear = '<span class="clr" data-clear title="Close every alert">Clear all</span>';
+  pill.innerHTML = !hidden.length ? clear.replace('class="clr"', 'class="clr solo"')
+    : (trayOpen ? 'Hide ' + hidden.length : '🔔 ' + hidden.length + ' hidden alert' + (hidden.length > 1 ? 's' : '')) + ' ' + clear;
+  pill.title = !hidden.length ? 'Close every alert'
+    : trayOpen ? 'Hide these alerts again' : 'Show the alerts you hid or did not get to';
 }
 byId('toastList').addEventListener('click', (e) => {
   const el = e.target.closest('.toast');
@@ -3800,7 +3803,7 @@ byId('toastList').addEventListener('click', (e) => {
   if (!e.target.closest('.tx')) openFromAlert(c.key, c.tab);
 });
 byId('toastPill').addEventListener('click', (e) => {
-  if (e.target.closest('[data-clear]')) { alertCards = alertCards.filter((c) => c.open); saveCards(); }
+  if (e.target.closest('[data-clear]') || !alertCards.some((c) => !c.open)) { alertCards = []; saveCards(); }
   else trayOpen = !trayOpen;
   paintCards();
 });

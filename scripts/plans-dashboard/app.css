@@ -705,7 +705,7 @@
   #tour { display:none; }
   #tour.open { display:block; }
   /* in-page alerts: one card per event, bottom right, left of the chat panel so they never cover its input; a click opens the plan.
-     A hidden card waits behind the 🔔 pill until you open it or close it. */
+     A hidden card waits behind the 🔔 pill until you open it or close it. The pill also holds "Clear all" (every card). */
   #toasts { position:fixed; right:calc(var(--chatw, 0px) + 16px); bottom:16px; z-index:40; display:flex; flex-direction:column;
             align-items:flex-end; gap:8px; width:min(360px, calc(100vw - 32px)); pointer-events:none; }
   #toasts > * { pointer-events:auto; }
@@ -715,6 +715,7 @@
                color:var(--fg); font-size:calc(13px * var(--fs)); box-shadow:0 6px 18px rgba(0,0,0,.3); }
   .toastPill:hover { border-color:var(--dim); }
   .toastPill .clr { color:var(--dim); margin-left:10px; text-decoration:underline; }
+  .toastPill .clr.solo { margin-left:0; }
   .toast .tm { color:var(--dim); font-size:calc(11.5px * var(--fs)); font-weight:normal; margin-left:6px; }
   .toast { display:flex; align-items:flex-start; gap:10px; background:var(--panel); border:1px solid var(--line);
            border-left:4px solid var(--run); border-radius:10px; padding:10px 10px 10px 12px; cursor:pointer;
