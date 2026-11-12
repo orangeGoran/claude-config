@@ -242,9 +242,14 @@ const autoChips = (p) => {
   return c;
 };
 
-const matchesQ = (p, q) => p.file.toLowerCase().includes(q) || p.title.toLowerCase().includes(q)
-  || p.project.toLowerCase().includes(q) || p.client.toLowerCase().includes(q)
-  || p.tags.some((t) => t.toLowerCase().includes(q));
+// Search: every typed word must be in one of the fields. Dashes, dots, underscores and spaces
+// don't count, so "casenotfound" finds "20261111-195633-security-case-not-found.md".
+const squash = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+const matchesFields = (fields, q) => {
+  const hay = fields.map(squash);
+  return q.split(/\s+/).map(squash).filter(Boolean).every((w) => hay.some((h) => h.includes(w)));
+};
+const matchesQ = (p, q) => matchesFields([p.file, p.title, p.project, p.client, ...p.tags], q);
 function visiblePlans() {
   const q = byId('q').value.toLowerCase();
   return plans.filter((p) => !p.archived && (!q || matchesQ(p, q)));
@@ -331,8 +336,7 @@ const ago = (t) => {
 };
 function visibleWts() {
   const q = byId('q').value.toLowerCase();
-  return wts.filter((w) => !q || [w.name, w.branch, w.title, w.project, w.client, w.pr ? '#' + w.pr.number : '']
-    .some((s) => String(s || '').toLowerCase().includes(q)));
+  return wts.filter((w) => !q.trim() || matchesFields([w.name, w.branch, w.title, w.project, w.client, w.pr ? '#' + w.pr.number : ''], q));
 }
 const agentChip = (w) => w.agent === 'working' ? '<span class="chip live">● agent working</span>'
   : w.agent === 'idle' ? '<span class="chip" title="the last session wrote ' + escA(new Date(w.lastActive).toLocaleString()) +
@@ -2594,7 +2598,7 @@ function drawFilesView(p) {
     ? rowKey(document.activeElement.closest('.pf')) : null;
   const caret = document.activeElement && document.activeElement.id === 'pfq' ? document.activeElement.selectionStart : null;
   v.innerHTML = strip + '<div class="prfiles"><div class="ptree" id="ptree">' +
-    '<div class="pfsearch"><input id="pfq" autocomplete="off" spellcheck="false" placeholder="search files…" aria-label="Search the changed files" ' +
+    '<div class="pfsearch"><input id="pfq" type="search" autocomplete="off" spellcheck="false" placeholder="search files…" aria-label="Search the changed files" ' +
       'title="Type parts of a file name or folder. Esc clears." value="' + escA(prFileQ[p.key] || '') + '">' +
       '<span id="pfcount" role="status">' + countText() + '</span></div>' +
     '<div id="ptrows">' + tree + '</div></div>' +

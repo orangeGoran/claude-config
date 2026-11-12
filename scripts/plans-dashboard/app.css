@@ -42,6 +42,12 @@
   .filters input { background:var(--input); color:var(--fg); border:1px solid var(--line);
           border-radius:8px; padding:6px 10px; font-size:calc(13px * var(--fs)); }
   .filters input { flex:1; min-width:0; }
+  /* search boxes: a ✕ in the theme's text color clears the text (the browser's own one is dark on dark) */
+  input[type=search] { -webkit-appearance:none; appearance:none; }
+  input[type=search]::-webkit-search-cancel-button { -webkit-appearance:none; width:14px; height:14px; margin-left:6px;
+    cursor:pointer; background:var(--dim); opacity:.8;
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3 3l8 8M11 3l-8 8' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat; }
+  input[type=search]::-webkit-search-cancel-button:hover { opacity:1; background:var(--fg); }
   .filters button { padding:5px 9px; flex-shrink:0; }
   /* the run strip scrolls with the plan list: a long strip must not squeeze the list out of a small screen */
   .sidescroll { flex:1; min-height:0; overflow-y:auto; }
