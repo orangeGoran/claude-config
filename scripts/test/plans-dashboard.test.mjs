@@ -1055,7 +1055,7 @@ test('serves browser-usability-test reports read-only on their own port, with a 
 
   const list = await (await qa('/')).text();
   assert.match(list, /href="\/solver\/2026-11-01-cases-report\.html"[^>]*>D4 &quot;Confirmed by&quot; works</, 'the list links each report by its title');
-  assert.match(list, /href="\/solver\/2026-11-01-cases-report\.html" download="2026-11-01-cases-report\.html"/, 'each report has a Download button');
+  assert.match(list, /href="\/solver\/2026-11-01-cases-report\.html\?download" download="2026-11-01-cases-report\.html"/, 'each report has a Download button');
   assert.ok(list.includes(`data-path="${path.join(dir, 'reports', '2026-11-01-cases-report.html')}"`), 'each report has Copy path with its full path');
   const icon = await qa('/favicon.ico');
   assert.equal(icon.headers.get('content-type'), 'image/svg+xml', 'older reports without an icon of their own get one');
@@ -1136,8 +1136,10 @@ test('the QA list shows ticket numbers, saved Claude artifacts and scratchpad dr
   assert.match(list, /data-search="[^"]*solver#435/i, 'the ticket number is searchable');
   assert.match(list, /href="\/solver\/artifacts\/2026-10-29-fs2\.html"[^>]*>FS2 Before and After</, 'a saved artifact opens locally');
   assert.match(list, /href="https:\/\/claude\.ai\/artifact\/doc"[^>]*>Statement of Work ↗</, 'a Docs artifact links to claude.ai');
-  assert.ok(list.indexOf('solver · artifacts') > list.indexOf('<h2>solver ') && list.indexOf('solver · artifacts') < list.indexOf('Other artifacts'),
-    "a project's artifacts come right after its reports, the rest at the end");
+  const solver = list.indexOf('data-key="solver"'), other = list.indexOf('data-key="_other"');
+  const solverArts = list.indexOf('<h2>Artifacts ', solver);
+  assert.ok(solver >= 0 && list.indexOf('<h2>Reports ', solver) < solverArts && solverArts < other,
+    "a project's artifacts come right after its reports, inside its fold; the rest at the end");
   assert.match(list, /href="\/drafts\/-Users-me-Workspace-shop\/sess-1\/scratchpad\/ba\/page\.html"[^>]*>Draft for #440</, 'a scratchpad draft is listed');
   assert.equal((await qa('/solver/artifacts/2026-10-29-fs2.html')).status, 200);
   const draft = await (await qa('/drafts/-Users-me-Workspace-shop/sess-1/scratchpad/ba/page.html')).text();
