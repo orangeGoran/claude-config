@@ -49,7 +49,7 @@ Re-run it only to change the domain or port, or after switching Node versions wi
 ## After editing the dashboard code
 
 > [!IMPORTANT]
-> plans.test does **not** pick up edits by itself. The agent runs `scripts/plans-dashboard.mjs` straight from this repo but reads it only at startup. After every change, restart it:
+> plans.test does **not** pick up edits by itself. The agent runs `scripts/plans-dashboard.mjs` straight from this repo but reads it, and the page files in `scripts/plans-dashboard/` (`page.html`, `app.css`, `app.js`), only at startup. After every change, restart it:
 >
 > ```bash
 > # Restart the dashboard so it loads your changes

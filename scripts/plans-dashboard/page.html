@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Plans</title>
+<link rel="icon" id="favicon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Ctext%20x%3D%2232%22%20y%3D%2246%22%20font-size%3D%2256%22%20text-anchor%3D%22middle%22%3E%F0%9F%98%B4%3C%2Ftext%3E%3C%2Fsvg%3E">
+<style><!--@CSS--></style>
+<header class="mainhd"><div class="hleft"><h1><a href="/" id="home" title="close the open plan">🗂 Plans</a></h1><span class="hdrun" id="hdrun" style="display:none"></span>
+  <span class="hdok" id="hdok" style="display:none"></span>
+  <span class="dim" id="clock"></span>
+  <span class="hdwarn" id="connmsg" style="display:none"></span>
+  <span class="dim hdnote" aria-live="polite">loading…</span></div>
+  <div id="hdtabs"></div>
+  <div class="hright"><a class="hdlink" href="http://localhost:{{QA_PORT}}/" target="_blank" rel="noopener" title="report pages of the browser-usability-test skill">QA reports ↗</a>
+  <button id="guidebtn" title="find repos on this machine and add them; step 1 explains how it works">＋ Add project</button>
+  <button id="settingsbtn" title="projects & settings">⚙ Settings</button>
+  <button id="alertBtn" aria-pressed="false" title="Sound and notification when a run stops or the agent answers">🔕</button>
+  <button id="themeBtn" title="toggle light/dark">🌙</button></div></header>
+<div class="wrap">
+  <aside>
+    <div class="filters">
+      <input id="q" placeholder="search plans, archived too…">
+      <button id="suggestAll" title="Suggest one parallel launch batch across all projects">⚡ All</button>
+      <button id="collapseAll" title="collapse or expand all project sections">Collapse all</button>
+    </div>
+    <div class="sidescroll">
+      <div class="runstrip" id="runstrip"></div>
+      <div class="items" id="side"></div>
+    </div>
+    <div class="launchbar">
+      <span id="selcount" class="dim">0 queued</span>
+      <span class="dim" id="selmodes"></span>
+      <span style="flex:1"></span>
+      <button class="primary" id="launchbtn">▶ Launch queued in parallel</button>
+    </div>
+  </aside>
+  <section id="detail"><span class="dim">Select a plan on the left.</span></section>
+  <div class="csplit" id="csplit" role="separator" aria-orientation="vertical" tabindex="0" hidden
+    aria-label="Divider between the page and the chat" title="Drag to resize the chat. Double-click: default width."></div>
+  <section id="chat" hidden aria-label="Chat with the agent"></section>
+</div>
+<div id="logpane">
+  <header><h1 id="logtitle"></h1><span style="margin-left:auto"></span>
+    <button id="backBtn" style="display:none">‹ Back</button>
+    <button onclick="closeLog()">✕ close</button></header>
+  <div id="logbody"></div>
+</div>
+<div id="onb" role="dialog" aria-modal="true" aria-labelledby="onbtitle">
+  <div class="onb-box">
+    <div class="onb-top"><h1 id="onbtitle" style="font-size:14px">Plans</h1><div class="steps" id="onbsteps"></div>
+      <span style="flex:1"></span><button class="onb-x" id="onbskip" title="close (Esc)">Skip for now</button></div>
+    <div class="onb-body" id="onbbody"></div>
+    <div class="onb-foot"><button class="linkbtn" id="onbback">Back</button><span style="flex:1"></span>
+      <button class="primary" id="onbnext">Continue</button></div>
+  </div>
+</div>
+<dialog id="seldlg" aria-labelledby="seldlgt"><div class="seldlg-top"><b id="seldlgt"></b><span style="flex:1"></span>
+  <button class="ccopy" id="seldlgcopy">Copy</button><button class="onb-x" id="seldlgx" title="Close (Esc)">✕</button></div>
+  <p id="seldlgnote" hidden></p><pre id="seldlgbody"></pre></dialog>
+<div id="toasts" role="status" aria-live="polite"><div id="toastList"></div><button id="toastPill" class="toastPill" hidden></button></div>
+<div id="tour"><div id="tourblock"></div><div id="tourhole"></div>
+  <div id="tourpop" role="dialog" aria-live="polite"></div></div>
+<script><!--@JS--></script>
