@@ -445,6 +445,19 @@ for plan in "${PLANS[@]}"; do
 - $(now) — worktree created
 EOF
 
+  # a new worktree has empty submodule folders; generators, checks and contract
+  # syncs read them, so check them out at the commit the base branch pins
+  if [ -f "$wt/.gitmodules" ]; then
+    echo "-> git submodule update --init --recursive (worktree)"
+    git -C "$wt" submodule update --init --recursive >> "$log" 2>&1 \
+      || { echo "FAIL: submodule checkout failed for $slug — see $log"
+           sed_i 's|^## Status: .*|## Status: FAILED: submodules — see log|' "$report"
+           sync_report_outcome "$report"
+           echo "- $(now) — submodule checkout failed (access to the submodule remote?); fix the cause and Resume" >> "$report"
+           continue; }
+    echo "- $(now) — submodules checked out" >> "$report"
+  fi
+
   if [ -n "$INSTALL_CMD" ] && [ -f "$wt/$INSTALL_MANIFEST" ]; then
     echo "-> $INSTALL_CMD (worktree)"
     read -r -a install_argv <<< "$INSTALL_CMD"
