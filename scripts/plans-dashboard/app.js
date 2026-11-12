@@ -4,6 +4,7 @@ const applyTheme = (t) => {
   document.documentElement.dataset.theme = t;
   document.getElementById('themeBtn').textContent = t === 'light' ? '🌙' : '☀️';
   if (window.monaco && typeof monoTheme === 'function') monoTheme();
+  redrawMermaid();
 };
 let theme;
 try { theme = localStorage.getItem('dash-theme'); } catch {}
@@ -124,9 +125,12 @@ function inline(s) {
 function md(src, breaks) {
   const fences = [];
   // four backslashes: this page is a template literal, and the regex needs \s, not s
-  const fenceRe = new RegExp(BT + BT + BT + '[^\\n]*\\n([\\s\\S]*?)' + BT + BT + BT, 'g');
-  src = src.replace(fenceRe, (m, code) => {
-    fences.push('<pre><code>' + esc(code) + '</code></pre>');
+  const fenceRe = new RegExp(BT + BT + BT + '([^\\n]*)\\n([\\s\\S]*?)' + BT + BT + BT, 'g');
+  src = src.replace(fenceRe, (m, lang, code) => {
+    // a mermaid block keeps its code here; drawMermaid puts the drawing above it
+    fences.push(lang.trim().toLowerCase() === 'mermaid'
+      ? '<div class="mmd"><pre><code>' + esc(code) + '</code></pre></div>'
+      : '<pre><code>' + esc(code) + '</code></pre>');
     return '\u0001' + (fences.length - 1) + '\u0001';
   });
   const out = []; let list = null, para = [], tbl = null;
@@ -177,7 +181,8 @@ function mdLive(src) {
   let last = src.slice(cut);
   // only a mark so far: its text has not come yet
   if (new RegExp('^\\s*(#{1,4}|-{1,2}|\\*{1,2}|>|\\d+[.)]?|' + BT + '{1,2})\\s*$').test(last)) return md(src.slice(0, cut));
-  if ((last.split(BT).length - 1) % 2) last += BT;
+  // a closing fence with no newline after it yet is not an open inline code mark
+  if (!last.trim().startsWith(fence) && (last.split(BT).length - 1) % 2) last += BT;
   const stars = () => (last.replace(new RegExp(BT + '[^' + BT + ']*' + BT, 'g'), '').split('**').length - 1) % 2;
   if (stars()) { last = last.replace(/\*+$/, ''); if (stars()) last += '**'; }
   return md(src.slice(0, cut) + last);
@@ -2160,6 +2165,82 @@ function chatJump(p, file) {
   selected = p.key; prTab[p.key] = 'files'; lastPrDraw = null;
   renderList(); renderDetail(false);
 }
+// --- Mermaid: a block fenced as mermaid is drawn above its code, which folds under "Mermaid
+// code". The library loads from a CDN the first time a page has one, like Monaco. The chat
+// and the plan view redraw their HTML often, so drawings are kept by theme and source.
+const MERMAID = 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs';
+let mermaidLoad = null, mermaidN = 0;
+const mermaidSvg = new Map(); // theme + source -> svg, or '' when it does not parse
+const loadMermaid = () => mermaidLoad || (mermaidLoad = import(MERMAID).then((m) => m.default,
+  (e) => { mermaidLoad = null; throw e; }));
+async function drawMermaid() {
+  const todo = [...document.querySelectorAll('.mmd:not([data-drawn])')];
+  if (!todo.length) return;
+  todo.forEach((el) => { el.dataset.drawn = '1'; });
+  let mermaid;
+  try { mermaid = await loadMermaid(); } catch { todo.forEach((el) => { delete el.dataset.drawn; }); return; }
+  const theme = document.documentElement.dataset.theme === 'light' ? 'default' : 'dark';
+  mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme });
+  for (const el of todo) {
+    const src = el.querySelector('code')?.textContent || '';
+    const key = theme + '\n' + src;
+    if (!mermaidSvg.has(key)) {
+      let svg = '';
+      // a diagram still arriving in the chat does not parse yet: its code shows until it does
+      try {
+        if (await mermaid.parse(src, { suppressErrors: true })) svg = (await mermaid.render('mmd' + ++mermaidN, src)).svg;
+      } catch { document.getElementById('dmmd' + mermaidN)?.remove(); }
+      mermaidSvg.set(key, svg);
+    }
+    const svg = mermaidSvg.get(key);
+    if (!svg || !el.isConnected) continue;
+    const code = document.createElement('details');
+    code.innerHTML = '<summary>Mermaid code</summary>';
+    code.append(...el.childNodes);
+    el.innerHTML = '<div class="mmdsvg"><button class="mmdfs" title="Open the diagram full screen (Esc closes it)">⛶ Full screen</button>' + svg + '</div>';
+    el.append(code);
+  }
+}
+// full screen: a copy of the drawing in its own layer, so a chat redraw under it does not close it
+function openMermaidFull(svg) {
+  const box = document.createElement('div');
+  box.className = 'mmdfull';
+  box.innerHTML = '<button class="mmdclose" title="Close (Esc)">✕</button>' + svg;
+  const close = () => {
+    document.removeEventListener('keydown', onKey, true);
+    if (document.fullscreenElement === box) document.exitFullscreen().catch(() => {});
+    box.remove();
+  };
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  box.querySelector('.mmdclose').addEventListener('click', close);
+  // Esc in browser full screen only leaves full screen: close the layer with it
+  box.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) close(); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.append(box);
+  // the fixed layer already fills the window; browser full screen is a bonus where allowed
+  box.requestFullscreen?.().catch(() => {});
+}
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.mmdfs');
+  if (!btn) return;
+  e.preventDefault(); e.stopPropagation();
+  const svg = btn.parentElement.querySelector('svg');
+  if (svg) openMermaidFull(svg.outerHTML);
+});
+let mermaidTimer = null;
+new MutationObserver(() => {
+  if (mermaidTimer || !document.querySelector('.mmd:not([data-drawn])')) return;
+  mermaidTimer = setTimeout(() => { mermaidTimer = null; drawMermaid(); }, 200);
+}).observe(document.body, { childList: true, subtree: true });
+// a theme switch draws them again in the new colours
+function redrawMermaid() {
+  document.querySelectorAll('.mmd[data-drawn]').forEach((el) => {
+    const code = el.querySelector('details');
+    if (!code) return;
+    el.replaceChildren(...[...code.childNodes].filter((n) => n.nodeName !== 'SUMMARY'));
+    delete el.dataset.drawn;
+  });
+}
 // --- VS Code's diff view: Monaco, the editor inside VS Code, loaded from a CDN the first time
 // Files changed opens. It gets the whole file at both sides, rebuilt from the head version and
 // the diff (fullHunks), so no second gh call. Offline it fails once and the table above stays.
@@ -2938,6 +3019,7 @@ async function openSettings() {
   render();
 }
 byId('settingsbtn').addEventListener('click', openSettings);
+byId('dashCodeBtn').addEventListener('click', () => post('/api/vscode-dash', {}));
 // suggest-batch: deterministic lane analysis (plan-lanes.mjs), rendered in the drawer as grouped lists.
 // The last run per scope ('*' = all projects, else a project name) stays in localStorage together with
 // the plans you ticked (none by default), so reopening shows it at once. Re-run fetches a fresh analysis and clears the ticks.

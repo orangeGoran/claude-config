@@ -266,6 +266,8 @@ test('an answer still arriving shows as Markdown, with no raw marks', async () =
     ['Run ' + BT + 'npm te', '<p>Run <code>npm te</code></p>'],
     ['Say ' + BT + '**' + BT + ' now', '<p>Say <code>**</code> now</p>'],
     [FENCE + 'js\nconst a = 1', '<pre><code>const a = 1\n</code></pre>'],
+    // a mermaid block keeps its code in a .mmd box, where the page draws it
+    [FENCE + 'mermaid\nerDiagram\n  a ||--o{ b : has\n' + FENCE, '<div class="mmd"><pre><code>erDiagram\n  a ||--o{ b : has\n</code></pre></div>'],
     ['| a | b |\n|---|-', '<table><tr><th>a</th><th>b</th></tr></table>'],
     ['**done** and ' + BT + 'ok' + BT, '<p><b>done</b> and <code>ok</code></p>'],
   ]) assert.equal(render(partial).trim(), html, partial);

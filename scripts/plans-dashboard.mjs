@@ -1051,15 +1051,17 @@ const cleanup = (proj, slug, artifacts) =>
         resolve({ ok: true, output });
       });
   });
-// with no slug (the project header's button) it opens the project's main checkout
-const openInVsCode = (proj, slug) => {
-  const ext = extWorktree(proj, slug);
-  const wt = ext ? ext.path : slug ? worktreeOf(proj, slug) : '';
-  const target = (ext || proj.hasPipeline) && wt && existsSync(wt) ? wt : proj.root;
+const openFolderInVsCode = (target) => {
   execFile('code', [target], { env: ENV }, (err) => {
     if (err) execFile('open', ['-a', 'Visual Studio Code', target], () => {});
   });
   return target;
+};
+// with no slug (the project header's button) it opens the project's main checkout
+const openInVsCode = (proj, slug) => {
+  const ext = extWorktree(proj, slug);
+  const wt = ext ? ext.path : slug ? worktreeOf(proj, slug) : '';
+  return openFolderInVsCode((ext || proj.hasPipeline) && wt && existsSync(wt) ? wt : proj.root);
 };
 const archivePlan = async (proj, slug) => {
   const live = proj.hasPipeline ? await pipelineLive(proj, slug) : genericRunInfo(proj, slug).live;
@@ -2493,6 +2495,8 @@ const server = http.createServer(async (req, res) => {
           output: warnings.length ? warnings.join('\n') : 'Settings saved — ' + cleaned.length + ' project(s).' });
       }
       if (url.pathname === '/api/add-project') return json(res, 200, addProject(b));
+      // 🖥 Code in the page header: this dashboard's own repo
+      if (url.pathname === '/api/vscode-dash') return json(res, 200, { ok: true, target: openFolderInVsCode(DASH_REPO) });
       if (url.pathname === '/api/launchers') {
         if (!proj) return json(res, 400, { error: 'bad project' });
         return json(res, 200, saveLaunchers(proj.name, Array.isArray(b.launchers) ? b.launchers : []));

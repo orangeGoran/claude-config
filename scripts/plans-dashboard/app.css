@@ -136,6 +136,7 @@
             vertical-align:1px; white-space:nowrap; word-break:normal; }
   .hdok { font-size:calc(12px * var(--fs)); color:var(--ok); border:1px solid var(--ok); border-radius:99px;
           padding:2px 11px; font-weight:600; }
+  .hdbtn { font-size:calc(12px * var(--fs)); padding:2px 10px; }
   .hdrun { font-size:calc(12px * var(--fs)); color:var(--run); border:1px solid var(--run); border-radius:99px;
            padding:2px 11px; font-weight:600; }
   .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); } .dot.warn { background:var(--warn); }
@@ -175,6 +176,19 @@
   .mdc pre { background:var(--codebg); border:1px solid var(--line); border-radius:10px; padding:13px;
              overflow-x:auto; font:calc(12px * var(--fs))/1.5 ui-monospace,monospace; }
   .mdc pre code { background:none; padding:0; }
+  /* a mermaid block: the drawing, its code folded under it */
+  .mmd { margin:8px 0; }
+  .mmdsvg { position:relative; background:var(--codebg); border:1px solid var(--line); border-radius:10px; padding:13px; overflow-x:auto; text-align:center; }
+  .mmdsvg svg { max-width:100%; height:auto; }
+  .mmdfs { position:absolute; top:6px; right:6px; font-size:calc(11.5px * var(--fs)); padding:2px 8px; cursor:pointer;
+           background:var(--btn); color:var(--fg); border:1px solid var(--line); border-radius:6px; opacity:.75; }
+  .mmdfs:hover, .mmdfs:focus-visible { opacity:1; }
+  /* full screen: the drawing scaled to fill the window (mermaid caps it with an inline max-width) */
+  .mmdfull { position:fixed; inset:0; z-index:10000; background:var(--bg); display:flex; align-items:center; justify-content:center; padding:40px 24px 24px; }
+  .mmdfull svg { width:100%; height:100%; max-width:100% !important; }
+  .mmdclose { position:absolute; top:10px; right:14px; font-size:calc(16px * var(--fs)); line-height:1; padding:4px 10px; cursor:pointer;
+              background:var(--btn); color:var(--fg); border:1px solid var(--line); border-radius:6px; }
+  .mmd details summary { cursor:pointer; color:var(--dim); font-size:calc(12px * var(--fs)); margin-top:4px; }
   a { color:var(--link); }   /* every link, not only plan text: the browser's blue is unreadable on the dark theme */
   .mdc a { color:var(--link); }
   .mdc blockquote { border-left:3px solid var(--accent); margin:8px 0; padding:2px 14px; color:var(--dim); }
