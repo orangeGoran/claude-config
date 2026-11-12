@@ -100,6 +100,17 @@ export function checkParams(p) {
     if (c && /[;&|<>`$"'\\]/.test(String(c).replace(/<[a-z-]+>/g, ''))) errs.push(`command "${c}" has a shell operator, a quote or a "$"; give one bare command`);
   }
   if (p.firstPlanTs !== undefined && !/^\d{8}-\d{6}$/.test(p.firstPlanTs)) errs.push('firstPlanTs must look like 20261111-150200');
+  const services = p.pipeline?.services;
+  if (services !== undefined && !Array.isArray(services)) errs.push('pipeline.services must be a list');
+  arr(services).forEach((s, i) => {
+    if (!str(s?.name) || (!str(s?.url) === !str(s?.container))) errs.push(`pipeline.services[${i}] needs "name" and exactly one of "url" or "container"`);
+    if (str(s?.url) && !/^https?:\/\/[\w.:/-]+$/.test(s.url)) errs.push(`pipeline.services[${i}].url must be a plain http(s) URL`);
+    if (str(s?.container) && !/^[\w.-]+$/.test(s.container)) errs.push(`pipeline.services[${i}].container must be a container name`);
+  });
+  const board = p.git?.tickets?.board;
+  if (board !== undefined && (!str(board.owner) || !/^\d+$/.test(String(board.number ?? '')) || !str(board.status))) {
+    errs.push('git.tickets.board needs "owner", a numeric "number" and "status"');
+  }
   return errs;
 }
 
@@ -173,6 +184,29 @@ export function buildVars(p, now = new Date()) {
   const runExtra = [...(installWords ? [`Bash(${installWords}*)`] : []), ...arr(p.pipeline?.runAllow)];
   if (moduleOn(p, 'step-gate')) runExtra.push('Bash(bash .claude/scripts/workflow-complete-step.sh*)');
   if (moduleOn(p, 'codex')) runExtra.push(...CODEX_ALLOW);
+
+  // service check before a run (skill-auto-pipeline Step 0)
+  const services = arr(p.pipeline?.services).map((s) => ({ name: str(s.name), url: str(s.url), container: str(s.container) }));
+  const servicesMd = services.map((s) => s.url
+    ? `   - ${s.name}: \`curl -sf -o /dev/null ${s.url}\` exits with 0.`
+    : `   - ${s.name}: \`docker inspect -f {{.State.Running}} ${s.container}\` prints \`true\`.`).join('\n');
+  if (services.some((s) => s.url)) runExtra.push('Bash(curl -sf -o /dev/null *)');
+  if (services.some((s) => s.container)) runExtra.push('Bash(docker inspect -f {{.State.Running}} *)');
+
+  // browser test of a web UI (skill-1-plan section, skill-3-test step)
+  const reg = p.registry || {};
+  const hasBrowserTest = reg.browserTest === true && reg.role !== 'backend' && Boolean(str(reg.appUrl));
+  if (hasBrowserTest) {
+    runExtra.push('Read(~/.claude/skills/browser-usability-test/**)', 'Read(~/.claude/browser-usability-test/**)',
+      'Bash(node ~/.claude/skills/browser-usability-test/scripts/*)');
+  }
+
+  // tickets: evidence comment and board status (skill-5-ship)
+  const tickets = g.tickets || {};
+  const hasTickets = tickets.evidence === true || Boolean(tickets.board);
+  const board = tickets.board || null;
+  if (hasTickets) runExtra.push('Bash(gh issue view*)', 'Bash(gh issue comment*)');
+  if (board) runExtra.push('Bash(gh project field-list*)', 'Bash(gh project item-list*)', 'Bash(gh project item-edit*)', 'Bash(gh project view*)');
 
   // hard-rule blocks
   const hardMd = hard.map((h) => `- **${h.title}.** ${h.rule}` + sub(h.details)).join('\n');
@@ -280,6 +314,15 @@ export function buildVars(p, now = new Date()) {
     MOD_PLANS_PARALLEL: moduleOn(p, 'plans-parallel'),
     MOD_PR_FEEDBACK: moduleOn(p, 'pr-feedback'),
     MOD_RUN_SKILL: moduleOn(p, 'run-skill'),
+    HAS_SERVICES: services.length > 0,
+    SERVICES_CHECKS: servicesMd,
+    HAS_BROWSER_TEST: hasBrowserTest,
+    APP_URL: str(reg.appUrl),
+    HAS_TICKETS: hasTickets,
+    HAS_BOARD: Boolean(board),
+    BOARD_OWNER: board ? str(board.owner) : '',
+    BOARD_NUMBER: board ? String(board.number) : '',
+    BOARD_STATUS: board ? str(board.status) : '',
   };
 }
 
@@ -428,9 +471,11 @@ export function keepConfig(current, rendered) {
 }
 
 export function plan(repo, files, { resetConfig = false } = {}) {
+  // only open plans count: an adopted repo with finished plans in .plans/done/ still
+  // gets the end-to-end check plan for its first pipeline run
   const planHasPlans = (() => {
-    const dirs = [path.join(repo, '.plans'), path.join(repo, '.plans', 'done')];
-    return dirs.some((d) => existsSync(d) && readdirSync(d).some((f) => f.endsWith('.md')));
+    const d = path.join(repo, '.plans');
+    return existsSync(d) && readdirSync(d).some((f) => f.endsWith('.md'));
   })();
   return files.flatMap((f) => {
     const abs = path.join(repo, f.path);

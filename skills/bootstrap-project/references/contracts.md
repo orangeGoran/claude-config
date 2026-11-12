@@ -89,6 +89,9 @@ The dashboard's "⚡ All" refuses until every registered project has this script
 | `stack.commands.{test,testScoped,testE2e,lint,format,typecheck,build}` | string | no | One bare command each; `<file>` allowed; empty = "not available yet" |
 | `stack.postEditLint.{fix,format,extensions[]}` | string / list | no | The post-edit hook |
 | `git.base`, `git.prod`, `git.staging`, `git.mergeStyle` | string | no | Defaults `develop`, `main`, none, `squash` |
+| `git.tickets.evidence` | boolean | no | `true`: plans carry a **Tickets** line, and `skill-5-ship` posts an evidence comment on each ticket and writes `Closes`/`Refs` lines |
+| `git.tickets.board.{owner,number,status}` | string / number / string | no | GitHub project board: `skill-5-ship` moves each `Closes` ticket to `status`. Also turns on the Tickets line |
+| `pipeline.services[]` | `{name, url}` or `{name, container}` | no | Local services a run needs; `skill-auto-pipeline` checks them first (`curl -sf -o /dev/null <url>`, `docker inspect -f {{.State.Running}} <container>`) and stops with `BLOCKED: start <name>` |
 | `rules.hard[]` | `{title, rule, check?, details?[], tests?[]}` | at least 1 | Hard rules. `details`: the project's own checks (validator, plan check, verify audit, apply-validation). `tests`: the tests a change that touches the rule needs (skill-3-test) |
 | `rules.validatorLimits[]` | list | no | Extra "Never" lines for the plan validators (for example "start a capture") |
 | `rules.parentPlan` | string | yes | Path of the parent plan |
@@ -101,7 +104,7 @@ The dashboard's "⚡ All" refuses until every registered project has this script
 | `modules.<name>` | boolean | no | Missing = on. Names: `codex`, `changelog`, `decision-sheet`, `test-review`, `step-gate`, `post-edit-lint`, `plans-parallel`, `pr-feedback`, `run-skill` |
 | `pipeline.defaultMode` | `verify`/`commit`/`pr` | no | Default `pr` |
 | `pipeline.runAllow[]` | list | no | Extra allow rules for every headless run |
-| `registry.{dashboard,color,browserTest,role,appUrl}` | mixed | no | Registrations |
+| `registry.{dashboard,color,browserTest,role,appUrl}` | mixed | no | Registrations. `browserTest: true` with a role other than `backend` and an `appUrl` (the app the owner runs, the "old code" side) also turns on the browser-test step (`skill-1-plan` section, `skill-3-test` Step 2.5). Without `appUrl` the step stays off |
 
 ## Template syntax
 

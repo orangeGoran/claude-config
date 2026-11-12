@@ -40,7 +40,15 @@
     "base": "develop",
     "prod": "main",
     "staging": "",
-    "mergeStyle": "squash"
+    "mergeStyle": "squash",
+    "tickets": {
+      "evidence": true,
+      "board": {
+        "owner": "acme-co",
+        "number": 1,
+        "status": "In review"
+      }
+    }
   },
   "rules": {
     "hard": [
@@ -106,7 +114,17 @@
   },
   "pipeline": {
     "defaultMode": "pr",
-    "runAllow": []
+    "runAllow": [],
+    "services": [
+      {
+        "name": "the API on :3000",
+        "url": "http://localhost:3000/health"
+      },
+      {
+        "name": "the database container",
+        "container": "acme-postgres"
+      }
+    ]
   },
   "registry": {
     "dashboard": true,

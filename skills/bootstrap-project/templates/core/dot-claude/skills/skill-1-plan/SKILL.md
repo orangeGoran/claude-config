@@ -103,6 +103,9 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 # Plan: <title>
 
 - **Base**: @@BASE_BRANCH@@
+@@IF HAS_TICKETS@@
+- **Tickets**: <#n, #m — the issues this plan works on; "none" for work without a ticket>
+@@END@@
 
 ## Goal
 
@@ -145,6 +148,17 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 - <tests this plan adds, and what each one proves>
 
 > For every test ask: would it still pass if the feature were not built? If yes, rewrite it.
+@@IF HAS_BROWSER_TEST@@
+
+## Browser test
+
+- Routes: <the screens to open, for example `/orders/:id`>
+- Siblings: <other screens that use the same component or flow, to check for the same defect>
+- Account and data: <role, and the test data to make, as the browser-test profile notes allow>
+- What to compare: <the old app on @@APP_URL@@ against the new code, step by step, with what must differ>
+
+> A change with no screen change writes `None — <reason>` here, and the test step skips the browser test.
+@@END@@
 
 ## How to verify
 
@@ -165,6 +179,12 @@ Before you show the plan, check it. Fix the plan if any item fails.
 - [ ] Affected files lists every file the steps and tests touch
 - [ ] Every symbol, path and section was opened in this session
 - [ ] Every number has the command that measured it
+@@IF HAS_BROWSER_TEST@@
+- [ ] The Browser test section names real routes and siblings, or says `None` with a reason
+@@END@@
+@@IF HAS_TICKETS@@
+- [ ] The Tickets line lists each ticket the plan works on, and each "Done when" line of those tickets is a step or a test
+@@END@@
 - [ ] Every "How to verify" command exists when it runs, and can fail
 - [ ] No "TBD" or "decide later" is left; each one was raised in the queue
 - [ ] No two steps conflict, and no step contradicts Tests or Affected files

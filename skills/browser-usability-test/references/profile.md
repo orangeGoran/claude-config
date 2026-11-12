@@ -77,4 +77,4 @@ The schema requires only `repos`; a run also needs `app.url` (`profile.mjs resol
 }
 ```
 
-The full SolveR profile is a good example of a bearer-token, multi-tenant app with 2FA: `~/.claude/browser-usability-test/projects/solver/project.json`.
+The full galileon-solver-web profile is a good example of a bearer-token, multi-tenant app with 2FA: `~/.claude/browser-usability-test/projects/galileon-solver-web/project.json`.

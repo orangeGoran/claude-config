@@ -77,9 +77,43 @@ Write the body with the Write tool. Unattended: to `<report dir>/<slug>-pr-body.
 <the decision sheet: paste `<report dir>/<slug>-decision-sheet.md` (unattended) or the `/decision-sheet` output (interactive) as it is, with its `<!-- decision-sheet:start v1 -->` and `<!-- decision-sheet:end -->` markers. Leave it out when no sheet was made.>
 @@END@@
 
+@@IF HAS_BROWSER_TEST@@
+
+## Browser test
+<the report page link, rounds, findings fixed; the before/after pictures of the evidence comments (Step 4.5), copied as links, not uploaded again; "none — <reason>" when the plan has no browser test>
+@@END@@
+
 ## Open points
-<questions or follow-ups for the owner; "none" if none>
+<questions, known limits, backend follow-ups and findings left open; "none" if none>
+@@IF HAS_TICKETS@@
+
+<one line per ticket of the plan: `Closes #<n>` when every "Done when" line of the ticket is met, else `Refs #<n>`>
+@@END@@
 ```
+@@IF HAS_TICKETS@@
+
+## Step 4.5 — Evidence on each ticket
+
+For each ticket on the plan's **Tickets** line (skip this step when the plan has none):
+
+1. Write the comment with the Write tool, to a file next to the PR body:
+
+   ```markdown
+   **<What is different for the user, in one sentence.>**
+
+   <How it was checked: date, tests, and the browser test (viewport, account, test data) when one ran.> Before = `<base>` <hash>; after = branch `<current branch>` <hash>.
+
+   | Done when | Result | How it was checked |
+   | --- | --- | --- |
+   | <the ticket's line, word for word> | Met / Partly / Not met | <test name, numbers, file:line> |
+   ```
+
+2. Post it: `gh issue comment <n> --body-file <abs path>`.
+@@IF HAS_BROWSER_TEST@@
+3. Add the before/after pictures of the browser test the way the `browser-usability-test` skill posts pictures on a ticket. Unattended: post them without asking. Read the comment back, and check that each picture link loads.
+@@END@@
+4. Use the comment links in the PR body (Browser test, Open points).
+@@END@@
 
 ## Step 5 — Push and open the PR
 
@@ -89,6 +123,18 @@ Write the body with the Write tool. Unattended: to `<report dir>/<slug>-pr-body.
 3. If Step 3.5 decided that no entry is necessary: `gh pr edit <number> --add-label no-changelog`.
 @@END@@
 4. Unattended: set the report status `PR OPEN — <url>` and add a line `PR: <url>` below it.
+@@IF HAS_BOARD@@
+
+## Step 5.5 — Board status
+
+For each `Closes` ticket of the PR body: set its Status to "@@BOARD_STATUS@@" on project @@BOARD_NUMBER@@ of `@@BOARD_OWNER@@`. Leave `Refs` tickets as they are.
+
+1. `gh project field-list @@BOARD_NUMBER@@ --owner @@BOARD_OWNER@@ --format json`: find the id of the Status field and of its "@@BOARD_STATUS@@" option. Never hard-code these ids.
+2. `gh project view @@BOARD_NUMBER@@ --owner @@BOARD_OWNER@@ --format json`: take the project id.
+3. `gh project item-list @@BOARD_NUMBER@@ --owner @@BOARD_OWNER@@ --format json --limit 500`: find the item of the ticket. No item → write it under Open points; do not add it.
+4. `gh project item-edit --id <item id> --project-id <project id> --field-id <field id> --single-select-option-id <option id>`.
+5. Read it back with the item list. A failure here does not stop the ship: write it in the report Timeline.
+@@END@@
 
 ## Step 6 — Output
 

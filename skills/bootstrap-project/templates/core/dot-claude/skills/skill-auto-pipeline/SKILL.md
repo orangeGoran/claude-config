@@ -38,6 +38,11 @@ Preflight (on failure: status `FAILED: preflight` with the reason, then end):
 - `git branch --show-current` starts with `auto/`.
 - `git status --porcelain` is empty — fresh runs only, skipped with `--resume`.
 - The plan file exists in `.plans/`, and the report file exists.
+@@IF HAS_SERVICES@@
+- **Services.** The run needs these local services. Check each one with its bare command:
+@@SERVICES_CHECKS@@
+   One is down → status `BLOCKED: start <name>, then resume` instead of `FAILED`. Do not start it yourself.
+@@END@@
 - Set the report status to `RUNNING` and add a Timeline entry.
 
 **Resume:** read the report's Status and Timeline, `git status` and `git diff` (the work of finished phases is uncommitted until the Commit phase). Continue from the first incomplete phase. Do not redo completed phases. Add a Timeline entry that says where you resumed and why the earlier session stopped.
@@ -56,6 +61,9 @@ The report is the owner's window into this run. The plans dashboard reads it.
 1. **Implement** — invoke `/skill-2-implement <plan-file>`. It commits nothing. Copy its summary into the report under `## Implementation`. Status `IMPLEMENTED`.
    - If it reports open questions, go to **Needs decision**.
 2. **Test** — invoke `/skill-3-test <plan-file> --unattended`. It writes the missing tests, runs the scoped fix loop and one full run as evidence. Copy its summary under `## Tests`. Status `TESTED`. Tests still failing → `FAILED: test`. Open questions → **Needs decision**.
+@@IF HAS_BROWSER_TEST@@
+   - It also runs the plan's browser test. Copy its browser-test lines (rounds, report page link, findings fixed, findings listed, test data made) under `## Browser test`. In-scope findings still open after 3 rounds do not fail the run: they go to the PR as open points.
+@@END@@
 3. **Verify** — invoke `/skill-4-verify <plan-file> --unattended`. It runs the `/code-review` loop (max 2 rounds) and the rule audit (hard rules, contracts, doc comments, tests, secrets, plan scope).
 @@IF MOD_TEST_REVIEW@@
    - It also runs `/test-review --fix`. Copy its `## Summary for the PR` under `## Test review`.
