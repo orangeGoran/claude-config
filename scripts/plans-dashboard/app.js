@@ -366,7 +366,7 @@ const wtSectionHtml = (proj, list) => {
 // running/waiting = machine's turn; dead/done = your turn, most urgent first.
 const MOODS = [['live', '🏃'], ['inflight', '⏳'], ['bad', '💀'],
                ['ready', '✅'], ['idle', '😴']];
-let lastMood = '', baseTitle = 'Plans';
+let lastMood = '', baseTitle = 'Plans', countTitle = '', selTitle = '';
 const unseen = [];   // alerts that rang while you were away, newest last
 function setMood(counts) {
   const [key, face] = MOODS.find(([k]) => k === 'idle' || counts[k]);
@@ -377,12 +377,18 @@ function setMood(counts) {
   byId('favicon').href = 'data:image/svg+xml,' + encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
     '<text x="32" y="46" font-size="56" text-anchor="middle">' + face + '</text></svg>');
-  baseTitle = (n ? '(' + n + ') ' : '') + 'Plans';
+  countTitle = n ? '(' + n + ') ' : '';
+  paintTitle();
+}
+// the open plan names the tab: "(4) #667 navigation-settings-help", so a row of Plans tabs tells apart
+function setSelTitle(p) {
+  selTitle = p ? (p.pr ? '#' + p.pr.number + ' ' : '') + p.name.replace(/^\d{8}-\d{6}-/, '').replace(/\.md$/, '') : '';
   paintTitle();
 }
 // While you are in another app, each alert also goes in front of the tab title, so you can
 // see which tab rang. Coming back to the tab clears it.
 function paintTitle() {
+  baseTitle = countTitle + (selTitle || 'Plans');
   const last = unseen[unseen.length - 1];
   document.title = last ? '🔔 ' + (unseen.length > 1 ? '+' + (unseen.length - 1) + ' ' : '') + last + ' — ' + baseTitle : baseTitle;
 }
@@ -920,6 +926,7 @@ const prTabs = (p, tab, inBar) => !p.pr && !hasChat(p) ? '' : '<div class="prtab
   (inBar ? '' : chatBtn(p)) + '</div>';
 // the same switch in the main header, so the plan view has it where Files changed has it
 function drawHdTabs(p) {
+  setSelTitle(p);
   const h = byId('hdtabs');
   if (!h) return;
   h.innerHTML = p && p.pr ? prTabs(p, 'plan', 'hd') : '';
