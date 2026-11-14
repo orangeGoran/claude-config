@@ -385,7 +385,9 @@ const worktreeOf = (proj, slug) => {
 };
 const pipelineLive = (proj, slug) =>
   new Promise((resolve) => {
-    execFile('pgrep', ['-f', `skill-auto-pipeline ${slug}.md`], (err) =>
+    // "[s]kill" matches the run but not another pgrep for the same plan: two checks at
+    // the same moment (the page's poll and a chat send) would otherwise find each other
+    execFile('pgrep', ['-f', `[s]kill-auto-pipeline ${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.md`], (err) =>
       // the chat panel's own claude runs there too, and chatting is not running the plan
       resolve(!err || (!chats.has(proj.name + '/' + slug) && chatActiveIn(worktreeOf(proj, slug)))));
   });
