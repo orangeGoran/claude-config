@@ -125,7 +125,8 @@ const trackedSet = new Set(tracked);
 // CONFIG paths that match no tracked file: after a layout change (an app moved to the
 // repo root) every plan names "unknown" files and nothing is schedulable. Say which.
 const configWarnings = tracked.length ? [
-  ...FOOTPRINT_ROOTS.filter((r) => !tracked.some((f) => f.startsWith(r))).map((r) => `root ${r} has no tracked file`),
+  // a submodule is one tracked entry without the slash ("contracts", not "contracts/…")
+  ...FOOTPRINT_ROOTS.filter((r) => !tracked.some((f) => f.startsWith(r) || f === r.replace(/\/$/, ''))).map((r) => `root ${r} has no tracked file`),
   ...[...ROOT_FILES, ...HARD_DOCS, ...SOFT_FILES].filter((f) => !trackedSet.has(f) && !tracked.some((t) => t.startsWith(f.replace(/\/?$/, '/'))))
     .map((f) => `file ${f} is not tracked`),
 ] : [];

@@ -181,7 +181,9 @@ check('claudemd', 'dash-tip', 'CLAUDE.md', existsSync(R('CLAUDE.md')));
 {
   const files = [...['AGENTS.md', 'CLAUDE.md', 'README.md', '.gitignore', '.editorconfig'].map((f) => R(f)).filter(existsSync),
     ...walk(R('.claude')), ...walk(R('.codex')), ...walk(R('.github')), ...walk(R('changelog.d')),
-    ...walk(R('.plans')).filter((f) => f.endsWith('.md'))];
+    // only the plan files the bootstrap writes (top level), never the history in
+    // done/ or .validations/, which may quote template-like text
+    ...(existsSync(R('.plans')) ? readdirSync(R('.plans')).filter((f) => f.endsWith('.md')).map((f) => R('.plans', f)) : [])];
   const hits = files.filter((f) => /@@[A-Z][A-Z0-9_ ]*@@/.test(read(f) || '')).map((f) => path.relative(root, f));
   check('placeholders', 'required', 'No leftover template placeholders', !hits.length, hits.join(', ') || `${files.length} file(s) scanned`);
 }
