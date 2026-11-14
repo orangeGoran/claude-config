@@ -1897,6 +1897,7 @@ function parseDiff(txt) {
       else if (line.startsWith('deleted file mode')) f.st = 'D';
       else if (line.startsWith('rename to ')) { f.st = 'R'; f.path = line.slice(10); }
       else if (line.startsWith('Binary files')) f.binary = true;
+      else if (line === 'GitHub sends no patch for this file') f.noPatch = true;
     }
     const m = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
     if (m) { h = { head: line, lines: [], o: +m[1], n: +m[2] }; f.hunks.push(h); o = +m[1]; nn = +m[2]; body.push(line); continue; }
@@ -2391,7 +2392,7 @@ function mountMonaco(cur, keepTop) {
   const fs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fs')) || 1;
   const ed = monaco.editor.createDiffEditor(byId('mono'), {
     readOnly: true, originalEditable: false, automaticLayout: true, renderSideBySide: diffSplit, splitViewDefaultRatio: diffRatio,
-    useInlineViewWhenSpaceIsLimited: false, hideUnchangedRegions: { enabled: !diffFull },
+    useInlineViewWhenSpaceIsLimited: false, hideUnchangedRegions: { enabled: !diffFull && cur.hunks.length > 0 },
     wordWrap: 'on', diffWordWrap: 'on', scrollBeyondLastLine: false, fontSize: Math.round(12 * fs),
     minimap: { enabled: true }, renderOverviewRuler: true, ignoreTrimWhitespace: false,
   });
@@ -2564,11 +2565,13 @@ function drawFilesView(p) {
   const countText = () => fileQ() ? files.filter(fileShown).length + ' of ' + files.length : '';
   const nSeen = files.filter((f) => isViewed(p, f)).length;
   // VS Code's diff view (Monaco) when it loads; our own table is the fallback (offline, binary)
-  const mono = !monacoFailed && !cur.binary && cur.hunks.length > 0 && !(cur.full === null && cur.fullErr);
+  // a rename with no edits has no diff lines: show its body, read from the head version
+  const pureRename = cur.st === 'R' && !cur.hunks.length && !cur.binary && !cur.noPatch;
+  const mono = !monacoFailed && !cur.binary && (cur.hunks.length > 0 || pureRename) && !(cur.full === null && cur.fullErr);
   if (mono && !monaco) loadMonaco().then(() => {}, () => {}).then(() => { if (prFile[p.key] === cur.path && byId('ptree')) drawFilesView(p); });
   const big = !mono && cur.n > 3000 && !cur.show;
   // whole file: added and deleted files are whole in the diff already; others need the head version
-  const wantFull = (mono || diffFull) && cur.hunks.length && !big && (cur.st === 'M' || cur.st === 'R');
+  const wantFull = pureRename || ((mono || diffFull) && cur.hunks.length && !big && (cur.st === 'M' || cur.st === 'R'));
   if (wantFull && cur.full === undefined && !cur.loading) {
     cur.loading = true;
     fetch(cur.src === 'local'
@@ -2615,7 +2618,8 @@ function drawFilesView(p) {
     '<div class="pdmain"><div class="pdbody' + (showMono ? ' monoon' : '') + '" tabindex="0" aria-label="diff">' +
       (showMono ? '<div class="mono" id="mono"></div>'
       : cur.binary ? '<div class="dim">Binary file — no diff to show.</div>'
-      : !cur.hunks.length ? '<div class="dim">' + (cur.st === 'R' ? 'Renamed, no content changes.' : 'No content changes.') + '</div>'
+      : cur.noPatch ? '<div class="dim">GitHub sends no diff for this file (binary or too large).</div>'
+      : !cur.hunks.length && !pureRename ? '<div class="dim">' + (cur.st === 'R' ? 'Renamed, no content changes.' : 'No content changes.') + '</div>'
       : mono && !monaco ? '<div class="dim">Loading VS Code’s diff view…</div>'
       : big ? '<div class="dim">Large diff (' + cur.n + ' lines). <button id="showbig">Show it</button></div>'
       : wantFull && cur.full === undefined ? '<div class="dim">Loading the whole file…</div>'

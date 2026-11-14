@@ -1098,6 +1098,26 @@ const gh = (proj, args, input) =>
         : { ok: true, out: stdout }));
     if (input != null) child.stdin.end(input);
   });
+// GitHub refuses the whole-PR diff above 300 files (HTTP 406). The files list goes up to 3000
+// files, each with its own patch (none for binary or very large files), so the page gets the
+// same unified diff text, put together file by file.
+async function prDiffFromFiles(proj, n) {
+  const r = await gh(proj, ['api', '--paginate', 'repos/{owner}/{repo}/pulls/' + n + '/files?per_page=100',
+    '--jq', '.[] | {filename, previous_filename, status, patch, changes}']);
+  if (!r.ok) return r;
+  const out = [];
+  for (const line of r.out.split('\n')) {
+    if (!line.trim()) continue;
+    const f = JSON.parse(line), old = f.previous_filename || f.filename;
+    out.push('diff --git a/' + old + ' b/' + f.filename);
+    if (f.status === 'added') out.push('new file mode 100644');
+    else if (f.status === 'removed') out.push('deleted file mode 100644');
+    else if (f.status === 'renamed') out.push('rename from ' + old, 'rename to ' + f.filename);
+    if (f.patch) out.push('--- a/' + old, '+++ b/' + f.filename, f.patch);
+    else if (f.changes) out.push('GitHub sends no patch for this file');
+  }
+  return { ok: true, diff: out.join('\n') + '\n' };
+}
 const ghProblem = (out) => /ENOENT/.test(out) ? 'gh is not installed'
   : /auth login|not logged/i.test(out) ? 'gh is not logged in' : out.split('\n')[0].slice(0, 160);
 // The REST API, not `gh pr list`/`gh pr diff`: those use GraphQL, and when GitHub refuses
@@ -2450,7 +2470,8 @@ const server = http.createServer(async (req, res) => {
       if (!proj || !/^\d{1,7}$/.test(n)) return json(res, 400, { error: 'bad request' });
       if (url.pathname === '/api/pr') return json(res, 200, await prDetail(proj, n));
       const r = await gh(proj, ['api', '-H', 'Accept: application/vnd.github.diff', 'repos/{owner}/{repo}/pulls/' + n]);
-      return json(res, 200, r.ok ? { ok: true, diff: r.out } : r);
+      if (r.ok || !/HTTP 406|maximum number of files|too_large/i.test(r.output)) return json(res, 200, r.ok ? { ok: true, diff: r.out } : r);
+      return json(res, 200, await prDiffFromFiles(proj, n));
     }
     if (url.pathname === '/api/local' || url.pathname === '/api/local-file') {
       const proj = getProj(), file = url.searchParams.get('path') || '';
