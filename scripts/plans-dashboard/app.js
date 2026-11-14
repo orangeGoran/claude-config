@@ -382,7 +382,7 @@ function setMood(counts) {
 }
 // the open plan names the tab: "(4) #667 navigation-settings-help", so a row of Plans tabs tells apart
 function setSelTitle(p) {
-  selTitle = p ? (p.pr ? '#' + p.pr.number + ' ' : '') + p.name.replace(/^\d{8}-\d{6}-/, '').replace(/\.md$/, '') : '';
+  selTitle = p ? (p.pr ? '#' + p.pr.number + ' ' : '') + (p.file || p.name || '').replace(/^\d{8}-\d{6}-/, '').replace(/\.md$/, '') : '';
   paintTitle();
 }
 // While you are in another app, each alert also goes in front of the tab title, so you can
