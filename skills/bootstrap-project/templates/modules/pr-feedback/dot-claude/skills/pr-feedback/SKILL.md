@@ -26,6 +26,8 @@ When the owner runs this skill, they ask you to commit and push fixes to the PR 
 - Commit messages use Conventional Commits, with no AI attribution.
 - Questions to the owner go in a chat message, in the decision format from `/skill-1-plan` (the facts, one example step by step with real values, Option A (recommended) and Option B, why A). Never use AskUserQuestion for them.
 
+@@REPORTING_RULES@@
+
 ## Step 0 — Find the PR and the worktree
 
 1. `gh pr view <PR#> --json number,url,state,isDraft,headRefName,baseRefName,body`. If the state is not `OPEN`, stop and say so.

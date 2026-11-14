@@ -115,6 +115,7 @@
   "pipeline": {
     "defaultMode": "pr",
     "runAllow": [],
+    "preflight": [],
     "services": [
       {
         "name": "the API on :3000",

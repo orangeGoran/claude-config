@@ -9,7 +9,9 @@ Test one page or feature the way a real user meets it, in a real browser, and pr
 
 **Local development only.** The scripts refuse any app, API or database URL that is not on this machine (localhost, 127.0.0.1, `*.test`, `*.local`). Never point the skill at a deployed or public site.
 
-`SKILL_DIR` below is the folder of this file (`~/.claude/skills/browser-usability-test`). Run its scripts from the current repo: `node $SKILL_DIR/scripts/<file>.mjs`. Write run-specific scripts in the session scratchpad and import `lib.mjs` by absolute path; don't add page-specific code to `lib.mjs`.
+`SKILL_DIR` below is the folder of this file (`~/.claude/skills/browser-usability-test`). Run its scripts from the current repo: `node $SKILL_DIR/scripts/<file>.mjs`. In a headless pipeline run, write `SKILL_DIR` out as the full path (`/Users/ana/.claude/skills/browser-usability-test`, not `~` or `$HOME`): the run's allow rules match that form. Write run-specific scripts in the session scratchpad and import `lib.mjs` by absolute path; don't add page-specific code to `lib.mjs`.
+
+**Write files only into the run folder.** The current folder is the repo. A run script writes every file (seed data, captured payloads, notes) with `saveJson(name, data)` or to `runFile(name)` from `lib.mjs`, both in `QA_DIR`, and never to a relative path such as `cases.json`.
 
 ## 0. Before anything
 
@@ -80,6 +82,7 @@ General rules (projects add their own in `notes.md`):
 - **Selectors:** prefer `getByRole` / `getByText`. Never pick controls by index when the layout has similar controls elsewhere (headers, toolbars).
 - **Re-query after list changes.** After expand/collapse or filtering, query again (`.first()`, `.nth(i)`) instead of reusing an old `.all()` array.
 - **Finding screenshots:** take the evidence for a visible problem with `beforeAfterShot(page, '<short-name>', { locator })`, not `screenshot()`. It saves the shot as "before" and records route, width, theme and account, so after a fix the same script retakes it as "after" (section 8). Prefer an element shot (`locator`) over a full page: the report page stays small.
+- **Pages without the theme toggle** (many detail pages have none): `setTheme()` does not wait for it and returns the theme the page shows; `smoke.mjs` reports the other theme as "not available". Test that theme on a page that has the toggle, or say it is not tested.
 - **Layout bugs:** measure (`measure()`, `horizontalOverflow()`) instead of judging from pixels alone. Use `fullPage` screenshots only when needed.
 
 ### Old vs new (feature and redesign tickets)
@@ -91,7 +94,8 @@ When the run tests a feature or redesign (the ticket changes what a page looks l
 3. Take one `changeShot(page, '<view>', …)` per view the ticket changes (each part of the page, each changed dialog or state), with `QA_VERSION=old QA_APP_URL=http://localhost:<port>`. Then run the same script on the code under test without those two variables. Same account, width, theme and data on both sides. Open every shot with the Read tool.
 4. The old frontend runs against today's backend. If the old page breaks only because the backend changed too (or the API refuses the other port), say so in `changes[].note`, take what still renders, and ask before stopping the user's dev server to run the old code on the usual port.
 5. In `items.json` set `old` (for example "main 1a2b3c4") and one `changes` entry per part of the ticket, with its `changeShot` names. Name each part as the ticket does.
-6. Stop the old dev server and remove the worktree (`git worktree remove`) when the shots are taken.
+6. Stop the old dev server and remove the worktree (`git worktree remove`) when the shots are taken. Then run `node $SKILL_DIR/scripts/cleanup.mjs` in each tree that started a server: it removes the temporary `vite.qa.config.*` files and `node_modules/.vite-qa-*` caches (only when git does not track them) and lists other untracked files, so a run leaves nothing behind. It is a bare `node` command, so a headless run needs no `rm` rule.
+7. The "old" shots usually live in their own `QA_DIR` (another login, another app URL). Do not merge or write `before-after.json` by hand: pass that folder to `compare.mjs` with `--dir=<old QA_DIR>` (or `dirs` in `items.json`). It merges the records side by side, so `old` from one folder and `new` from the other make one pair.
 - **Dark/light:** `setTheme(page, mode)` uses the profile's theme toggle or emulates `prefers-color-scheme`. For contrast questions compare computed colors in both themes, not just axe output (`axeScan(page, { save })`).
 - **Unhappy states via mocking only.** Reach empty / error / slow / API-down states with `mock()` (this browser only). Never delete or edit real data to get there. Mock the endpoint the page actually calls (check with `captureRequest` or the log).
 - **Data writes:** seeding through the API on a test tenant is fine once the user agreed in the plan. Direct DB writes only when the user allows it, only on the test tenant. Read-only SQL (`sql()`, forced read-only) is always fine.
@@ -129,6 +133,7 @@ Use `references/report.md` exactly. When running as a subagent, return the repor
    `issues` holds the full GitHub URLs of the issues and PRs this run tests, so the QA list can be searched by ticket number. Find them in this order: the user's request, the branch's PR (`gh pr view --json url,closingIssuesReferences`), the branch name and commit messages (`#435`, `fixes #435`), and the plan the change came from. Write `#435` as `https://github.com/<org>/<repo>/issues/435`, with the repo from the profile's `remote`. If you find none, leave `issues` out, accept that one warning, and ask for the ticket number at the end of the chat report.
 2. Add questions only where you need a decision you can't take yourself (see "Questions" in section 8). The page is a report first; most findings need no question.
 3. Run `node $SKILL_DIR/scripts/compare.mjs <items.json>` with the same account and `QA_DIR` as the test. It writes `<date>-<route>-report.html` to the project's reports folder. A route has one report: when the route already has a report, also from an earlier day, it updates that file and keeps the old page as a version, reachable from the version menu on the page. Fix every warning it prints and run it again.
+   **In a pipeline run** (a plan or a PR), name the page per run, not per route: set `QA_RUN_SLUG=<plan slug>` and, when the PR exists, `QA_PR=<number>` (or `runSlug` / `pr` in `items.json`). The file is then `<date>-pr-<n>-<slug>-report.html` (or `<date>-<slug>-report.html` without a PR), so parallel runs on the same route never overwrite each other. `--out=<name>` sets the name; a relative name always lands in the reports folder, never in the current folder.
 4. Put the page in the chat report as a link to the `url` that `compare.mjs` prints (`http://localhost:4898/<project>/<file>.html`, see `references/report.md`). The plans dashboard serves it; `scripts/publish.mjs` makes the link. When `url` is null (report server not running, or `QA_REPORTS_PORT` differs between the dashboard and this shell), open the page in the browser with `open <out>` on macOS or `xdg-open <out>` on Linux, and give the plain path. If the script can't run, for example because the harness refuses files, say that in the report.
 
 ## 8. Keep the report current

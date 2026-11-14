@@ -122,6 +122,13 @@ const EXT = 'tsx?|jsx?|mjs|cjs|json|css|scss|html|ya?ml|sql|sh|md|swift|py|conf|
 const TOKEN_RE = new RegExp(String.raw`(?<![\w.@/()\[\]-])([\w.@()\[\]-]+(?:\/[\w.@()\[\]-]+)*\.(?:${EXT}))(?![\w/])`, 'g');
 const tracked = gitLines(['ls-files']);
 const trackedSet = new Set(tracked);
+// CONFIG paths that match no tracked file: after a layout change (an app moved to the
+// repo root) every plan names "unknown" files and nothing is schedulable. Say which.
+const configWarnings = tracked.length ? [
+  ...FOOTPRINT_ROOTS.filter((r) => !tracked.some((f) => f.startsWith(r))).map((r) => `root ${r} has no tracked file`),
+  ...[...ROOT_FILES, ...HARD_DOCS, ...SOFT_FILES].filter((f) => !trackedSet.has(f) && !tracked.some((t) => t.startsWith(f.replace(/\/?$/, '/'))))
+    .map((f) => `file ${f} is not tracked`),
+] : [];
 const bySuffix = new Map();
 for (const f of tracked) {
   const parts = f.split('/');
@@ -138,7 +145,7 @@ function resolveName(tok) {
   const c = bySuffix.get(t) || [];
   return c.length === 1 ? { file: c[0] } : { unresolved: t, candidates: c.length };
 }
-// `frontend/src/app/…/d3/page.tsx`: a path with the middle left out
+// `src/app/…/d3/page.tsx`: a path with the middle left out
 const ELIDED_RE = new RegExp(String.raw`(?<![\w.@/()\[\]-])([\w.@()\[\]-]+(?:\/[\w.@()\[\]-]+)*)\/(?:…|\.\.\.)\/([\w.@()\[\]-]+(?:\/[\w.@()\[\]-]+)*\.(?:${EXT}))(?![\w/])`, 'g');
 function resolveElided(prefix, suffix) {
   const c = tracked.filter((f) => f.startsWith(prefix + '/') && f.endsWith('/' + suffix));
@@ -511,6 +518,7 @@ const result = {
   footprintRoots: FOOTPRINT_ROOTS,
   softFileList: [...SOFT_FILES],
   softPatterns: SOFT_PATTERNS.map(String),
+  configWarnings,
 };
 
 if (process.argv.includes('--json')) {
@@ -519,6 +527,11 @@ if (process.argv.includes('--json')) {
   console.log(`plans: ${result.planCount}  schedulable: ${result.schedulableCount}  lanes: ${result.laneCount}`
     + `  in flight/awaiting review: ${inFlight.length}  done/uncleaned: ${needsCleanup.length}`
     + `  can launch in parallel now: ${result.maxParallel}  (base: ${BASE})\n`);
+  if (configWarnings.length) {
+    console.log('CONFIG CHECK (fine for a folder a future plan creates; else fix the CONFIG block or layout.* in .claude/bootstrap.json)');
+    for (const w of [...new Set(configWarnings)]) console.log(`  ! ${w}`);
+    console.log('');
+  }
   if (inFlight.length) {
     console.log('IN FLIGHT / AWAITING REVIEW (lane is occupied, do not relaunch)');
     for (const r of inFlight) console.log(`  · ${r.slug}${r.hasWorktree ? ' [worktree]' : ''} — ${r.autoRunStatus ?? r.state}`);

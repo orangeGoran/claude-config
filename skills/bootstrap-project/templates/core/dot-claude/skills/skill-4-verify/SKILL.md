@@ -16,6 +16,8 @@ You run the **Verify** step: `/skill-1-plan` → `/skill-2-implement` → `/skil
 - **Unattended** (`--unattended`): never use AskUserQuestion. Fix rule violations that have one clear fix. Put everything that needs a decision under **Open items**.
 - Do not run `git add`, `git commit` or `git push`. The pipeline commits.
 
+@@REPORTING_RULES@@
+
 ## Step 0 — Scope
 
 - The changed files: `git diff --name-only @@BASE_BRANCH@@...HEAD` plus `git status --porcelain`.
@@ -63,7 +65,10 @@ Then the table:
 | 1 | Code review | Pass/Fail | rounds, fixed, deferred, re-test result |
 | 2–@@AUDIT_LAST@@ | (as above) | Pass/Fail/N/A | files and lines, or command and counts |
 
-Then **Code review rounds** (one line per round, and why the loop stopped), **Violations** (file, line, what is wrong, the fix, and whether you fixed it), and **Open items** (deferred findings and decisions for the owner, in ASD-STE100).
+Then **Code review rounds** (one line per round, and why the loop stopped), **Findings**, **Violations** (file, line, what is wrong, the fix, and whether you fixed it), and **Open items**.
+
+- **Findings:** every code-review finding of every round, numbered `F1`, `F2`, … in the order found: `F<n>. file:line — one-line gist — fixed | deferred | decided (<by whom>)`. Keep the numbers when you report again, so that "F3" means the same finding in the report, the PR and a follow-up chat.
+- **Open items:** the deferred findings (by their `F<n>`) and the decisions for the owner. Write each decision as `Question N: <title>` in ASD-STE100: the facts, one example step by step, Option A (recommended) and Option B, and why A. The owner answers with a reply like "1A 2B", so the text must make sense without this session.
 
 After any fix in this step, run the scoped tests and lint for the touched files again. Do not start the Step 1 loop again for rule fixes.
 

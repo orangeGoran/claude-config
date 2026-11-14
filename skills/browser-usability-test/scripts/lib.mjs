@@ -406,6 +406,17 @@ export async function screenshot(
   return file;
 }
 
+/**
+ * Path of a file in this run's folder (OUT_DIR). Run scripts write every file here (seed
+ * data, captured payloads), never to a relative path: the current folder is the repo.
+ *   writeFileSync(runFile('cases.json'), JSON.stringify(cases));
+ */
+export function runFile(name) {
+  const file = join(OUT_DIR, name);
+  mkdirSync(dirname(file), { recursive: true });
+  return file;
+}
+
 /** Writes JSON evidence (API payloads, SQL rows, summaries) next to the screenshots. */
 export function saveJson(name, data) {
   const file = join(OUT_DIR, `${name}.json`);
@@ -725,6 +736,9 @@ export async function tabSequence(page, n = 10) {
  * Switches the app theme. With profile ui.theme.toggle it clicks that control and
  * reads ui.theme.attribute on <html> (apps that keep the theme in localStorage
  * ignore prefers-color-scheme). Without it, it emulates prefers-color-scheme.
+ * Returns the theme the page shows afterwards: a page without the toggle (many detail
+ * pages have none) keeps its theme, so the result differs from `mode`. It never waits
+ * for a toggle that is not there.
  * Safe: a local preference, not saved to the user.
  */
 export async function setTheme(page, mode) {
@@ -733,12 +747,22 @@ export async function setTheme(page, mode) {
     return mode;
   }
   const current = () => currentTheme(page);
+  if ((await current()) === mode) return mode;
+  if (!(await hasThemeToggle(page))) return current();
   for (let i = 0; i < 2; i++) {
     if ((await current()) === mode) return mode;
-    await page.locator(UI.theme.toggle).first().click();
+    await page.locator(UI.theme.toggle).first().click({ timeout: 5000 });
     await page.waitForTimeout(250);
   }
   return current();
+}
+
+/** True when the page has the profile's theme toggle (waits at most 1.5 s for it). */
+export async function hasThemeToggle(page) {
+  if (!UI.theme?.toggle) return false;
+  const toggle = page.locator(UI.theme.toggle).first();
+  await toggle.waitFor({ state: "attached", timeout: 1500 }).catch(() => {});
+  return (await toggle.count()) > 0;
 }
 
 /** The theme the page shows now ("light" / "dark"), as setTheme understands it. */

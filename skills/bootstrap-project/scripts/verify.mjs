@@ -8,14 +8,15 @@
 // mode). Keep the two in step: references/contracts.md, "Dashboard readiness checks".
 // Part 2 checks what the dashboard does not: --describe JSON, plan-lanes JSON, the fixed
 // skill names, deny vs the "to PR" overlay, .gitignore, executable bits, bash -n,
-// node --check, leftover placeholders, and the "bare commands" rule in every skill.
+// node --check, leftover placeholders, the "bare commands" rule in every skill, and
+// (tips) layout paths, env files and CONFIG blocks that no longer match bootstrap.json.
 //
 // Exit code 0 when every required check passes, 1 otherwise. Tips never fail the run.
 import { readFileSync, existsSync, readdirSync, statSync, lstatSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { checkParams, moduleOn } from './render.mjs';
+import { checkParams, moduleOn, renderAll, configDiff } from './render.mjs';
 
 const argv = process.argv.slice(2);
 const opt = { json: false };
@@ -200,6 +201,29 @@ check('claudemd', 'dash-tip', 'CLAUDE.md', existsSync(R('CLAUDE.md')));
 {
   const errs = params ? checkParams(params) : ['missing'];
   check('bootstrap-json', 'required', '.claude/bootstrap.json is valid', !errs.length, errs.join('; '));
+}
+// tips: the paths in bootstrap.json exist, and the scripts' CONFIG blocks match it.
+// A layout change (an app moved to the repo root) otherwise breaks plan-lanes, the env
+// copy and the lint hook without an error.
+if (params && !checkParams(params).length) {
+  const ly = params.layout || {};
+  const tracked = (run('git', ['ls-files']).out || '').split('\n').filter(Boolean);
+  const known = (p) => {
+    const rel = String(p).replace(/^\.\//, '');
+    return existsSync(R(rel)) || tracked.some((f) => f === rel || f.startsWith(rel.replace(/\/?$/, '/')));
+  };
+  const paths = [...(ly.folders || []).map((f) => f?.path), ...(ly.rootFiles || []), ...(ly.softFiles || [])].filter(Boolean);
+  const gone = [...new Set(paths.filter((p) => !known(p)))];
+  check('layout-paths', 'tip', 'The layout paths in bootstrap.json exist', !gone.length,
+    gone.length ? 'not in the repo: ' + gone.join(', ') + ' (fix layout.* in bootstrap.json, then --upgrade)' : `${paths.length} path(s)`);
+  const envs = (ly.envFiles || []).length ? ly.envFiles : ['.env'];
+  const noEnv = envs.filter((e) => !existsSync(R(e)));
+  check('env-files', 'tip', 'The env files that runs copy exist in this checkout', !noEnv.length,
+    noEnv.length ? 'missing: ' + noEnv.join(', ') + ' (a run starts without them)' : envs.join(', '));
+  const drift = renderAll(params, { upgrade: true }).filter((f) => /^\.claude\/scripts\//.test(f.path) && f.kind === 'file' && existsSync(R(f.path)))
+    .map((f) => ({ path: f.path, diff: configDiff(read(R(f.path)) || '', f.content) })).filter((x) => x.diff.length);
+  check('config-drift', 'tip', 'The CONFIG blocks of .claude/scripts match bootstrap.json', !drift.length,
+    drift.length ? drift.map((x) => `${x.path}: ${x.diff.length} line(s) differ`).join('; ') + ' (render.mjs --upgrade shows them; --reset-config --apply <path> takes the answers)' : '');
 }
 // tips: tools, the tooling on origin/<base>, the registry entry
 {

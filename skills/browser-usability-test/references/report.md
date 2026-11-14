@@ -9,7 +9,7 @@ Use this structure. Plain words, concrete examples (real values, real ids).
 
 **TLDR:** <2–3 plain sentences: does it work, the worst problem, what to do first.>
 
-**Report page:** [<date>-<route>-report.html](<url that compare.mjs printed>) — updated after every change
+**Report page:** [<the file name compare.mjs printed>](<url that compare.mjs printed>) — updated after every change
 
 **Tested:** <one line per plan section: what you actually ran — states, widths, themes, number of AI questions, etc.>
 **Not tested:** <anything skipped and why>

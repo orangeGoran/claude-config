@@ -1,6 +1,8 @@
 // First pass over one page: load it signed in, collect console/network problems,
 // run axe in both themes, screenshot light + dark, check the four standard widths.
 // Costs one page load.
+// A page without the profile's theme toggle (ui.theme.toggle) is tested in the theme it
+// shows; the other theme is reported as "not available", never waited for.
 // Usage: node scripts/smoke.mjs /dashboard [--locale=en] [--name=dashboard]
 // Output: summary JSON on stdout and in $QA_DIR (default: $TMPDIR/browser-qa/<project>/<account>).
 import {
@@ -45,14 +47,20 @@ try {
     shots: {},
   };
 
-  // Theme switching follows the profile (ui.theme), see setTheme.
+  // Theme switching follows the profile (ui.theme), see setTheme. A page without the
+  // theme toggle keeps its theme: the other theme is reported as not available.
   const startTheme = await currentTheme(page);
   for (const mode of ["light", "dark"]) {
-    result[`theme-${mode}`] = await setTheme(page, mode);
+    const shown = await setTheme(page, mode);
+    if (shown !== mode) {
+      result[`theme-${mode}`] = `not available: the page has no theme toggle and shows ${shown}`;
+      continue;
+    }
+    result[`theme-${mode}`] = shown;
     result.shots[mode] = await screenshot(page, `${name}-${mode}`);
     result[`axe-${mode}`] = await axeScan(page, { save: `${name}-${mode}` });
   }
-  await setTheme(page, startTheme);
+  if ((await currentTheme(page)) !== startTheme) await setTheme(page, startTheme);
 
   result.responsive = await checkResponsive(page, name);
   result.log = summarizeLog(log);

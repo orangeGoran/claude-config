@@ -3,10 +3,17 @@
 // and rewritten, to the same file, whenever something changes: a finding with a "result"
 // shows its view before and after the fix, an open one the screen as it was found. A later
 // run on the same route updates that file too, and each page it replaces stays as a version.
-// Usage: node scripts/compare.mjs <items.json> [--out=<file.html>]
+// Usage: node scripts/compare.mjs <items.json> [--out=<file.html>] [--dir=<QA_DIR>]...
+//   --out   the report file; a relative name lands in the project's reports folder
+//   --dir   another QA_DIR whose shots the report uses (repeatable, like "dirs"), for
+//           example the folder of the changeShot "old" side taken against the old app
+//   QA_RUN_SLUG / QA_PR (or "runSlug" / "pr" in items.json): one report per run, not per
+//           route, so parallel runs on the same route never overwrite each other:
+//           <date>-pr-<n>-<slug>-report.html, or <date>-<slug>-report.html without a PR
 // items.json (written by Claude after the test run, and updated after every change):
 //   {
 //     "date": "2026-10-31",                                  // day of the test run: names the file of a route's first report
+//     "runSlug": "add-order-export", "pr": 612,              // optional, pipeline runs: name the file per run (or QA_RUN_SLUG / QA_PR)
 //     "route": "/cases", "account": "Ana (Member, Acme)",
 //     "title": "Filters on /cases fit a phone",              // optional, plain-words headline
 //     "issues": ["https://github.com/acme/shop-web/issues/435"],  // GitHub issues/PRs the run tests; the QA list searches them
@@ -21,6 +28,7 @@
 //                 "result": "fixed" | "partly" | "not-fixed",  // leave out while the finding is open
 //                 "note": "…",                                // optional, what to look at in the pictures
 //                 "shots": ["filterbar-390", { "name": "filterbar-dark", "caption": "Dark theme" }],  // beforeAfterShot names
+//                 // (a changeShot name works too: its old / new sides show as before / after)
 //                 // "caption" names the view and shows on both sides; "beforeCaption" / "afterCaption"
 //                 // describe each side ("D8 is cut off" / "all steps show")
 //                 "references": [{ "file": "/…/sibling.png", "caption": "Admin users list" }],  // optional, the standard it should match
@@ -43,8 +51,11 @@
 // "before" is the version tested. "reviewEachFix" asks "Should I apply this fix?" on an open
 // finding and "Is this fix good?" on a fixed one.
 // Output: ~/.claude/browser-usability-test/projects/<project>/reports/<date>-<route>-report.html
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { extname, join } from "node:path";
+// Shots: before-after.json of QA_DIR, "dirs" and --dir, merged side by side (an "old" side
+// from one folder and a "new" side from another make one pair). A shot file
+// <name>.<before|after|old|new>.png without a record is used too.
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { sameNameIn, writeVersioned } from "../../../scripts/page-versions.mjs";
 import { BEFORE_AFTER_FILE, PROJECT } from "./lib.mjs";
 import { STORE } from "./profile.mjs";
@@ -54,20 +65,32 @@ const input = process.argv[2];
 if (!input) throw new Error("Usage: node compare.mjs <items.json> [--out=<file.html>]");
 const arg = (k) =>
   process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3);
+const args = (k) =>
+  process.argv.filter((a) => a.startsWith(`--${k}=`)).map((a) => a.slice(k.length + 3));
 const spec = JSON.parse(readFileSync(input, "utf8"));
 const items = spec.items ?? [];
 // a finding is done once it has a result; until then it is open and shows only "as found"
 const done = (item) => item.result != null;
 const ANY_DONE = items.some(done);
 
-// Shot records from this account's folder plus any extra account folders.
+// Shot records from this account's folder plus the extra folders (other accounts, the
+// old app). Merged per side: a name's "old" from one folder and "new" from another make
+// one pair, so nobody merges or writes before-after.json by hand.
+const SIDES = ["before", "after", "old", "new"];
 const shots = {};
-for (const file of [
-  BEFORE_AFTER_FILE,
-  ...(spec.dirs ?? []).map((d) => join(d, "before-after.json")),
-]) {
-  if (existsSync(file)) Object.assign(shots, JSON.parse(readFileSync(file, "utf8")));
+const shotDirs = [...new Set([dirname(BEFORE_AFTER_FILE), ...(spec.dirs ?? []), ...args("dir")].map((d) => resolve(d)))];
+for (const dir of shotDirs) {
+  const file = join(dir, "before-after.json");
+  const records = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+  for (const [name, rec] of Object.entries(records)) shots[name] = { ...shots[name], ...rec };
+  // a shot file without a record (taken by hand, or the record was lost)
+  const files = existsSync(dir) ? readdirSync(dir) : [];
+  for (const f of files) {
+    const m = f.match(/^(.+)\.(before|after|old|new)\.png$/);
+    if (m && !shots[m[1]]?.[m[2]]) shots[m[1]] = { ...shots[m[1]], [m[2]]: { file: join(dir, f) } };
+  }
 }
+const missingDirs = shotDirs.filter((d) => !existsSync(d));
 
 const warnings = [];
 const esc = (s) =>
@@ -89,6 +112,8 @@ const describe = (r) =>
 // The "after" must show the same state as the "before", or the pair proves nothing.
 function stateDiff(b, a) {
   const diff = [];
+  // a pair rebuilt from bare files has no state to compare
+  if (!b.path || !a.path) return diff;
   if (b.path !== a.path) diff.push(`route ${b.path} → ${a.path}`);
   if (b.viewport?.width !== a.viewport?.width)
     diff.push(`width ${b.viewport?.width} → ${a.viewport?.width}`);
@@ -116,19 +141,23 @@ function pair(item, shot) {
   // "caption" names the view; a caption that describes the defect belongs on the before side only
   const before = beforeCaption ?? caption ?? name;
   const after = afterCaption ?? caption ?? name;
-  const rec = shots[name] ?? {};
-  if (!rec.before) warnings.push(`#${item.id}: no "before" shot named ${name}`);
+  const all = shots[name] ?? {};
+  // a changeShot pair (old / new) stands in for a missing before / after
+  const kb = all.before ? "before" : all.old ? "old" : "before";
+  const ka = all.after ? "after" : all.new ? "new" : "after";
+  const rec = { before: all[kb], after: all[ka] };
+  if (!rec.before) warnings.push(`#${item.id}: no "before" (or changeShot "old") shot named ${name}`);
   if (!done(item) && !rec.after)
     return `<div class="gallery">
-${figure("before", rec.before?.file, before, `#${item.id} as found`, rec.before)}
+${figure(kb, rec.before?.file, before, `#${item.id} as found`, rec.before)}
 </div>`;
   if (!rec.after)
     warnings.push(`#${item.id}: no "after" shot named ${name} (rerun with QA_PHASE=after)`);
   const diff = rec.before && rec.after ? stateDiff(rec.before, rec.after) : [];
   if (diff.length) warnings.push(`#${item.id} ${name}: state differs — ${diff.join(", ")}`);
   return `<div class="gallery">
-${figure("before", rec.before?.file, before, `#${item.id} before the fix`, rec.before)}
-${figure("after", rec.after?.file, after, `#${item.id} after the fix`, rec.after)}
+${figure(kb, rec.before?.file, before, `#${item.id} before the fix`, rec.before)}
+${figure(ka, rec.after?.file, after, `#${item.id} after the fix`, rec.after)}
 </div>${diff.length ? `<p class="warn">Not taken in the same state: ${esc(diff.join(", "))}</p>` : ""}`;
 }
 
@@ -561,10 +590,22 @@ ${copyBlocks.join("\n")}
 </html>
 `;
 
-const slug = route.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "root";
+const slugify = (s) => String(s).replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase();
+const slug = slugify(route) || "root";
 const reports = join(STORE, PROJECT.name, "reports");
-// One route has one report, also across days; what it replaces stays as an older version.
-const out = arg("out") ?? join(reports, sameNameIn(reports, `${spec.date ?? date}-${slug}-report.html`));
+// A pipeline run names its own report (plan slug without its timestamp, PR number), so
+// parallel runs on one route never write the same file. Otherwise one route has one
+// report, also across days. What a write replaces stays as an older version.
+const runSlug = slugify(String(process.env.QA_RUN_SLUG ?? spec.runSlug ?? "").replace(/^\d{8}-\d{6}-/, ""));
+const pr = String(process.env.QA_PR ?? spec.pr ?? "").replace(/^#/, "");
+if (pr && !/^\d+$/.test(pr)) throw new Error(`QA_PR / "pr" must be a PR number, got "${pr}".`);
+const fileName = pr ? `${spec.date ?? date}-pr-${pr}-${runSlug || slug}-report.html`
+  : runSlug ? `${spec.date ?? date}-${runSlug}-report.html`
+  : `${spec.date ?? date}-${slug}-report.html`;
+const outArg = arg("out");
+// a relative --out is a name in the reports folder, never a file in the current folder
+const out = outArg ? (isAbsolute(outArg) ? outArg : join(reports, outArg)) : join(reports, sameNameIn(reports, fileName));
+for (const d of missingDirs) warnings.push(`shot folder ${d} does not exist`);
 const updated = existsSync(out);
 const version = writeVersioned(out, html);
 

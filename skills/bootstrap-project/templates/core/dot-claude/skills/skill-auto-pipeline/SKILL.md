@@ -20,6 +20,7 @@ You run **unattended** (headless `claude -p`, nobody watching) inside a dedicate
 - **Never** `git push`, `gh pr create` or another network write — except in `--stop-after=pr`, where `/skill-5-ship` pushes the current `auto/*` branch (never `--force`) and opens a **draft** PR. The owner granted this by choosing the "to PR" mode.
 - **Never** switch branches, touch `<base>` or `@@PROD_BRANCH@@`, or change other worktrees.
 - **Never** use AskUserQuestion. Nobody can answer it.
+- **Never end your turn between two phases.** Continue until the run reaches the stop point of its mode (`--stop-after`) or a stop state (`FAILED`, `BLOCKED`, `NEEDS DECISION`). When a phase ends, update the report and start the next phase in the same turn. A turn that ends early stops the run silently: nobody is there to say "continue".
 - **Never** delete or reset anything on failure. Leave the worktree as it is.
 - **Never** edit files under `.claude/`, `.vscode/` or `~/.claude/`. A headless run cannot write there (Claude Code protects these folders). If the plan needs such a file, do the other steps and list the file under Open items for the owner.
 
@@ -49,7 +50,7 @@ Preflight (on failure: status `FAILED: preflight` with the reason, then end):
 
 ## Report protocol
 
-The report is the owner's window into this run. The plans dashboard reads it.
+The report is the owner's window into this run. The plans dashboard reads it. After the run, the launcher compacts this session, and the owner's follow-ups start from a summary. The report must hold everything a follow-up needs: every finding with its number, every open question exactly as written, the checks with their results, and the paths of the evidence files.
 
 - After each phase: update the `## Status:` line and add one Timeline entry (`- HH:MM:SS — <one line>`).
 - Statuses: `RUNNING` → `IMPLEMENTED` → `TESTED` → `VERIFIED` (→ `VERIFIED — AWAITING REVIEW` in verify mode) → `DOCUMENTED` → `COMMITTED — READY TO PUSH` (commit mode) or `PR OPEN — <url>` (pr mode). Stop states: `FAILED: <phase>`, `BLOCKED: <reason>`, `NEEDS DECISION — <n> questions`.
@@ -63,13 +64,14 @@ The report is the owner's window into this run. The plans dashboard reads it.
 2. **Test** — invoke `/skill-3-test <plan-file> --unattended`. It writes the missing tests, runs the scoped fix loop and one full run as evidence. Copy its summary under `## Tests`. Status `TESTED`. Tests still failing → `FAILED: test`. Open questions → **Needs decision**.
 @@IF HAS_BROWSER_TEST@@
    - It also runs the plan's browser test. Copy its browser-test lines (rounds, report page link, findings fixed, findings listed, test data made) under `## Browser test`. In-scope findings still open after 3 rounds do not fail the run: they go to the PR as open points.
+   - When the plan has a **Browser test** section that is not `None — <reason>`, "skipped" is not a valid result. The browser test did not run, or has no report page link → status `BLOCKED — browser test (<reason>)`, the reason under `## Diagnosis`, and end the session. Do not commit or ship without it.
 @@END@@
 3. **Verify** — invoke `/skill-4-verify <plan-file> --unattended`. It runs the `/code-review` loop (max 2 rounds) and the rule audit (hard rules, contracts, doc comments, tests, secrets, plan scope).
 @@IF MOD_TEST_REVIEW@@
    - It also runs `/test-review --fix`. Copy its `## Summary for the PR` under `## Test review`.
 @@END@@
    - Run every command in the plan's "How to verify" yourself, as bare commands.
-   - Copy its review order, table, rounds and open items under `## Verification` and `## Code review`.
+   - Copy its review order, table, rounds, numbered findings (`F1`, `F2`, …, with file:line and state) and open items (each question exactly as written) under `## Verification` and `## Code review`.
    - Any row still Fail after its fixes → `FAILED: verify`. Open items that need the owner → **Needs decision**. Otherwise status `VERIFIED`.
 
 **Failure budget:** each phase gets at most 2 fix-and-retry rounds beyond the skills' own loops. Then set `FAILED: <phase>` with a diagnosis and end the session.
@@ -124,9 +126,12 @@ Nothing is pushed. To open the PR, resume this run in "to PR" mode, or:
 **pr mode:**
 
 @@IF MOD_DECISION_SHEET@@
-6. **Decision sheet** — read `.claude/skills/decision-sheet/SKILL.md` and follow it with `--base <base> --plan .plans/done/<plan-file> --report <report> --out <report dir>/<slug>-decision-sheet.md`. It never blocks: when it fails, write one Timeline line and continue.
+6. **Decision sheet** — read `.claude/skills/decision-sheet/SKILL.md` and follow it with `--base <base> --plan .plans/done/<plan-file> --report <report> --out <report dir>/<slug>-decision-sheet.md`. Write one Timeline line with its status, the number of questions and its path. It never blocks: when it fails, write one Timeline line and continue.
 @@END@@
 7. **Ship** — `/skill-5-ship` cannot be invoked as a skill from here (`disable-model-invocation`). Read `.claude/skills/skill-5-ship/SKILL.md` and follow it end to end with `--unattended --report <report> --base <base>`. It sets the final status: `PR OPEN — <url>` (with a `PR: <url>` line) or `BLOCKED: …`.
+@@IF HAS_BROWSER_TEST@@
+   - Its browser-test gate can stop the ship with `BLOCKED — browser test (<reason>)` and no PR. Copy the reason under `## Diagnosis`: which ticket has no pictures, or what the PR body lacks.
+@@END@@
 8. On `PR OPEN`, append and end the session:
 
 ```markdown

@@ -24,6 +24,10 @@
 #   --status          list all runs and their status
 #   --cleanup <slug>  remove a run's worktree and auto/<slug> branch (after merge)
 #   --describe        print the modes as JSON (read by the plans dashboard)
+#
+# Every launch and resume runs a preflight first: the allow rules of the commands a run
+# needs, PREFLIGHT_CMDS and the browser-test profile in the worktree, and plan-lanes.
+# A failure stops the launch with the reason, before the headless session starts.
 set -euo pipefail
 @@IF MOD_CODEX@@
 # codex is often installed in ~/.local/bin, which a non-login shell does not have.
@@ -53,9 +57,17 @@ ENV_FILES=(@@ENV_FILES_BASH@@)
 RUN_EXTRA_ALLOW=(@@RUN_EXTRA_ALLOW_BASH@@)
 # EDIT 5: the mode the dashboard preselects (verify | commit | pr).
 DEFAULT_MODE="@@DEFAULT_MODE@@"
+# EDIT 6: bare commands every run needs (for example a generator the browser test reads).
+# The preflight runs each once in the new worktree; each must also have an allow rule.
+PREFLIGHT_CMDS=(@@PREFLIGHT_BASH@@)
+# EDIT 7: the browser-usability-test project of this repo; empty = no browser test.
+BROWSER_TEST_PROJECT="@@BROWSER_TEST_PROJECT@@"
 # ===================================================================================
+# settings that a CONFIG block from an older template does not have
+[ -n "${PREFLIGHT_CMDS+x}" ] || PREFLIGHT_CMDS=()
+BROWSER_TEST_PROJECT="${BROWSER_TEST_PROJECT:-}"
 
-usage() { sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1; }
 
 now() { date '+%Y-%m-%d %H:%M:%S'; }
 
@@ -149,6 +161,21 @@ check_install_tool() {
     echo "FATAL: $tool is not on PATH (INSTALL_CMD in the CONFIG block)."; exit 1; }
 }
 
+# A Read rule for a symlinked folder (~/.claude/skills/<skill> -> a claude-config checkout)
+# also needs the real path: the session reads the files where the link points.
+real_read_rules() {
+  local rule dir real
+  for rule in ${RUN_EXTRA_ALLOW[@]+"${RUN_EXTRA_ALLOW[@]}"}; do
+    case "$rule" in 'Read(~/'*'/**)') ;; *) continue ;; esac
+    dir="${rule#'Read(~/'}"
+    dir="$HOME/${dir%'/**)'}"
+    [ -L "$dir" ] || continue
+    real="$(cd "$dir" 2>/dev/null && pwd -P)" || continue
+    echo "Read(/$real/**)"
+  done
+  return 0
+}
+
 # per-run permission overlay: local commit rights + report writing in the MAIN repo
 write_run_settings() { # $1 = output path, $2 = mode (verify|commit|pr)
   # push + PR rights only in pr mode, and only for auto/* branches
@@ -169,7 +196,7 @@ write_run_settings() { # $1 = output path, $2 = mode (verify|commit|pr)
       ("Read(//" + $r + "/.plans/auto-runs/**)"),
       ("Edit(//" + $r + "/.plans/auto-runs/**)")
     ] + $ARGS.positional + $pr) }
-  }' ${RUN_EXTRA_ALLOW[@]+"${RUN_EXTRA_ALLOW[@]}"} > "$1"
+  }' ${RUN_EXTRA_ALLOW[@]+"${RUN_EXTRA_ALLOW[@]}"} $(real_read_rules) > "$1"
 }
 
 # merge the repo allowlist + per-run overlay into ALLOW_RULES, passed via --allowedTools:
@@ -184,6 +211,204 @@ build_allow_rules() { # $1 = run-settings path
     [ -n "$rule" ] && ALLOW_RULES+=("$rule")
   done < <(jq -r -s 'map(.permissions.allow // []) | add | unique | .[]' \
     "${files[@]}" 2>/dev/null)
+  DENY_RULES=()
+  while IFS= read -r rule; do
+    [ -n "$rule" ] && DENY_RULES+=("$rule")
+  done < <(jq -r -s 'map(.permissions.deny // []) | add | unique | .[]' \
+    "${files[@]}" 2>/dev/null)
+}
+
+# --- preflight ----------------------------------------------------------------
+# A run that hits a refused command or a broken generator stops hours later as BLOCKED.
+# The preflight finds that before the session starts.
+
+# true when one of the rules ($2...) matches the command $1 the way Claude Code matches
+# Bash(...) rules: "*" is any text, a trailing ":*" is a prefix
+rule_matches() {
+  local cmd="$1" rule pat
+  shift
+  for rule in "$@"; do
+    case "$rule" in 'Bash('*')') ;; *) continue ;; esac
+    pat="${rule#Bash(}"
+    pat="${pat%)}"
+    case "$pat" in *':*') pat="${pat%:\*}*" ;; esac
+    # shellcheck disable=SC2053 # the rule is a glob pattern
+    [[ "$cmd" == $pat ]] && return 0
+  done
+  return 1
+}
+
+# the commands a run will need, one per line, written the way the session runs them
+run_commands() {
+  local c
+  for c in ${PREFLIGHT_CMDS[@]+"${PREFLIGHT_CMDS[@]}"}; do echo "$c"; done
+  if [ -n "$BROWSER_TEST_PROJECT" ]; then
+    echo "node $HOME/.claude/skills/browser-usability-test/scripts/profile.mjs resolve"
+    echo "QA_APP_URL=http://localhost:3999 node $HOME/.claude/skills/browser-usability-test/scripts/smoke.mjs /"
+    echo "node $HOME/.claude/skills/browser-usability-test/scripts/compare.mjs items.json"
+    echo "curl -s -o /dev/null -w %{http_code} https://github.com/user-attachments/assets/x"
+  fi
+  return 0
+}
+
+# exits when a needed command matches no allow rule, or matches a deny rule
+check_run_permissions() {
+  local cmd
+  local refused=()
+  while IFS= read -r cmd; do
+    [ -n "$cmd" ] || continue
+    if rule_matches "$cmd" ${DENY_RULES[@]+"${DENY_RULES[@]}"}; then
+      refused+=("$cmd   (a deny rule matches)")
+    elif ! rule_matches "$cmd" ${ALLOW_RULES[@]+"${ALLOW_RULES[@]}"}; then
+      refused+=("$cmd")
+    fi
+  done < <(run_commands)
+  [ "${#refused[@]}" -eq 0 ] && return 0
+  echo "FATAL: preflight — the headless run would be refused these commands:"
+  printf '  %s\n' "${refused[@]}"
+  echo "Add an allow rule for each (pipeline.runAllow or pipeline.preflight in .claude/bootstrap.json,"
+  echo "then /bootstrap-project --upgrade; or RUN_EXTRA_ALLOW in this script's CONFIG). Nothing was launched."
+  exit 1
+}
+
+# prints the reason when plan-lanes fails or cannot read the plan's files (stale roots)
+lanes_problem() { # $1 = slug
+  local out
+  [ -f "$REPO/.claude/scripts/plan-lanes.mjs" ] || return 0
+  out="$(cd "$REPO" && node .claude/scripts/plan-lanes.mjs --json 2>/dev/null)" \
+    || { echo "plan-lanes.mjs --json failed (run it in the repo to see why)"; return 0; }
+  printf '%s' "$out" | jq -e . >/dev/null 2>&1 || { echo "plan-lanes.mjs --json did not print JSON"; return 0; }
+  printf '%s' "$out" | jq -r --arg s "$1" '
+    [(.excluded // [])[] | select(.slug == $s and ((.unresolvedNames // []) | length) > 0
+      and ((.reason // "") | startswith("names no code files")))][0] // empty
+    | "plan-lanes cannot place the plan: unresolved \(.unresolvedNames | join(", ")); check layout.folders in .claude/bootstrap.json and the roots in plan-lanes.mjs"'
+  return 0
+}
+
+# runs the needed commands once in the worktree; prints the first problem, or nothing
+worktree_problem() { # $1 = worktree, $2 = log, $3 = "fresh" when the tree must stay clean
+  local c out dirty
+  local argv=()
+  for c in ${PREFLIGHT_CMDS[@]+"${PREFLIGHT_CMDS[@]}"}; do
+    read -r -a argv <<< "$c"
+    echo "-> preflight: $c" >> "$2"
+    ( cd "$1" && "${argv[@]}" ) >> "$2" 2>&1 || { echo "\`$c\` failed in the worktree (see the log)"; return 0; }
+  done
+  if [ -n "$BROWSER_TEST_PROJECT" ]; then
+    echo "-> preflight: browser-test profile resolve" >> "$2"
+    out="$(cd "$1" && node "$HOME/.claude/skills/browser-usability-test/scripts/profile.mjs" resolve 2>&1)" \
+      || { echo "the browser-test profile resolve failed: $(printf '%s' "$out" | tail -n 1)"; return 0; }
+    printf '%s' "$out" | jq -e --arg p "$BROWSER_TEST_PROJECT" '.project == $p and ((.missing // []) | length) == 0' >/dev/null 2>&1 \
+      || { echo "the browser-test profile is not \"$BROWSER_TEST_PROJECT\" with nothing missing: $(printf '%s' "$out" | jq -c '{project, missing}' 2>/dev/null)"; return 0; }
+  fi
+  if [ "${3:-}" = fresh ]; then
+    dirty="$(git -C "$1" status --porcelain | head -n 5 | tr '\n' ' ')"
+    [ -z "$dirty" ] || { echo "the preflight changed files in the worktree (${dirty% }) — gitignore that output"; return 0; }
+  fi
+  return 0
+}
+
+# marks the report BLOCKED with the preflight reason
+block_preflight() { # $1 = report, $2 = reason
+  sed_i 's|^## Status: .*|## Status: BLOCKED: preflight — see Diagnosis|' "$1"
+  printf -- '- %s — preflight failed: %s\n\n## Diagnosis\n\nPreflight: %s. Fix the cause, then Resume.\n' "$(now)" "$2" "$2" >> "$1"
+  sync_report_outcome "$1"
+}
+
+# --- session compaction -------------------------------------------------------
+# The owner often continues a run in VS Code hours later, after the prompt cache expired, and
+# each follow-up turn then reads the whole run again (often 400k+ tokens). Right after the run
+# the cache is still warm, so a /compact costs one cache read plus the summary, and later turns
+# read only the summary. AUTO_PIPELINE_COMPACT_MIN_TOKENS: compact only a context of at least
+# this size; 0 turns compaction off.
+COMPACT_MIN_TOKENS="${AUTO_PIPELINE_COMPACT_MIN_TOKENS:-150000}"
+
+# what the summary must keep: the owner's follow-ups ("1A 2B", "why is F3 open?") need it
+compact_instructions() {
+  cat <<'EOF'
+This headless auto-pipeline run has ended. The owner continues this session later to ask follow-up questions. Write a summary that keeps, with exact values:
+1. The plan slug, the branch, the worktree path, the PR number and URL, the last commit (hash and subject), and what is pushed, what is only committed, and what is uncommitted.
+2. The final report status, the phase where the run stopped, and why.
+3. Every finding, numbered as the run numbered it, with file:line, a one-line gist, and its state (fixed, deferred, decided, open).
+4. Every open decision question exactly as it was written (Question N, the facts, Option A and Option B, the recommended option), so that a reply like "1A 2B" still makes sense.
+5. Commands that failed or were refused, checks that were skipped, and manual steps left for the owner.
+6. Checks that ran and their results (tests with counts, revert checks, the browser test with its report link), and what was not measured.
+7. The paths of the plan, the run report, the validation files, the decision sheet and the evidence files.
+8. Background jobs that are still running.
+9. Standing rules that the owner gave during the run.
+Before answering a follow-up, re-read the run report, git and gh. Do not answer from this summary alone.
+EOF
+}
+
+# the transcript folder of a working directory (the same rule as vscode-session-copy.mjs)
+session_dir() { echo "$HOME/.claude/projects/$(printf '%s' "$1" | sed 's/[^a-zA-Z0-9]/-/g')"; }
+
+# Prints the session id of the run that just ended, or nothing. The log is shared by every
+# session of the plan (launch, each resume, each compaction), so this reads the log only
+# after byte $2, and accepts a transcript only when it changed after the marker file $4.
+run_session_id() { # $1 = log, $2 = log offset, $3 = session dir, $4 = start marker
+  local id f
+  id="$(tail -c +"$(( $2 + 1 ))" "$1" 2>/dev/null | grep -F '"subtype":"init"' \
+    | jq -rR 'fromjson? | select(.type == "system" and .subtype == "init") | .session_id // empty' 2>/dev/null \
+    | head -n 1)"
+  if [ -z "$id" ] && [ -d "$3" ]; then
+    # transcript names are UUIDs in a folder without spaces, so word splitting is safe
+    for f in $(ls -t "$3"/*.jsonl 2>/dev/null); do
+      [ "$f" -nt "$4" ] || break
+      head -c 65536 "$f" | grep -q '"entrypoint":"sdk-cli"' || continue
+      head -c 65536 "$f" | grep -qF '/skill-auto-pipeline ' || continue
+      id="$(basename "$f" .jsonl)"; break
+    done
+  fi
+  printf '%s' "$id"
+}
+
+# the context size of a transcript, in tokens: what the last main-thread answer reported,
+# or the size after the last compaction when no answer came after it
+context_tokens() { # $1 = transcript
+  grep -E '"type":"assistant"|"subtype":"compact_boundary"' "$1" 2>/dev/null | jq -rR 'fromjson?
+    | if .type == "assistant" and .isSidechain != true and .message.usage != null then .message.usage
+        | (.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)
+      elif .subtype == "compact_boundary" then .compactMetadata.postTokens // empty
+      else empty end' 2>/dev/null \
+    | tail -n 1
+}
+
+compact_skip() { echo "- $(now) — compaction skipped: $1" >> "$2"; } # $1 = reason, $2 = report
+
+# Compacts the session of the run that just ended, and writes one Timeline line either way.
+# It never changes the run status. Call it with `|| true`: it must not stop the VS Code copy.
+compact_session() { # $1 = worktree, $2 = report, $3 = log, $4 = run settings, $5 = log offset, $6 = start marker
+  local dir id file before after boundaries rc=0
+  case "$COMPACT_MIN_TOKENS" in
+    ''|*[!0-9]*) compact_skip "AUTO_PIPELINE_COMPACT_MIN_TOKENS is not a number ($COMPACT_MIN_TOKENS)" "$2"; return 0 ;;
+  esac
+  [ "$COMPACT_MIN_TOKENS" -gt 0 ] || { compact_skip "turned off (AUTO_PIPELINE_COMPACT_MIN_TOKENS=0)" "$2"; return 0; }
+  dir="$(session_dir "$1")"
+  id="$(run_session_id "$3" "$5" "$dir" "$6")"
+  [ -n "$id" ] || { compact_skip "no session id in the log or in $dir" "$2"; return 0; }
+  file="$dir/$id.jsonl"
+  [ -f "$file" ] || { compact_skip "no transcript $file" "$2"; return 0; }
+  before="$(context_tokens "$file")"
+  [ -n "$before" ] || { compact_skip "no context size in the transcript of session $id" "$2"; return 0; }
+  if [ "$before" -lt "$COMPACT_MIN_TOKENS" ]; then
+    compact_skip "context $(( before / 1000 ))k is under the $(( COMPACT_MIN_TOKENS / 1000 ))k threshold (session $id)" "$2"
+    return 0
+  fi
+  # the dashboard does not see this process as the run: say why the VS Code copy is not there yet
+  echo "- $(now) — compacting session $id ($(( before / 1000 ))k) before the VS Code copy" >> "$2"
+  boundaries="$(grep -cF '"subtype":"compact_boundary"' "$file")"
+  echo "-> compacting session $id ($before tokens)"
+  ( cd "$1" && claude -p "/compact $(compact_instructions)" --resume "$id" \
+      --permission-mode acceptEdits --settings "$4" \
+      --verbose --output-format stream-json ) || rc=$?
+  if [ "$(grep -cF '"subtype":"compact_boundary"' "$file")" -le "$boundaries" ]; then
+    echo "- $(now) — compaction failed (exit code $rc): session $id keeps its full context" >> "$2"
+    return 0
+  fi
+  after="$(grep -F '"subtype":"compact_boundary"' "$file" | tail -n 1 \
+    | jq -r '.compactMetadata.postTokens // empty | . / 1000 | floor' 2>/dev/null)"
+  echo "- $(now) — session compacted $(( before / 1000 ))k -> ${after:-?}k (session $id)" >> "$2"
 }
 
 # runs the headless session in the background; $1 = worktree, $2 = prompt, $3 = report,
@@ -193,9 +418,16 @@ start_session() {
     cd "$1"
     { trap '' HUP
       rc=0
+      # where this session starts in the shared log, for compact_session
+      local log_offset start_mark
+      log_offset="$(wc -c < "$4" | tr -d ' ')"
+      start_mark="$(mktemp)"
       # keep the Mac awake during the run (macOS only)
       local awake=()
       command -v caffeinate >/dev/null && awake=(caffeinate -i)
+      # wait for background subagents and shells (browser test, dev server) instead of
+      # stopping them 10 min after the last turn; that ended runs as "session exited"
+      export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
       nohup ${awake[@]+"${awake[@]}"} claude -p "$2" \
         --permission-mode acceptEdits \
         --settings "$5" \
@@ -203,6 +435,9 @@ start_session() {
         --verbose \
         --output-format stream-json || rc=$?
       mark_ended_if_unfinished "$3" "$rc"
+      # now, while the prompt cache is warm; the copy below must start from the summary
+      compact_session "$1" "$3" "$4" "$5" "$log_offset" "$start_mark" || true
+      rm -f "$start_mark"
       # the VS Code extension hides headless sessions; fork this one into a copy it lists
       node "$REPO/.claude/scripts/vscode-session-copy.mjs" "$1" || true
     } >> "$4" 2>&1 &
@@ -318,6 +553,13 @@ if [ "${1:-}" = "--resume" ]; then
   fi
   write_run_settings "$run_settings" "$STOP_AFTER"
   build_allow_rules "$run_settings"
+  check_run_permissions
+  problem="$(worktree_problem "$wt" "$log" resume)"
+  if [ -n "$problem" ]; then
+    echo "SKIP: preflight failed for $slug — $problem"
+    block_preflight "$report" "$problem"
+    exit 1
+  fi
   echo "- $(now) — resume requested (mode: $STOP_AFTER)" >> "$report"
   set_report_line "$report" Mode "$STOP_AFTER ($(mode_label "$STOP_AFTER"))"
   set_report_line "$report" Outcome running
@@ -379,6 +621,12 @@ git -C "$REPO" cat-file -e "$BASE_REF:.claude/skills/skill-auto-pipeline/SKILL.m
   || { echo "auto-pipeline skill is not on $BASE_REF yet — push the pipeline system first."; exit 1; }
 mkdir -p "$RUNS_DIR" "$WORKTREES_DIR"
 
+# preflight, part 1: the allow rules, once for all plans, before any worktree exists
+write_run_settings "$RUNS_DIR/.preflight-settings.json" "$STOP_AFTER"
+build_allow_rules "$RUNS_DIR/.preflight-settings.json"
+rm -f "$RUNS_DIR/.preflight-settings.json"
+check_run_permissions
+
 for plan in "${PLANS[@]}"; do
   plan_base="$(basename "$plan")"
   plan_file="$REPO/.plans/$plan_base"
@@ -400,16 +648,23 @@ for plan in "${PLANS[@]}"; do
   if ! git -C "$REPO" cat-file -e "$BASE_REF:.plans/$plan_base" 2>/dev/null; then
     echo "SKIP: plan not on $BASE_REF: .plans/$plan_base — push it first"; continue
   fi
+  problem="$(lanes_problem "$slug")"
+  [ -z "$problem" ] || { echo "SKIP: preflight failed for $slug — $problem"; continue; }
 
   echo "== $slug =="
   echo "-> creating worktree $wt on $branch (from $BASE_REF)"
   git -C "$REPO" worktree add --no-track "$wt" -b "$branch" "$BASE_REF" >/dev/null
+  env_missing=()
   for env_file in ${ENV_FILES[@]+"${ENV_FILES[@]}"}; do
     if [ -f "$REPO/$env_file" ]; then
       mkdir -p "$(dirname "$wt/$env_file")"
       cp "$REPO/$env_file" "$wt/$env_file"
+    else
+      env_missing+=("$env_file")
     fi
   done
+  # a missing env file is often a stale ENV_FILES path (the app moved): say it
+  [ "${#env_missing[@]}" -eq 0 ] || echo "WARNING: not in the main checkout, not copied: ${env_missing[*]} (ENV_FILES in the CONFIG block)"
 
   write_run_settings "$run_settings" "$STOP_AFTER"
   build_allow_rules "$run_settings"
@@ -444,6 +699,7 @@ for plan in "${PLANS[@]}"; do
 
 - $(now) — worktree created
 EOF
+  [ "${#env_missing[@]}" -eq 0 ] || echo "- $(now) — env files not in the main checkout, not copied: ${env_missing[*]}" >> "$report"
 
   # a new worktree has empty submodule folders; generators, checks and contract
   # syncs read them, so check them out at the commit the base branch pins
@@ -468,6 +724,15 @@ EOF
            echo "- $(now) — install failed; fix the cause and Resume" >> "$report"
            continue; }
   fi
+
+  # preflight, part 2: the run's commands once in the new worktree
+  problem="$(worktree_problem "$wt" "$log" fresh)"
+  if [ -n "$problem" ]; then
+    echo "SKIP: preflight failed for $slug — $problem (worktree kept; fix the cause, then Resume)"
+    block_preflight "$report" "$problem"
+    continue
+  fi
+  echo "- $(now) — preflight passed" >> "$report"
 
   echo "-> launching headless pipeline (log: .plans/auto-runs/$slug.log)"
   start_session "$wt" "/skill-auto-pipeline $plan_base --report=$report --stop-after=$STOP_AFTER --base=$BASE_BRANCH" \

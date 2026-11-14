@@ -72,8 +72,9 @@ The owner is not a template expert. Ask only what the owner alone can decide. Fi
 | Test data rule, example person for decision questions | `rules.testData`, `rules.exampleActor` | the hard rules and the roles in the code; else the defaults |
 | Folders, files that plans touch, files many plans only append to, env files for worktrees | `layout.*` | top-level folders, `plan-lanes.mjs` CONFIG when it exists, `.env.example` |
 | Default run mode, extra run rules | `pipeline.*` | default `pr`; extra rules from docker compose and migration scripts |
+| Commands every run needs first | `pipeline.preflight[]` | a generator whose output is gitignored and that the checks or the browser test read (for example a `theme:generate` script that `predev` / `prebuild` runs, but `vite` alone does not). Never a command that changes tracked files (`generate:types` on committed types): the preflight stops when the tree is not clean |
 | The project's own checks per hard rule, the tests each rule needs, the validator's extra "never" limits | `rules.hard[].details`, `rules.hard[].tests`, `rules.validatorLimits` | In adopt and upgrade mode: copy them from the repo's existing `plan-validator.md`, `skill-1-plan`, `skill-3-test`, `skill-4-verify` and `apply-validation` (one short line each). Then the render keeps them, and no file needs a hand merge. |
-| Registrations | `registry.*` | dashboard yes; browser-usability-test yes when there is a web UI or an API. A web UI with `browserTest` also gets the browser-test step: `appUrl` is the dev server the owner runs; how to start the new code beside it belongs in the profile's `notes.md` |
+| Registrations | `registry.*` | dashboard yes; browser-usability-test yes when there is a web UI or an API. A web UI with `browserTest` also gets the browser-test step, the ship gate and the run allow rules for the skill's scripts (full path and `QA_*=` forms, `curl -s -o /dev/null -w *`): the render adds them, never write them by hand. `appUrl` is the dev server the owner runs; how to start the new code beside it belongs in the profile's `notes.md` |
 | Ticket evidence and board | `git.tickets.*` | the old skills or scripts that comment on issues or move them on a project board (`gh issue comment`, `gh project item-edit`); else leave it out |
 | Services a run needs | `pipeline.services[]` | the old skills' preflight checks, docker compose, the ports in `.env.example`; else leave it out |
 | Protected files, extra allow rules | `rules.protectedPaths`, `rules.extraAllow` | generated files; the old `settings.json` allow rules that are still useful |
@@ -106,7 +107,7 @@ What I found (reply OK, or name what is wrong):
 | `skills` | tip | at least one `.claude/skills/*/SKILL.md` |
 | `claudemd` | tip | `CLAUDE.md` exists |
 
-Part 2 adds what the dashboard does not check, but a run needs: valid `--describe` JSON, the plan-lanes JSON, the fixed skill names, no deny rule over the "to PR" overlay, no push rule in the shared allow list, the `.gitignore` lines, executable bits, `bash -n`, `node --check`, no leftover placeholder, "bare commands" in every skill, the `CLAUDE.md` shims, a valid `bootstrap.json`, and (tips) the tools, the push to `origin/<base>` and the registry entry.
+Part 2 adds what the dashboard does not check, but a run needs: valid `--describe` JSON, the plan-lanes JSON, the fixed skill names, no deny rule over the "to PR" overlay, no push rule in the shared allow list, the `.gitignore` lines, executable bits, `bash -n`, `node --check`, no leftover placeholder, "bare commands" in every skill, the `CLAUDE.md` shims, a valid `bootstrap.json`, and (tips) the layout paths and env files of `bootstrap.json`, CONFIG blocks that differ from it, the tools, the push to `origin/<base>` and the registry entry.
 
 ## Hand-off
 

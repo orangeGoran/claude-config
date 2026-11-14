@@ -23,7 +23,8 @@
 //               a script that exists keeps its own CONFIG block (hand-tuned values),
 //               and each line that differs from the answers is printed.
 //
-// Template syntax (only in templates/, never in the output):
+// Template syntax (only in templates/, never in the output). templates/partials/*.md are
+// shared blocks, rendered once and used as a value (reporting-rules.md -> REPORTING_RULES).
 //   @@NAME@@                a value from the variables below
 //   @@IF NAME@@ … @@END@@   keep the lines when NAME is true (directive on its own line)
 //   @@IFNOT NAME@@ … @@END@@
@@ -52,7 +53,12 @@ const arr = (v) => (Array.isArray(v) ? v.filter((x) => x !== null && x !== undef
 const NA = 'not available yet';
 const code = (s) => '`' + s + '`';
 const jsList = (xs) => '[' + xs.map((x) => `'${String(x).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(', ') + ']';
-const bashWords = (xs) => xs.map((x) => `'${String(x).replace(/'/g, `'\\''`)}'`).join(' ');
+// A rule with $HOME goes in double quotes, so bash expands it when the script runs: a
+// permission rule does not expand "~" or "$HOME" itself, and the session sees full paths.
+const bashWord = (x) => (String(x).includes('$HOME')
+  ? `"${String(x).replace(/["\\`]/g, '\\$&').replace(/\$(?!HOME\b)/g, '\\$')}"`
+  : `'${String(x).replace(/'/g, `'\\''`)}'`);
+const bashWords = (xs) => xs.map(bashWord).join(' ');
 const pad2 = (n) => String(n).padStart(2, '0');
 const stamp = (d) => `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
 
@@ -94,7 +100,9 @@ export function checkParams(p) {
   }
   // these values go into double-quoted bash strings and single prefix rules:
   // one bare command each, no shell operators, quotes or expansions
-  const cmds = [...Object.values(p.stack?.commands || {}), p.stack?.installCmd, p.stack?.postEditLint?.fix, p.stack?.postEditLint?.format];
+  const preflight = p.pipeline?.preflight;
+  if (preflight !== undefined && !(Array.isArray(preflight) && preflight.every((x) => typeof x === 'string'))) errs.push('pipeline.preflight must be a list of commands');
+  const cmds = [...Object.values(p.stack?.commands || {}), p.stack?.installCmd, p.stack?.postEditLint?.fix, p.stack?.postEditLint?.format, ...arr(preflight)];
   for (const c of cmds) {
     // "<file>" is a placeholder, not a redirection
     if (c && /[;&|<>`$"'\\]/.test(String(c).replace(/<[a-z-]+>/g, ''))) errs.push(`command "${c}" has a shell operator, a quote or a "$"; give one bare command`);
@@ -193,12 +201,23 @@ export function buildVars(p, now = new Date()) {
   if (services.some((s) => s.url)) runExtra.push('Bash(curl -sf -o /dev/null *)');
   if (services.some((s) => s.container)) runExtra.push('Bash(docker inspect -f {{.State.Running}} *)');
 
-  // browser test of a web UI (skill-1-plan section, skill-3-test step)
+  // commands every run needs (generators the checks or the browser test read): the
+  // launcher runs each once in the new worktree before the session starts (preflight)
+  const preflight = arr(p.pipeline?.preflight).map((c) => str(c)).filter(Boolean);
+  runExtra.push(...preflight.map((c) => `Bash(${c})`));
+
+  // browser test of a web UI (skill-1-plan section, skill-3-test step, skill-5-ship gate)
   const reg = p.registry || {};
   const hasBrowserTest = reg.browserTest === true && reg.role !== 'backend' && Boolean(str(reg.appUrl));
   if (hasBrowserTest) {
-    runExtra.push('Read(~/.claude/skills/browser-usability-test/**)', 'Read(~/.claude/browser-usability-test/**)',
-      'Bash(node ~/.claude/skills/browser-usability-test/scripts/*)');
+    // the session writes the full path (/Users/<me>/.claude/...), and a rule does not expand
+    // "~": keep the "~" rules for a typed "~" and add the $HOME ones (expanded by bash)
+    const bt = '.claude/skills/browser-usability-test';
+    runExtra.push(`Read(~/${bt}/**)`, 'Read(~/.claude/browser-usability-test/**)',
+      `Bash(node ~/${bt}/scripts/*)`, `Bash(QA_*=* node ~/${bt}/scripts/*)`,
+      `Bash(node $HOME/${bt}/scripts/*)`, `Bash(QA_*=* node $HOME/${bt}/scripts/*)`,
+      // the evidence step checks that each picture link loads (HTTP status only)
+      'Bash(curl -s -o /dev/null -w *)');
   }
 
   // tickets: evidence comment and board status (skill-5-ship)
@@ -244,7 +263,7 @@ export function buildVars(p, now = new Date()) {
   const pel = st.postEditLint || {};
   const exts = arr(pel.extensions).map((e) => String(e).replace(/^\*?\.?/, ''));
 
-  return {
+  const vars = {
     PROJECT_NAME: pr.name,
     PROJECT_TITLE: str(pr.title, pr.name),
     PROJECT_SUMMARY: str(pr.summary),
@@ -265,7 +284,7 @@ export function buildVars(p, now = new Date()) {
     INSTALL_CMD: str(st.installCmd),
     INSTALL_MANIFEST: str(st.manifest, 'package.json'),
     ENV_FILES_BASH: bashWords(arr(ly.envFiles).length ? arr(ly.envFiles) : ['.env']),
-    RUN_EXTRA_ALLOW_BASH: bashWords(runExtra),
+    RUN_EXTRA_ALLOW_BASH: bashWords([...new Set(runExtra)]),
     DEFAULT_MODE: p.pipeline?.defaultMode ?? 'pr',
     HARD_RULES: hardMd,
     HARD_RULE_TITLES: hard.map((h) => h.title.toLowerCase()).join(', '),
@@ -289,7 +308,7 @@ export function buildVars(p, now = new Date()) {
     LANES_ROOT_FILES: jsList(rootFiles),
     LANES_HARD_DOCS: jsList(parent && !parent.startsWith('.plans/') ? [parent] : []),
     LANES_SOFT_FILES: jsList(softFiles),
-    SETTINGS_ALLOW: JSON.stringify(allow, null, 2).replace(/\n/g, '\n    '),
+    SETTINGS_ALLOW: JSON.stringify([...new Set(allow)], null, 2).replace(/\n/g, '\n    '),
     SETTINGS_DENY: JSON.stringify(deny, null, 2).replace(/\n/g, '\n    '),
     SETTINGS_HOOKS: JSON.stringify(hooks, null, 2).replace(/\n/g, '\n  '),
     LINT_FIX_FILE_CMD: str(pel.fix),
@@ -323,7 +342,13 @@ export function buildVars(p, now = new Date()) {
     BOARD_OWNER: board ? str(board.owner) : '',
     BOARD_NUMBER: board ? String(board.number) : '',
     BOARD_STATUS: board ? str(board.status) : '',
+    PREFLIGHT_BASH: bashWords(preflight),
+    BROWSER_TEST_PROJECT: hasBrowserTest ? pr.name : '',
   };
+  // one shared block for every skill that reports (templates/partials/reporting-rules.md)
+  vars.REPORTING_RULES = renderText(readFileSync(path.join(TEMPLATES, 'partials', 'reporting-rules.md'), 'utf8'),
+    vars, 'templates/partials/reporting-rules.md').replace(/\n+$/, '');
+  return vars;
 }
 
 // ---------------------------------------------------------------------------
@@ -463,11 +488,34 @@ export function configDiff(current, rendered) {
   const a = c.slice(cb[0] + 1, cb[1]), b = r.slice(rb[0] + 1, rb[1]);
   return [...a.filter((l) => !b.includes(l)).map((l) => '- ' + l), ...b.filter((l) => !a.includes(l)).map((l) => '+ ' + l)];
 }
+// one setting of a CONFIG block: `NAME=…` (bash) or `const NAME = …` (JS)
+const settingName = (l) => l.match(/^([A-Z][A-Z0-9_]*)=/)?.[1] ?? l.match(/^const ([A-Z][A-Z0-9_]*) =/)?.[1] ?? null;
+/**
+ * The settings of the rendered block that the repo block lacks (a template update added
+ * them), each with its comment lines, so a kept block still defines every setting the
+ * generic code reads. A JS setting runs to the line that ends with ";".
+ */
+export function newSettings(currentBlock, renderedBlock) {
+  const have = new Set(currentBlock.map(settingName).filter(Boolean));
+  const out = [];
+  let comments = [];
+  for (let i = 0; i < renderedBlock.length; i++) {
+    const l = renderedBlock[i], name = settingName(l);
+    if (/^\s*(#|\/\/)/.test(l)) { comments.push(l); continue; }
+    if (!name) { comments = []; continue; }
+    const lines = [l];
+    while (l.startsWith('const ') && !lines.at(-1).trimEnd().endsWith(';') && i + 1 < renderedBlock.length) lines.push(renderedBlock[++i]);
+    if (!have.has(name)) out.push(...comments, ...lines);
+    comments = [];
+  }
+  return out;
+}
 export function keepConfig(current, rendered) {
   const c = current.split('\n'), r = rendered.split('\n');
   const cb = configBlock(c), rb = configBlock(r);
   if (!cb || !rb) return null;
-  return [...r.slice(0, rb[0]), ...c.slice(cb[0], cb[1] + 1), ...r.slice(rb[1] + 1)].join('\n');
+  const added = newSettings(c.slice(cb[0] + 1, cb[1]), r.slice(rb[0] + 1, rb[1]));
+  return [...r.slice(0, rb[0]), ...c.slice(cb[0], cb[1]), ...added, c[cb[1]], ...r.slice(rb[1] + 1)].join('\n');
 }
 
 export function plan(repo, files, { resetConfig = false } = {}) {
@@ -493,10 +541,12 @@ export function plan(repo, files, { resetConfig = false } = {}) {
     const cur = readFileSync(abs, 'utf8');
     let note = '', diff = [];
     if (!resetConfig && /^\.claude\/scripts\//.test(f.path)) {
-      diff = configDiff(cur, content);
       const kept = keepConfig(cur, content);
       if (kept !== null) content = kept;
-      if (diff.length) note = 'CONFIG differs: yours is kept; --reset-config --apply <path> takes the answers';
+      // the lines that still differ after the new settings moved in
+      diff = configDiff(kept ?? cur, f.content);
+      if (diff.length) note = 'CONFIG differs: yours is kept (new settings added); --reset-config --apply <path> takes the answers';
+      else if (kept !== null && configDiff(cur, kept).length) note = 'CONFIG: new settings added to yours';
     }
     const status = cur !== content ? 'changed' : diff.length ? 'config' : 'same';
     return [{ ...f, content, note, diff, status }];

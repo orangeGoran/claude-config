@@ -16,6 +16,8 @@ You run the **Test** step: `/skill-1-plan` → `/skill-2-implement` → `/skill-
 - **Unattended** (`--unattended`, set by `/skill-auto-pipeline`): never use AskUserQuestion. When this skill says "ask", write the question in the summary as an open question instead.
 - Do not run `git add`, `git commit` or `git push` here. The pipeline commits.
 
+@@REPORTING_RULES@@
+
 ## Step 0 — Scope
 
 - A plan file: read its **Tests** and **How to verify** sections. That is the scope.
@@ -50,7 +52,9 @@ Then lint and format the changed files with the repo's lint and format commands.
 
 ## Step 2.5 — Browser test
 
-Run it when the plan has a **Browser test** section that is not `None`. Unit tests pass first (Step 2).
+Run it when the plan has a **Browser test** section that is not `None`. Unit tests pass first (Step 2). Then it is required: "skipped" is not a result. When it cannot run (a service is down, the new code does not start, an account is missing), stop and report `BLOCKED — browser test (<reason>)` (interactive: tell the owner). A plan that needs no browser test says `None — <reason>` in its section; only that skips this step.
+
+Call the skill's scripts with the home folder written out, for example `node /Users/ana/.claude/skills/browser-usability-test/scripts/<file>.mjs` (not `~` and not `$HOME`; `QA_*=` variables in front when needed), as bare commands: the run's allow rules match that form. Run scripts write only into `QA_DIR`, never into this tree.
 
 1. Read `~/.claude/browser-usability-test/projects/@@PROJECT_NAME@@/notes.md`. It says how to start the new code next to the app on @@APP_URL@@ (the old code), which accounts to use, and which test data writes are allowed.
 2. Start the new code from this tree as the notes say, in the background. Name the helper before you wait for it. A temporary config file the notes add is deleted in step 6 and is never committed.
@@ -62,7 +66,8 @@ Run it when the plan has a **Browser test** section that is not `None`. Unit tes
    | May I write test data | Yes, where the profile notes allow it; nowhere else |
    | Which siblings to compare | The plan's **Siblings** line |
    | Should I fix a finding | Step 4 below decides |
-   | Post pictures on the ticket | No, not here: `/skill-5-ship` does it |
+   | Post pictures on the ticket | No, not here: `/skill-5-ship` does it. Take the before/after pairs it needs now: one `changeShot` pair (old code, new code) for each view the plan changes |
+   | Where the report page goes | Set `QA_RUN_SLUG=<plan slug>` when you run `compare.mjs`: one page per run, so parallel runs on the same route do not overwrite each other |
    | A design choice (siblings disagree) | Do not pick. Write it as an open question |
 
 4. For each finding:
@@ -71,7 +76,7 @@ Run it when the plan has a **Browser test** section that is not `None`. Unit tes
    - **A backend defect** (wrong data, a missing field, a wrong error): never work around it in this repo. Follow the hard rules in `AGENTS.md`, and list it.
    - **Outside the plan:** do not fix it. List it as a known limit.
 5. Repeat the browser test on the changed screens until no finding inside the plan is open, at most 3 rounds. Findings still open after round 3 go to the summary as open points.
-6. Stop the server and delete the temporary files of step 2. Keep the report page link.
+6. Stop the server and delete the temporary files of step 2 with the skill's `scripts/cleanup.mjs` (full path, as above; it removes the `vite.qa.config.*` files and `node_modules/.vite-qa-*` caches of this tree, and lists other untracked files a script may have left). Keep the report page link.
 @@END@@
 
 ## Step 3 — Evidence gate
@@ -93,7 +98,7 @@ Run it when the plan has a **Browser test** section that is not `None`. Unit tes
 - **Tests written:** one line each, with what it proves.
 - **Fixes made:** file and what changed.
 @@IF HAS_BROWSER_TEST@@
-- **Browser test:** rounds, the report page link, findings fixed, findings listed (sibling, backend, outside the plan), test data made (accounts, tenants, records) — or "skipped: <reason>".
+- **Browser test:** rounds, the report page link, findings fixed, findings listed (sibling, backend, outside the plan), test data made (accounts, tenants, records), and the before/after pairs taken for each ticket ("<k> of <n> tickets have a pair"). `None — <reason>` only when the plan's section says `None`; otherwise a browser test that did not run is `BLOCKED — browser test (<reason>)`, never "skipped".
 @@END@@
 - **Open questions:** "none", or each one in ASD-STE100 (the facts, one example step by step, Option A (recommended) and Option B, why A).
 

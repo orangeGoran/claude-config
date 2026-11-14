@@ -26,6 +26,8 @@ The reader opens this on a PR and has about two minutes. The reader does not rea
 
 Run every shell command bare: one command per call, no pipes, `&&`, redirection or heredocs. Headless runs auto-deny compound commands. Run the commands in this session, never in a subagent.
 
+@@REPORTING_RULES@@
+
 ## Step 1 — Collect the facts
 
 Read, do not guess. Each number in a question must come from one of these facts. Run each command alone:
@@ -37,6 +39,10 @@ Read, do not guess. Each number in a question must come from one of these facts.
 - `git log --format=%s <mb>..HEAD`
 
 Also read: the plan; the `changelog.d/` entry of this branch, if the project has `changelog.d/`; the contract changes (contract source: @@CONTRACT_SOURCE@@); the `## Timeline`, `## Code review` and `## Verification` sections of the pipeline report; the summary of the test-review report, if there is one.
+@@IF HAS_BROWSER_TEST@@
+
+Browser test: read the plan's **Browser test** section, the `## Browser test` section of the pipeline report, and the PR body's **Browser test** section when the PR is open (`gh pr view --json body`). Count the tickets of the plan and the tickets whose evidence comment has pictures. These counts are the sheet's "Browser test" line, and they must match the PR body.
+@@END@@
 
 @@IF MOD_CODEX@@
 ## Step 2 — Codex review (optional, never blocking)
@@ -104,6 +110,9 @@ Disagree? Untick or comment, then run `/pr-feedback <PR#>`.
 ✅ Verify: <n> findings fixed, <n> open
 ✅ Test review: <the first two lines of its summary>
 ℹ️ Contract changes: <one short item per change, or "none">
+@@IF HAS_BROWSER_TEST@@
+✅ Browser test: <k> of <n> tickets have before/after pictures; report page <link>
+@@END@@
 @@IF MOD_CODEX@@
 ⏭ Codex: skipped (<reason>). Run `/pr-feedback <PR#> --codex` to add it later.
 @@END@@
@@ -112,6 +121,9 @@ Disagree? Untick or comment, then run `/pr-feedback <PR#>`.
 
 - No questions → put `No decisions needed.` in place of the list, and keep the rest. The CI check passes with zero boxes.
 - Each "Checked by machines" line states what really ran. A check that did not run is ⏭ with the reason, never ✅.
+@@IF HAS_BROWSER_TEST@@
+- The "Browser test" line is ✅ only when every ticket has pictures and the PR body shows them. Otherwise it is 🔴 with the real count ("4 of 6 tickets have pictures"), and that is a kind-6 item. When the plan says `None — <reason>`, write `⏭ Browser test: none — <reason>`.
+@@END@@
 - Numbers start at 1 each time you build the sheet again. `/pr-feedback` matches boxes by their text, not their number.
 
 Then tell the owner in 3 lines: the status, the number of questions, and the path.

@@ -33,9 +33,10 @@ Optional env: `QA_PHASE` (`after` when retaking finding shots after a fix), `QA_
 | File | What it does |
 | --- | --- |
 | `scripts/profile.mjs` | Finds the project for the current repo; `init`, `add-repo`, `add-account`. Checks `project.json` and `accounts.json` against `references/*.schema.json` on every read and write |
-| `scripts/smoke.mjs <path>` | Opens a page signed in; prints headings, buttons, axe violations, console/network problems, light/dark screenshots, sideways-scroll check at 390/1100/1440/2555 px |
+| `scripts/smoke.mjs <path>` | Opens a page signed in; prints headings, buttons, axe violations, console/network problems, light/dark screenshots, sideways-scroll check at 390/1100/1440/2555 px. A page without the theme toggle is tested in the theme it shows (the other one: "not available") |
+| `scripts/cleanup.mjs [<repo>] [--dry-run]` | Removes the temporary `vite.qa.config.*` and `node_modules/.vite-qa-*` of a tree (only untracked ones) and lists the other untracked files |
 | `scripts/api.mjs <METHOD> <path> [body]` | Calls the API as the test account and prints the response; `SQL "<select>"` runs a read-only query |
-| `scripts/compare.mjs <items.json>` | The test run's report as one self-contained HTML file (screenshots embedded) in `~/.claude/browser-usability-test/projects/<project>/reports/<date>-<route>-report.html`: written as soon as the findings are known, rewritten after every change; fixed findings show before and after. A route has one report, also across days; each page it replaces stays in `reports/.versions/`, and the report server shows a version menu on the page |
+| `scripts/compare.mjs <items.json> [--out=<name>] [--dir=<QA_DIR>]` | The test run's report as one self-contained HTML file (screenshots embedded) in `~/.claude/browser-usability-test/projects/<project>/reports/<date>-<route>-report.html`; with `QA_RUN_SLUG` / `QA_PR`, `<date>-pr-<n>-<slug>-report.html` (one page per pipeline run). A relative `--out` lands in the reports folder. `--dir` adds the shots of another `QA_DIR` (merged per side): written as soon as the findings are known, rewritten after every change; fixed findings show before and after. A route has one report, also across days; each page it replaces stays in `reports/.versions/`, and the report server shows a version menu on the page |
 | `scripts/publish.mjs <report.html>` | The report's link for the chat: `http://localhost:4898/<project>/<file>.html`, served read-only by the plans dashboard (the VS Code chat opens only http(s) links). `compare.mjs` calls it. All reports, newest first: `http://localhost:4898/`. Another port: set `QA_REPORTS_PORT` for both the dashboard and Claude. Without the dashboard there is no link; Claude opens the file with `open` (macOS) or `xdg-open` (Linux) |
 | `scripts/lib.mjs` | Helpers below — import it from your own run scripts |
 
@@ -50,6 +51,7 @@ Optional env: `QA_PHASE` (`after` when retaking finding shots after a fix), `QA_
 | `screenshot(page, name, { fullPage, locator })` | PNG into `OUT_DIR` |
 | `beforeAfterShot(page, name, { fullPage, locator })` | Finding screenshot that can be retaken: side from `QA_PHASE` (`before` / `after`), route, width, theme and account recorded in `OUT_DIR/before-after.json` for `compare.mjs` |
 | `saveJson(name, data)` | JSON evidence into `OUT_DIR` |
+| `runFile(name)` | Path of a file in `OUT_DIR`, for any other file a run script writes (never a relative path: the current folder is the repo) |
 | `measure(page, selector, styles)` | Box, overflow and computed styles of one element |
 | `horizontalOverflow(page)` / `checkResponsive(page, name, widths)` | Sideways scroll check, with offending elements |
 | `axeScan(page, { include, exclude, save })` | axe WCAG 2.1 A/AA violations, compact; `save` writes every node with contrast data |
@@ -62,7 +64,7 @@ Optional env: `QA_PHASE` (`after` when retaking finding shots after a fix), `QA_
 | `step(log, results, name, fn, file)` / `markStep(log, name)` | Run one plan step with try/catch, save results, count requests per step |
 | `captureRequest(page, urlRegex, action)` | The request (method, url, JSON body) an action sends |
 | `activeElement(page)` / `tabSequence(page, n)` | Keyboard focus checks |
-| `setTheme(page, 'light' \| 'dark')` / `currentTheme(page)` | Switch / read the theme (profile `ui.theme` toggle, else `prefers-color-scheme`) |
+| `setTheme(page, 'light' \| 'dark')` / `currentTheme(page)` / `hasThemeToggle(page)` | Switch / read the theme (profile `ui.theme` toggle, else `prefers-color-scheme`). `setTheme` returns the theme shown: on a page without the toggle it keeps the theme and never waits for the toggle |
 | `fingerprint(locator)` / `compareFingerprints(a, b)` | How an element looks (size, spacing, font, icon, colours + the design token behind each, prefix `ui.cssTokenPrefix`) and the differences between two elements, for comparing with similar features |
 | `assertServersUp()` | Stops with a clear message when the app or the API is not running (`launch()` calls it) |
 | `cachedToken()` | Token saved by the last browser run, if younger than `auth.tokenMaxAgeMinutes` |

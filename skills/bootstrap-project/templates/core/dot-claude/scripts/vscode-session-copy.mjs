@@ -8,7 +8,8 @@
 // under a new session id, tagged as an extension session and given a title. The copy is
 // a fork: the original transcript is never modified, and an existing copy is never
 // overwritten (you may have continued it in the extension). Called by auto-pipeline.sh
-// after every headless session exits; safe to re-run by hand.
+// after every headless session exits and its compaction step, so the copy starts from the
+// summary; safe to re-run by hand.
 import {
   readFileSync, writeFileSync, renameSync, readdirSync, existsSync, openSync, readSync,
   closeSync, cpSync, statSync,

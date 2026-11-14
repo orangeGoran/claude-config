@@ -42,7 +42,8 @@ Rule: the templates follow these names. Do not rename a skill in a template. To 
 - `- **Mode**: <id> (<label>)` — Resume preselects this mode.
 - `- **Link**: <label> | <https url>` — max 5 buttons. The script adds `Open PR | <url>` from the `PR: <url>` line.
 - Timeline lines `- <time> — <text>`.
-- Statuses the skill uses: `RUNNING`, `IMPLEMENTED`, `TESTED`, `VERIFIED`, `VERIFIED — AWAITING REVIEW`, `DOCUMENTED`, `COMMITTED — READY TO PUSH`, `PR OPEN — <url>`, `FAILED: <phase>`, `BLOCKED: <reason>`, `NEEDS DECISION — <n> questions`. The script adds `ENDED — …` and `CLEANED — …`.
+- After each session the script adds one compaction line: `compacting session <id> (<n>k) before the VS Code copy`, then `session compacted <before>k -> <after>k (session <id>)`, `compaction failed (exit code <n>): …` or `compaction skipped: <reason>`. It never changes the status.
+- Statuses the skill uses: `RUNNING`, `IMPLEMENTED`, `TESTED`, `VERIFIED`, `VERIFIED — AWAITING REVIEW`, `DOCUMENTED`, `COMMITTED — READY TO PUSH`, `PR OPEN — <url>`, `FAILED: <phase>`, `BLOCKED: <reason>`, `BLOCKED — browser test (<reason>)` (the ship gate: no PR), `NEEDS DECISION — <n> questions`. The script adds `ENDED — …`, `CLEANED — …` and `BLOCKED: preflight — see Diagnosis`.
 
 ## plan-lanes JSON
 
@@ -52,7 +53,7 @@ Rule: the templates follow these names. Do not rename a skill in a template. To 
 - `recommendedBatch`: `[{ slug, file, areas: [string], validation: { claude, codex } }]`
 - `lanes`: `[{ lane, label, members: [slug] }]`
 - `inFlight`: `[{ slug, autoRunStatus }]`
-- also `awaitingReview`, `needsCleanup`, `staleReports` (read by `auto-pipeline.sh --status`)
+- also `awaitingReview`, `needsCleanup`, `staleReports` (read by `auto-pipeline.sh --status`), `excluded` (`[{ slug, reason, unresolvedNames }]`, read by the launch preflight) and `configWarnings` (CONFIG roots and files with no tracked file)
 
 The dashboard's "⚡ All" refuses until every registered project has this script.
 
@@ -104,16 +105,18 @@ The dashboard's "⚡ All" refuses until every registered project has this script
 | `modules.<name>` | boolean | no | Missing = on. Names: `codex`, `changelog`, `decision-sheet`, `test-review`, `step-gate`, `post-edit-lint`, `plans-parallel`, `pr-feedback`, `run-skill` |
 | `pipeline.defaultMode` | `verify`/`commit`/`pr` | no | Default `pr` |
 | `pipeline.runAllow[]` | list | no | Extra allow rules for every headless run |
-| `registry.{dashboard,color,browserTest,role,appUrl}` | mixed | no | Registrations. `browserTest: true` with a role other than `backend` and an `appUrl` (the app the owner runs, the "old code" side) also turns on the browser-test step (`skill-1-plan` section, `skill-3-test` Step 2.5). Without `appUrl` the step stays off |
+| `pipeline.preflight[]` | list | no | Bare commands every run needs (for example `pnpm theme:generate`, a generator whose output is gitignored). Each gets an allow rule, and the launch preflight runs each once in the new worktree |
+| `registry.{dashboard,color,browserTest,role,appUrl}` | mixed | no | Registrations. `browserTest: true` with a role other than `backend` and an `appUrl` (the app the owner runs, the "old code" side) also turns on the browser-test step (`skill-1-plan` section, `skill-3-test` Step 2.5), the ship gate (`skill-5-ship` Step 5.5), the run allow rules for the skill's scripts by full path (`$HOME`, expanded by bash) and `curl -s -o /dev/null -w *`, and the profile check of the launch preflight. Without `appUrl` all of it stays off |
 
 ## Template syntax
 
 Only in `templates/`. `render.mjs` fails on an unknown name, an unclosed block, or any leftover `@@…@@` in the output.
 
 - `@@NAME@@`: a value. `node scripts/render.mjs --vars` lists every name.
+- `templates/partials/`: shared blocks, rendered once and used as a value. `reporting-rules.md` → `@@REPORTING_RULES@@` (in `skill-3-test`, `skill-4-verify`, `skill-5-ship`, `decision-sheet`, `pr-feedback`).
 - `@@IF NAME@@` / `@@IFNOT NAME@@` … `@@END@@`: whole-line blocks on switches (`MOD_*`, `HAS_*`). The directive line may start with `#`, `//` or `<!--`.
 - Paths: a `dot-` segment prefix becomes `.` (`dot-claude` → `.claude`); a `.tmpl` suffix is removed (`AGENTS.md.tmpl` → `AGENTS.md`). This stops Claude Code from loading the templates as live skills or instructions inside claude-config.
 - `gitignore.fragment` (core and each module) merges into `.gitignore`. `editorconfig` → `.editorconfig`. `dot-plans/first-plan.md` → `.plans/<timestamp>-check-the-pipeline-end-to-end.md`, only when the repo has no plan. `parent-plan.md` → the `rules.parentPlan` path, a skeleton written only when that file does not exist.
 - `.claude/settings.json` is rendered, then parsed: invalid JSON fails the render.
 - In the output, the project spots are marked the way the repo scripts mark them: a `CONFIG (<project>)` block with `EDIT n` comments.
-- A re-render keeps the CONFIG block of a script that already exists in `.claude/scripts/` (the owner may have tuned it) and replaces only the generic code. `--reset-config` renders the block from the answers again.
+- A re-render keeps the CONFIG block of a script that already exists in `.claude/scripts/` (the owner may have tuned it) and replaces only the generic code. A setting that the template has and the kept block lacks (a template update added it) is added at the end of the block, with its comments. `--reset-config` renders the block from the answers again. `verify.mjs` shows a kept block that differs from the answers as the tip `config-drift`.
