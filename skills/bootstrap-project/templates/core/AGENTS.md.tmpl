@@ -74,6 +74,7 @@ Set up on @@TODAY@@ with `/bootstrap-project`. Update this section when the stat
 ## Git
 
 - Branches: @@BRANCH_CHAIN@@. `@@BASE_BRANCH@@` is the base branch. PRs go to `@@BASE_BRANCH@@`.
+- Never wait for or watch GitHub CI runs (no `gh pr checks --watch`, no polling). After a push the step is done.
 - Push only when the owner says so. The "to PR" mode counts as that permission, for its own `auto/<slug>` branch only. Never push `@@BASE_BRANCH@@` or `@@PROD_BRANCH@@` from an automated run. Never force-push.
 - Merge style: @@MERGE_STYLE@@ (@@MERGE_HINT@@).
 - Commit messages use Conventional Commits, with no AI attribution.

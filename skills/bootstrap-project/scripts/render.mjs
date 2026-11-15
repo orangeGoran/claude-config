@@ -315,7 +315,10 @@ export function buildVars(p, now = new Date()) {
     FORMAT_FILE_CMD: str(pel.format),
     TYPECHECK_CMD: str(cmd.typecheck),
     LINT_EXTENSIONS_CASE: exts.length ? exts.map((e) => `*.${e}`).join('|') : '*.__none__',
-    TODAY: now.toISOString().slice(0, 10),
+    // the setup date: from firstPlanTs (saved on the first render), so an upgrade keeps it
+    TODAY: p.firstPlanTs
+      ? `${p.firstPlanTs.slice(0, 4)}-${p.firstPlanTs.slice(4, 6)}-${p.firstPlanTs.slice(6, 8)}`
+      : now.toISOString().slice(0, 10),
     FIRST_PLAN_TS: p.firstPlanTs || stamp(now),
     // switches for @@IF@@ blocks
     HAS_REMOTE: Boolean(pr.remote),
