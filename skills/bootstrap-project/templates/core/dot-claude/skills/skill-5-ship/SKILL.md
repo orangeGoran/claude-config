@@ -32,7 +32,27 @@ Ship: $ARGUMENTS
 2. `git merge --no-edit origin/<base>`.
    - "Already up to date" → Step 3.
    - Merged cleanly → run the checks again (Step 3), because the base changed.
-   - Conflicts → stop. Leave the merge in progress, and list the conflicted files. Do not resolve conflicts in `@@PARENT_PLAN@@`, `AGENTS.md` or contract files by guessing. (Interactive: the owner can run `/merge-parent`.)
+   - Conflicts → resolve them (below), commit the merge with `git commit --no-edit`, then run the checks again (Step 3). A conflict alone never stops the ship: the owner chose "to PR" to get a PR.
+
+### Resolve the conflicts
+
+`git diff --name-only --diff-filter=U` lists the files. For each file, run `git merge-base HEAD MERGE_HEAD`, then `git diff <merge-base> MERGE_HEAD -- <file>` (what the base changed) and `git diff <merge-base> HEAD -- <file>` (what this branch changed). Write a result that keeps both changes:
+
+- **Both sides added different things** (imports, routes, enum members, translations, tests): keep both, in the file's order.
+- **The base renamed or moved something that this branch uses:** apply this branch's change to the new name or place.
+- **A version field that both sides changed** (for example `"version"` in `package.json`): start from the base's version and make this branch's step again (patch or minor, the same kind of step the branch made). Example: base `1.90.0`, branch `1.91.0` from `1.89.0` (a minor step) → `1.91.0`; base `1.91.0` → `1.92.0`.
+@@IF MOD_CHANGELOG@@
+  Then the changelog check must pass (see `.claude/skills/changelog-entry/SKILL.md`).
+@@END@@
+- **Lockfiles** (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `composer.lock`): take the base's file (`git restore --source=MERGE_HEAD --staged --worktree -- <file>`), then run the package manager's install so it adds this branch's dependencies again. **Generated files:** run the generator instead of editing.
+- Keep each file's format byte for byte. Never take one whole side of a source file.
+- The Grep tool finds no `^<<<<<<<`, `^=======$` or `^>>>>>>>` line in the file, then `git add -- <file>`.
+
+Stop (unattended: `BLOCKED: merge conflict in <file>`, the merge left in progress, each side's change and your proposal under `## Diagnosis`) only when:
+- the conflict is in `@@PARENT_PLAN@@`, `AGENTS.md` or a contract file, or
+- both sides changed the same behavior in ways that do not fit together (for example, the base made a field required and this branch removed it).
+
+Record each resolved file in one line (what each side changed and how you combined them) for the PR body and, unattended, the Timeline.
 
 ## Step 3 — Checks
 
