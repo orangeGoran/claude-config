@@ -1,6 +1,6 @@
 # Working patterns
 
-Copy into a run script in the scratchpad. Import helpers by absolute path, and run it from a repo of the project with the account set, e.g. `QA_ACCOUNT=ana node run.mjs`. Examples use SolveR routes and tables; take yours from the profile (`tenancy`) and the code.
+Copy into a run script in the scratchpad. Import helpers by absolute path, and run it from a repo of the project with the account set, through the skill's runner: `QA_ACCOUNT=ana node /Users/<you>/.claude/skills/browser-usability-test/scripts/run.mjs /<scratchpad>/flow.mjs` (a headless run refuses `node flow.mjs` itself). Examples use SolveR routes and tables; take yours from the profile (`tenancy`) and the code.
 
 ```js
 import {

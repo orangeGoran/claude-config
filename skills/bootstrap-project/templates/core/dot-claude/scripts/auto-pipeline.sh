@@ -246,6 +246,7 @@ run_commands() {
     echo "node $HOME/.claude/skills/browser-usability-test/scripts/profile.mjs resolve"
     echo "QA_APP_URL=http://localhost:3999 node $HOME/.claude/skills/browser-usability-test/scripts/smoke.mjs /"
     echo "node $HOME/.claude/skills/browser-usability-test/scripts/compare.mjs items.json"
+    echo "QA_ACCOUNT=x node $HOME/.claude/skills/browser-usability-test/scripts/run.mjs /tmp/flow.mjs"
     echo "curl -s -o /dev/null -w %{http_code} https://github.com/user-attachments/assets/x"
   fi
   return 0
