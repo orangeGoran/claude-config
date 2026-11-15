@@ -337,6 +337,7 @@ This headless auto-pipeline run has ended. The owner continues this session late
 7. The paths of the plan, the run report, the validation files, the decision sheet and the evidence files.
 8. Background jobs that are still running.
 9. Standing rules that the owner gave during the run.
+10. The browser test report: its link, its file, the path of its items.json, the QA_DIR and the account that took the shots, and the screenshot names of each finding. Keep this rule word for word: "When a later turn fixes a browser-test finding, or the owner says they fixed one, re-read section 8 of ~/.claude/skills/browser-usability-test/SKILL.md, retake that finding's shots with QA_PHASE=after, set its result in the same items.json and run compare.mjs again, before you say the fix is done."
 Before answering a follow-up, re-read the run report, git and gh. Do not answer from this summary alone.
 EOF
 }

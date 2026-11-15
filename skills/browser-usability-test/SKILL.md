@@ -138,7 +138,7 @@ Use `references/report.md` exactly. When running as a subagent, return the repor
 
 ## 8. Keep the report current
 
-The report is one file for the whole test run. Update it, and say what changed in one line per finding, **whenever something changes**: you applied a fix the user agreed to, the user says they changed the code themselves, or their answers decide something. Don't make a second file and don't wait to be asked.
+The report is one file for the whole test run. Update it, and say what changed in one line per finding, **whenever something changes**: you applied a fix the user agreed to, the user says they changed the code themselves, or their answers decide something. Don't make a second file and don't wait to be asked. This also applies to a finding marked "report only" or "own ticket" that gets fixed later in the same session. When a subagent does the recheck, give it these steps, the `items.json` path, the `QA_DIR`, the account and the finding's shot names; a fresh measurement in a new folder does not update the report.
 
 1. Wait until the dev server has reloaded the change.
 2. Run the scripts that took the shots of the findings the change touches, with the same account and `QA_DIR`, and with `QA_PHASE=after`. Do not log in again when the saved session still works. Open every "after" shot with the Read tool and decide per finding: `fixed`, `partly` or `not-fixed`. For a non-visual finding (API value, SQL count), run the check again and note both values (`afterText`).
