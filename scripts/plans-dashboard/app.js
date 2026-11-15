@@ -249,7 +249,9 @@ const matchesFields = (fields, q) => {
   const hay = fields.map(squash);
   return q.split(/\s+/).map(squash).filter(Boolean).every((w) => hay.some((h) => h.includes(w)));
 };
-const matchesQ = (p, q) => matchesFields([p.file, p.title, p.project, p.client, ...p.tags], q);
+// the short project tag ("gal-api") and the PR ("#213", its title) count too: they are what the row shows
+const matchesQ = (p, q) => matchesFields([p.file, p.title, p.project, projLook(p.project).short, p.client, ...p.tags,
+  ...(p.pr ? ['#' + p.pr.number, 'pr' + p.pr.number, p.pr.title] : [])], q);
 function visiblePlans() {
   const q = byId('q').value.toLowerCase();
   return plans.filter((p) => !p.archived && (!q || matchesQ(p, q)));
@@ -336,7 +338,7 @@ const ago = (t) => {
 };
 function visibleWts() {
   const q = byId('q').value.toLowerCase();
-  return wts.filter((w) => !q.trim() || matchesFields([w.name, w.branch, w.title, w.project, w.client, w.pr ? '#' + w.pr.number : ''], q));
+  return wts.filter((w) => !q.trim() || matchesFields([w.name, w.branch, w.title, w.project, projLook(w.project).short, w.client, w.pr ? '#' + w.pr.number : ''], q));
 }
 const agentChip = (w) => w.agent === 'working' ? '<span class="chip live">● agent working</span>'
   : w.agent === 'idle' ? '<span class="chip" title="the last session wrote ' + escA(new Date(w.lastActive).toLocaleString()) +
@@ -414,7 +416,7 @@ function renderList() {
   rs.className = 'runstrip' +
     (sLive.length || sInflight.length || sReady.length || sBad.length || sLaunching.length || sFailed.length ? ' on' : '');
   let sh = '';
-  const stripName = (p) => (p.key === selected ? openMark : '') + projPill(p.project) + p.file + chatChip(p);
+  const stripName = (p) => (p.key === selected ? openMark : '') + projPill(p.project) + p.file + (p.pr ? ' ' + prChip(p.pr) : '') + chatChip(p);
   // one plan row: dot, name, the run's status line, then its buttons
   const stripRow = (p, dot, sub, acts) => '<div class="rp" data-go="' + p.key + '"><span class="dot ' + dot + '"></span>' +
     '<div class="t"><div class="n">' + stripName(p) + '</div>' +
@@ -427,7 +429,7 @@ function renderList() {
   // "BLOCKED: step 10 …"); a run that stopped blocked or failed needs you as much as a finished one
   const doneRow = (dot) => (p) => stripRow(p, dot, p.run.status || '',
     (p.run.links || []).map((l) => '<button class="mini" data-url="' + escA(l.url) + '">' +
-      esc(l.label.replace(/^Ticket\s+(?=#)/i, '')) + '</button>').join('') + repBtn(p));
+      esc(p.pr && l.url === p.pr.url ? 'Open PR #' + p.pr.number : l.label.replace(/^Ticket\s+(?=#)/i, '')) + '</button>').join('') + repBtn(p));
   sh += stripGroup('bc', '⚠ Didn’t start', sFailed, (p) => stripRow(p, 'bad', '', '<button class="mini" data-why="' + p.key + '">why?</button>'));
   sh += stripGroup('wc', '⏳ Starting', sLaunching, (p) => stripRow(p, 'warn', 'setting up…', ''));
   sh += stripGroup('', '● Running now', sLive, (p) => stripRow(p, 'live', '', '<button class="mini" data-log="' + p.key + '">📄 log</button>'));
