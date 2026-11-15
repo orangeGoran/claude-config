@@ -60,6 +60,7 @@ import { sameNameIn, writeVersioned } from "../../../scripts/page-versions.mjs";
 import { BEFORE_AFTER_FILE, PROJECT } from "./lib.mjs";
 import { STORE } from "./profile.mjs";
 import { publish } from "./publish.mjs";
+import { diffShots } from "./shot-diff.mjs";
 
 const input = process.argv[2];
 if (!input) throw new Error("Usage: node compare.mjs <items.json> [--out=<file.html>]");
@@ -91,6 +92,24 @@ for (const dir of shotDirs) {
   }
 }
 const missingDirs = shotDirs.filter((d) => !existsSync(d));
+
+// The two sides a finding's shot compares: a changeShot pair (old / new) stands in for a
+// missing before / after.
+const shotName = (shot) => (typeof shot === "string" ? shot : shot.name);
+function itemSides(name) {
+  const all = shots[name] ?? {};
+  return [all.before ? "before" : all.old ? "old" : "before", all.after ? "after" : all.new ? "new" : "after"];
+}
+// Changed areas of every pair the report shows, outlined on both pictures.
+const pairFiles = [
+  ...items.filter(done).flatMap((i) => (i.shots ?? []).map((s) => {
+    const n = shotName(s), [kb, ka] = itemSides(n);
+    return [shots[n]?.[kb]?.file, shots[n]?.[ka]?.file];
+  })),
+  ...(spec.changes ?? []).flatMap((c) => (c.shots ?? []).map((s) => [shots[shotName(s)]?.old?.file, shots[shotName(s)]?.new?.file])),
+].filter(([a, b]) => a && b && existsSync(a) && existsSync(b) && extname(a) === ".png" && extname(b) === ".png");
+const marks = await diffShots(pairFiles);
+const markOf = (a, b) => (a && b ? marks.get(`${a}|${b}`) : undefined);
 
 const warnings = [];
 const esc = (s) =>
@@ -125,11 +144,41 @@ function stateDiff(b, a) {
 // Reader-facing names: a ticket's change is "Original / Current", a finding's fix is "Bug / Fixed".
 const TAG = { before: "Bug", after: "Fixed", ref: "Standard", old: spec.changeTags?.old ?? "Original", new: spec.changeTags?.new ?? "Current" };
 
-function figure(kind, file, caption, alt, rec) {
+// Numbered outlines of the changed areas, drawn in the shot's own pixels over the image.
+function outlines(mark, width, height) {
+  if (!mark?.boxes.length) return "";
+  const fs = Math.max(14, Math.min(40, Math.round(width / 55)));
+  const r = Math.round(fs * 0.8);
+  const shapes = mark.boxes
+    .filter((b) => b.x < width && b.y < height)
+    .map((b, n) => {
+      const cx = Math.max(r, b.x), cy = Math.max(r, b.y);
+      return `<rect class="halo" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}"/><rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}"/><circle cx="${cx}" cy="${cy}" r="${r}"/><text x="${cx}" y="${cy}" font-size="${fs}">${n + 1}</text>`;
+    })
+    .join("");
+  return `<svg class="marks" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">${shapes}</svg>`;
+}
+
+function figure(kind, file, caption, alt, rec, mark) {
   const state = rec ? `<span class="state">${esc(describe(rec))}</span>` : "";
   if (!file || !existsSync(file))
     return `<figure><div class="none">No ${TAG[kind].toLowerCase()} screenshot</div><figcaption><span class="tag ${kind}">${TAG[kind]}</span> ${esc(caption)}${state}</figcaption></figure>`;
-  return `<figure><button class="shot" type="button" aria-label="Enlarge: ${esc(alt)}"><img loading="lazy" src="${dataUri(file)}" alt="${esc(alt)}"></button><figcaption><span class="tag ${kind}">${TAG[kind]}</span> ${esc(caption)}${state}</figcaption></figure>`;
+  const before = kind === "before" || kind === "old";
+  const svg = mark ? outlines(mark, before ? mark.beforeWidth : mark.width, before ? mark.beforeHeight : mark.height) : "";
+  return `<figure><button class="shot" type="button" aria-label="Enlarge: ${esc(alt)}"><span class="frame"><img loading="lazy" src="${dataUri(file)}" alt="${esc(alt)}">${svg}</span></button><figcaption><span class="tag ${kind}">${TAG[kind]}</span> ${esc(caption)}${state}</figcaption></figure>`;
+}
+
+// One line under a pair: how many areas changed, or that nothing visible changed.
+function markNote(mark, label) {
+  if (!mark) return "";
+  const n = mark.boxes.length;
+  if (!n) {
+    warnings.push(`${label}: no visible change between the two pictures`);
+    return `<p class="warn">No visible change between the two pictures. The change may show only in another state (hover, an open menu, another width).</p>`;
+  }
+  const moved = mark.share > 0.35 ? ` Most of the view changed (${Math.round(mark.share * 100)}%), usually because content moved.` : "";
+  const grew = mark.grew ? " The new picture is bigger; its extra part is outlined too." : "";
+  return `<p class="note marks-note">${n === 1 ? "1 changed area" : `${n} changed areas`}, outlined and numbered on both pictures.${moved}${grew}</p>`;
 }
 
 // Non-visual proof (API value, SQL count) shown in the same before/after layout.
@@ -142,9 +191,7 @@ function pair(item, shot) {
   const before = beforeCaption ?? caption ?? name;
   const after = afterCaption ?? caption ?? name;
   const all = shots[name] ?? {};
-  // a changeShot pair (old / new) stands in for a missing before / after
-  const kb = all.before ? "before" : all.old ? "old" : "before";
-  const ka = all.after ? "after" : all.new ? "new" : "after";
+  const [kb, ka] = itemSides(name);
   const rec = { before: all[kb], after: all[ka] };
   if (!rec.before) warnings.push(`#${item.id}: no "before" (or changeShot "old") shot named ${name}`);
   if (!done(item) && !rec.after)
@@ -155,10 +202,11 @@ ${figure(kb, rec.before?.file, before, `#${item.id} as found`, rec.before)}
     warnings.push(`#${item.id}: no "after" shot named ${name} (rerun with QA_PHASE=after)`);
   const diff = rec.before && rec.after ? stateDiff(rec.before, rec.after) : [];
   if (diff.length) warnings.push(`#${item.id} ${name}: state differs — ${diff.join(", ")}`);
+  const mark = markOf(rec.before?.file, rec.after?.file);
   return `<div class="gallery">
-${figure(kb, rec.before?.file, before, `#${item.id} before the fix`, rec.before)}
-${figure(ka, rec.after?.file, after, `#${item.id} after the fix`, rec.after)}
-</div>${diff.length ? `<p class="warn">Not taken in the same state: ${esc(diff.join(", "))}</p>` : ""}`;
+${figure(kb, rec.before?.file, before, `#${item.id} before the fix`, rec.before, mark)}
+${figure(ka, rec.after?.file, after, `#${item.id} after the fix`, rec.after, mark)}
+</div>${markNote(mark, `#${item.id} ${name}`)}${diff.length ? `<p class="warn">Not taken in the same state: ${esc(diff.join(", "))}</p>` : ""}`;
 }
 
 // One view the change redesigns: the app without the change next to the app with it.
@@ -169,10 +217,11 @@ function changePair(change, shot) {
   if (!rec.new) warnings.push(`"${change.title}": no "new" shot named ${name}`);
   const diff = rec.old && rec.new ? stateDiff(rec.old, rec.new) : [];
   if (diff.length) warnings.push(`"${change.title}" ${name}: state differs — ${diff.join(", ")}`);
+  const mark = markOf(rec.old?.file, rec.new?.file);
   return `<div class="gallery">
-${figure("old", rec.old?.file, oldCaption ?? caption ?? name, `${change.title}: original`, rec.old)}
-${figure("new", rec.new?.file, newCaption ?? caption ?? name, `${change.title}: current`, rec.new)}
-</div>${diff.length ? `<p class="warn">Not taken in the same state: ${esc(diff.join(", "))}</p>` : ""}`;
+${figure("old", rec.old?.file, oldCaption ?? caption ?? name, `${change.title}: original`, rec.old, mark)}
+${figure("new", rec.new?.file, newCaption ?? caption ?? name, `${change.title}: current`, rec.new, mark)}
+</div>${markNote(mark, `"${change.title}" ${name}`)}${diff.length ? `<p class="warn">Not taken in the same state: ${esc(diff.join(", "))}</p>` : ""}`;
 }
 
 // Rendered after the question helpers exist and before the findings, so the questions
@@ -470,6 +519,13 @@ ${issues.length ? `<meta name="qa:issues" content="${esc(issues.join(" "))}">\n`
   .shot { display: block; width: fit-content; max-width: 100%; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); cursor: zoom-in; overflow: hidden; }
   .shot:focus-visible, .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .shot img { display: block; max-width: 100%; height: auto; }
+  /* Changed-area outlines: a fixed magenta with a white halo reads on light and dark screenshots. */
+  .frame { position: relative; display: block; }
+  .marks { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .marks rect { fill: none; stroke: #d6157f; stroke-width: 2.5px; vector-effect: non-scaling-stroke; }
+  .marks rect.halo { stroke: #fff; stroke-width: 5px; }
+  .marks circle { fill: #d6157f; stroke: #fff; stroke-width: 2px; vector-effect: non-scaling-stroke; }
+  .marks text { fill: #fff; font-family: var(--font-mono); font-weight: 600; text-anchor: middle; dominant-baseline: central; }
   .none { border: 1px dashed var(--line); border-radius: 6px; padding: 32px 16px; text-align: center; color: var(--muted); }
   pre.proof, pre.ticket { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
   fieldset.q { margin: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 16px; display: grid; gap: 10px; min-width: 0; }
@@ -484,7 +540,8 @@ ${issues.length ? `<meta name="qa:issues" content="${esc(issues.join(" "))}">\n`
   .copy { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; width: fit-content; }
 
   .zoom { position: fixed; inset: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 92%, transparent); display: grid; place-items: center; cursor: zoom-out; padding: 16px; }
-  .zoom img { max-width: 100%; max-height: 100%; border: 1px solid var(--line); border-radius: 6px; }
+  .zoom .frame { width: fit-content; }
+  .zoom img { display: block; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); border: 1px solid var(--line); border-radius: 6px; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -505,17 +562,17 @@ ${notTested}
 ${questions}
 ${copyBlocks.join("\n")}
 </div>
-<div class="zoom" id="zoom" hidden><img id="zoom-img" alt=""></div>
+<div class="zoom" id="zoom" hidden><span class="frame" id="zoom-frame"></span></div>
 <script>
   (function () {
     var zoom = document.getElementById('zoom');
-    var big = document.getElementById('zoom-img');
+    var big = document.getElementById('zoom-frame');
     var last = null;
-    function close() { zoom.hidden = true; big.removeAttribute('src'); if (last) last.focus(); }
+    function close() { zoom.hidden = true; big.textContent = ''; if (last) last.focus(); }
+    // the enlarged view copies the picture with its changed-area outlines
     document.querySelectorAll('.shot').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        var img = btn.querySelector('img');
-        last = btn; big.src = img.src; big.alt = img.alt; zoom.hidden = false;
+        last = btn; big.innerHTML = btn.querySelector('.frame').innerHTML; zoom.hidden = false;
       });
     });
     zoom.addEventListener('click', close);
