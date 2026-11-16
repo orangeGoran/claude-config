@@ -141,17 +141,17 @@ function busyWorld() {
     '.plans/auto-runs/plan-summaries.json': JSON.stringify({
       'checkout-idempotency-keys': 'Right now, if a shopper’s connection drops while they are paying and their phone quietly sends the order a second time, they get charged twice. This work gives every checkout attempt a unique ticket number so a repeat attempt returns the original order instead of creating a new one. It matters because duplicate orders cost us refunds, support time and customer trust.',
     }),
-    '.plans/plan-meta.json': JSON.stringify({
-      'checkout-idempotency-keys': { status: 'needs-validation', tags: ['db-migration', 'risky'] },
-      'retire-legacy-cart-endpoint': { status: 'ready', tags: ['small', 'tech-debt'] },
-      'split-inventory-reads': { status: 'ready', tags: ['big'] },
-      'webhook-retry-backoff': { status: 'in-refinement', tags: [] },
-    }),
     '.plans/.validations/checkout-idempotency-keys-validation-1.md': '',
     '.plans/.validations/split-inventory-reads-validation-1.md': '',
     '.plans/.validations/split-inventory-reads-codex-1.md': '',
     '.plans/done/archive-old-coupons.md': '# Plan: Archive old coupons\n',
   });
+  put(path.join(w.home, '.claude/pipeline-dashboard/state/storefront-api/plan-meta.json'), JSON.stringify({
+    'checkout-idempotency-keys': { status: 'in-refinement', tags: ['db-migration', 'risky'] },
+    'retire-legacy-cart-endpoint': { status: 'ready', tags: ['small', 'tech-debt'] },
+    'split-inventory-reads': { status: 'ready', tags: ['big'] },
+    'webhook-retry-backoff': { status: 'in-refinement', tags: [] },
+  }));
   for (const s of ['checkout-idempotency-keys', 'retire-legacy-cart-endpoint', 'split-inventory-reads'])
     mkdirSync(path.join(w.ws, 'acme', 'worktrees', s), { recursive: true });
 

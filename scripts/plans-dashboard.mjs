@@ -19,10 +19,8 @@
 //    .claude/skills and .claude/scripts. Runs are tracked by the dashboard itself
 //    (pid + captured log under ~/.claude/pipeline-dashboard/).
 //
-// State (JSON hybrid): if <plansDir>/plan-meta.json exists (tracked in the repo)
-// it stays the source for statuses/tags; otherwise state lives centrally in
-// ~/.claude/pipeline-dashboard/state/<project>/. Logs are always central for
-// generic runs. Localhost only.
+// State: statuses and tags live centrally in ~/.claude/pipeline-dashboard/state/<project>/
+// for every project, never in the repo. Logs are always central for generic runs. Localhost only.
 import http from 'node:http';
 import net from 'node:net';
 import { EventEmitter } from 'node:events';
@@ -182,7 +180,6 @@ const resolveProject = (p) => {
   const root = expand(p.root);
   const plansDir = expand(p.plansDir) || path.join(root, '.plans');
   const stateDir = path.join(CENTRAL, 'state', p.name);
-  const trackedMeta = path.join(plansDir, 'plan-meta.json');
   const autoRunsDir = path.join(plansDir, 'auto-runs');
   const pipeSummaries = path.join(autoRunsDir, 'plan-summaries.json');
   const launcherScript = path.join(root, '.claude/scripts/auto-pipeline.sh');
@@ -197,7 +194,7 @@ const resolveProject = (p) => {
     doneDir: expand(p.doneDir) || path.join(plansDir, 'done'),
     validDir: path.join(plansDir, '.validations'),
     autoRunsDir,
-    metaFile: existsSync(trackedMeta) ? trackedMeta : path.join(stateDir, 'plan-meta.json'),
+    metaFile: path.join(stateDir, 'plan-meta.json'),
     summaryFile: existsSync(pipeSummaries) ? pipeSummaries : path.join(stateDir, 'plan-summaries.json'),
     summaryStyleFile: path.join(stateDir, 'summary-style.json'),
     stateDir,

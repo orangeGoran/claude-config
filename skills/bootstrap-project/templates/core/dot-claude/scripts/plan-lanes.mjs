@@ -75,11 +75,12 @@ const PLANS_DIR = process.env.PLAN_LANES_PLANS_DIR
 const DONE_DIR = path.join(REPO, '.plans', 'done');
 const RUNS_DIR = path.join(REPO, '.plans', 'auto-runs');
 const VALID_DIR = path.join(REPO, '.plans', '.validations');
-// The plans dashboard keeps plan status and summaries here when the repo has no
-// tracked copy (same fallback as the dashboard's resolveProject).
+// The plans dashboard's central state for this repo: plan statuses and tags always,
+// summaries when the repo has no tracked copy (same as the dashboard's resolveProject).
 const CENTRAL_STATE = path.join(os.homedir(), '.claude', 'pipeline-dashboard', 'state', path.basename(REPO));
 const pick = (...files) => files.find((f) => existsSync(f)) ?? files[0];
-const META_FILE = pick(path.join(REPO, '.plans', 'plan-meta.json'), path.join(CENTRAL_STATE, 'plan-meta.json'));
+// statuses and tags: the dashboard keeps them centrally for every project, never in the repo
+const META_FILE = path.join(CENTRAL_STATE, 'plan-meta.json');
 const SUMMARY_CACHE = pick(path.join(RUNS_DIR, 'plan-summaries.json'), path.join(CENTRAL_STATE, 'plan-summaries.json'));
 const GENERIC_RUNS = path.join(CENTRAL_STATE, 'runs.json');
 
@@ -466,7 +467,7 @@ for (const o of overlaps) {
   conflictsWith.get(o.a).add(o.b);
   conflictsWith.get(o.b).add(o.a);
 }
-const score = (p) => (p.status === 'ready' ? 1000 : p.status === 'needs-validation' ? -500 : 0)
+const score = (p) => (p.status === 'ready' ? 1000 : 0)
   + (p.validation.claude + p.validation.codex) * 50
   - (p.blockedByActiveRun.length ? 300 : 0)
   - p.hardFileCount;

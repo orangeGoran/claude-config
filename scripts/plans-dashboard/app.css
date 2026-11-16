@@ -7,13 +7,15 @@
           --accent:#d97757; --accentfg:#1f2428; --link:#79b8ff; --input:#2f363d; --hover:#282e34; --sel:#39414a;
           --btn:#444d56; --dot:#6a737d; --codebg:#1f2428; --codechip:#444d56; --thbg:#2f363d;
           --logfg:#d1d5da; --stfg:#e08a6a; --addbg:#28a74530; --delbg:#d73a4930;
-          --gitM:#79b8ff; --gitA:#34d058; --gitD:#f97583; --merge:#b392f0; --mergefg:#1f2428; }
+          --gitM:#79b8ff; --gitA:#34d058; --gitD:#f97583; --merge:#b392f0; --mergefg:#1f2428;
+          color-scheme:dark; }
   :root[data-theme="light"] { --bg:#f6f8fa; --panel:#ffffff; --card:#ffffff; --line:#e1e4e8;
           --fg:#24292e; --dim:#586069; --ok:#116329; --run:#0366d6; --warn:#9a6700; --bad:#cb2431;
           --accent:#b5532f; --accentfg:#fff; --link:#0366d6; --input:#fafbfc; --hover:#ebf0f4; --sel:#e2e5e9;
           --btn:#e1e4e8; --dot:#d1d5da; --codebg:#f6f8fa; --codechip:#e1e4e8; --thbg:#f6f8fa;
           --logfg:#444d56; --stfg:#b5532f; --addbg:#34d05822; --delbg:#d73a4922;
-          --gitM:#005cc5; --gitA:#116329; --gitD:#cb2431; --merge:#5a32a3; --mergefg:#fff; }
+          --gitM:#005cc5; --gitA:#116329; --gitD:#cb2431; --merge:#5a32a3; --mergefg:#fff;
+          color-scheme:light; }
   /* --fs scales text and reading widths up on wide screens, where fixed px text gets tiny */
   :root { --fs:1; }
   @media (min-width:1800px) { :root { --fs:1.08; } }
@@ -755,3 +757,45 @@
              background:var(--panel); border:1px solid var(--line); box-shadow:0 4px 14px rgba(0,0,0,.3); }
   .jumpbtn:hover { border-color:var(--accent); color:var(--accent); }
   .jumpbtn[hidden] { display:none; }
+
+  /* Board: one column per stage, all projects on one board (renderBoard in app.js) */
+  #boardBtn.on { border-color:var(--accent); color:var(--accent); }
+  section#detail[hidden], section#board[hidden] { display:none; }
+  section#board { padding:0; display:flex; flex-direction:column; overflow:hidden; }
+  .bbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line);
+          font-size:calc(12px * var(--fs)); }
+  .bbar select { background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:8px;
+          padding:4px 8px; font-size:calc(12px * var(--fs)); max-width:220px; }
+  .bbar label { display:flex; gap:5px; align-items:center; cursor:pointer; }
+  .bcols { flex:1; min-height:0; display:flex; gap:12px; padding:12px 16px; overflow-x:auto; }
+  .bcol { flex:1 1 0; min-width:calc(210px * var(--fs)); max-width:calc(360px * var(--fs)); display:flex; flex-direction:column; min-height:0;
+          background:var(--panel); border:1px solid var(--line); border-radius:10px; }
+  .bchead { padding:9px 12px; border-bottom:1px solid var(--line); font-size:calc(11px * var(--fs)); font-weight:800;
+            letter-spacing:.1em; text-transform:uppercase; cursor:help; }
+  .bchead .n { color:var(--dim); font-weight:600; margin-left:4px; }
+  .bcol.ready .bchead { color:var(--accent); } .bcol.running .bchead { color:var(--run); }
+  .bcol.needs .bchead { color:var(--ok); } .bcol.failed .bchead { color:var(--bad); } .bcol.done .bchead { color:var(--dim); }
+  .bclist { flex:1; min-height:0; overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:8px; }
+  .bcard { background:var(--card); border:1px solid var(--line); border-left:3px solid var(--dot); border-radius:8px;
+           padding:8px 10px; cursor:pointer; }
+  .bcard:hover, .bcard:focus-visible { border-color:var(--accent); outline:none; }
+  .bcard.sel { background:var(--sel); }
+  .bcard.live { border-left-color:var(--run); } .bcard.ok { border-left-color:var(--ok); }
+  .bcard.warn { border-left-color:var(--warn); } .bcard.bad { border-left-color:var(--bad); }
+  .bctop { display:flex; gap:6px; align-items:center; min-width:0; }
+  .bctop .ppill { flex-shrink:0; }
+  .bcfile { font-size:calc(11px * var(--fs)); color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bctitle { font-size:calc(13px * var(--fs)); font-weight:600; line-height:1.35; margin:4px 0 6px; }
+  .bcacts { display:flex; gap:10px; align-items:center; margin-top:7px; font-size:calc(12px * var(--fs)); }
+  .bcacts label { display:flex; gap:4px; align-items:center; cursor:pointer; }
+  .bcempty { color:var(--dim); font-size:calc(12px * var(--fs)); padding:4px; }
+  section#board .mini { padding:1px 8px; font-size:calc(10.5px * var(--fs)); border-radius:99px; }
+  /* board view: the board is the list, so the sidebar goes; an open plan is a panel on the right */
+  body.boardview aside { display:none; }
+  body.boardview section#board { flex:1; min-width:0; order:-1; }
+  body.bpanel:not(.review) section#detail { flex:0 0 clamp(380px, 34vw, 680px); border-left:1px solid var(--line); padding:18px 22px 60px; }
+  body.review section#board { display:none; }
+  .bbar input[type=search] { background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:8px;
+          padding:4px 10px; font-size:calc(12px * var(--fs)); width:calc(220px * var(--fs)); }
+  .bbar button.primary:disabled { opacity:.5; cursor:default; }
+  .bcfile { margin-left:auto; }

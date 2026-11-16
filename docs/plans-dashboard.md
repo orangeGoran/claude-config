@@ -141,7 +141,22 @@ echo "- **Link**: Open PR | $pr_url" >> "$PLAN_REPORT"
 
 For a pipeline project without `--describe`, the setup guide shows a tip with a prompt that adds it.
 
-Generic run state (pid, exit code, log) lives under `~/.claude/pipeline-dashboard/`. Statuses and tags are written to `<plansDir>/plan-meta.json` when the repo already tracks that file, otherwise centrally.
+Generic run state (pid, exit code, log) lives under `~/.claude/pipeline-dashboard/`. Statuses and tags are written to `~/.claude/pipeline-dashboard/state/<project>/plan-meta.json` for every project, never into the repo.
+
+## Board
+
+**▦ Board** in the header shows every plan of every project on one board, one column per stage. The sidebar hides while the board is open: the board has its own search box, filters and **▶ Launch queued**. Click a card to open its plan in a panel on the right; the board stays in view, the next card click switches the panel, and **✕ Close plan** or Esc closes it. The link is `?view=board` (with `&sel=<plan>` while a plan is open).
+
+| Column | A plan is here when (first match wins) |
+|---|---|
+| Done | its PR is merged, or the plan is archived |
+| Running | it starts, runs now, or was launched and is still in progress |
+| Failed | it did not start, or the run stopped blocked or failed |
+| Needs you | the run waits for your review, or the chat asks for a permission |
+| Ready | it has at least one validation round (or status `ready`), and its status is not `in-refinement`, `waiting-on-external` or `parked` |
+| Backlog | anything else |
+
+Every column fills in by itself. Tick **queue** on a Ready card and use **▶ Launch queued**. The filters narrow the board by client or project and by tag. Done shows plans from the last 14 days (by merge date, else by the date in the file name), the newest 40; **older archived** adds the rest.
 
 ## Alerts
 

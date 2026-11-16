@@ -4,7 +4,7 @@
 <title>Plans</title>
 <link rel="icon" id="favicon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Ctext%20x%3D%2232%22%20y%3D%2246%22%20font-size%3D%2256%22%20text-anchor%3D%22middle%22%3E%F0%9F%98%B4%3C%2Ftext%3E%3C%2Fsvg%3E">
 <style><!--@CSS--></style>
-<header class="mainhd"><div class="hleft"><h1><a href="/" id="home" title="close the open plan">🗂 Plans</a></h1><button id="dashCodeBtn" class="hdbtn" title="Open this dashboard's code in VS Code">🖥 Code</button><span class="hdrun" id="hdrun" style="display:none"></span>
+<header class="mainhd"><div class="hleft"><h1><a href="/" id="home" title="close the open plan">🗂 Plans</a></h1><button id="dashCodeBtn" class="hdbtn" title="Open this dashboard's code in VS Code">🖥 Code</button><button id="boardBtn" class="hdbtn" aria-pressed="false" title="All plans on one board: Backlog, Ready, Running, Needs you, Failed, Done">▦ Board</button><button id="bpClose" class="hdbtn" hidden title="Close the plan and show the whole board (Esc)">✕ Close plan</button><span class="hdrun" id="hdrun" style="display:none"></span>
   <span class="hdok" id="hdok" style="display:none"></span>
   <span class="dim" id="clock"></span>
   <span class="hdwarn" id="connmsg" style="display:none"></span>
@@ -34,6 +34,7 @@
     </div>
   </aside>
   <section id="detail"><span class="dim">Select a plan on the left.</span></section>
+  <section id="board" hidden aria-label="Board of all plans"></section>
   <div class="csplit" id="csplit" role="separator" aria-orientation="vertical" tabindex="0" hidden
     aria-label="Divider between the page and the chat" title="Drag to resize the chat. Double-click: default width."></div>
   <section id="chat" hidden aria-label="Chat with the agent"></section>

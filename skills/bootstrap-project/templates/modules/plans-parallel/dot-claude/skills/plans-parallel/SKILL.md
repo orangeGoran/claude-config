@@ -55,12 +55,12 @@ Also run `git status` and look for uncommitted edits to a plan that you want to 
 
 Apart from the parallel batch, name **one plan to do now in the foreground**, with the evidence, in this order:
 
-1. `status: ready` in `.plans/plan-meta.json` (if the file exists).
+1. `status: ready` (the `status` field in the `--json` output; the dashboard keeps it in `~/.claude/pipeline-dashboard/state/<repo>/plan-meta.json`).
 2. Validation rounds in `.plans/.validations/` (`Nc/Mx` in the digest: Claude rounds / Codex rounds). A validated plan comes before a plan with no validation.
 3. It unblocks other work (another plan, another team, the last item of a parent plan).
 4. A small footprint (`files=` count).
 
-A plan with `status: needs-validation`, or with zero validation rounds, needs `/skill-auto-validate-plan` **first**, not a background run. Say that clearly.
+A plan with zero validation rounds needs `/skill-auto-validate-plan` **first**, not a background run. Say that clearly.
 
 ## Step 4 — Report
 
@@ -98,7 +98,7 @@ Rules for the table:
 - **Lane cell** — only on the first row of the lane, in bold, as `A — <short label>`. Use letters, not numbers. Put the lane of your Step 3 pick first. Make the label from the lane's main `areas`, in words a person knows.
 - **Plan cell** — a relative Markdown link, with the date prefix removed from the link text.
 - **Rows in a lane** — the readiest plan first, then the plans that it blocks.
-- **Status cell** — plain words: `✅ ready, validated ×2`, `ready, not validated`, `no status, large`, `needs-validation`. Use ✅ only for a plan that is `ready` **and** has validation rounds. Take `×N` from the count in `.validations/`. Never guess it.
+- **Status cell** — plain words: `✅ ready, validated ×2`, `ready, not validated`, `no status, large`, `in-refinement`. Use ✅ only for a plan that is `ready` **and** has validation rounds. Take `×N` from the count in `.validations/`. Never guess it.
 - **Touches cell** — area paths in backticks, cut to the part a person knows. Then, by row:
   - **blocked** — the overlap count in bold and the plan it overlaps: `**8 files overlap** with <slug>`. Take the count from `overlaps[].count` in `--json`, never from the length of `overlaps[].files`: the analyzer cuts `files` to at most 8 paths for a hard overlap. Always name the plan.
   - **free of conflict with an earlier row of its lane** — keep the areas and add `— ✅ **runs alongside <plan>**`.

@@ -15,7 +15,9 @@ document.getElementById('themeBtn').addEventListener('click', () => {
   try { localStorage.setItem('dash-theme', theme); } catch {}
   applyTheme(theme);
 });
-const STATUSES = ['ready', 'in-refinement', 'needs-validation', 'waiting-on-external', 'parked', 'done'];
+// only what the dashboard cannot see by itself: validation rounds, a merged PR and archiving show on their own,
+// so an old saved "needs-validation" or "done" is not shown
+const STATUSES = ['in-refinement', 'ready', 'waiting-on-external', 'parked'];
 const TAG_SUGGESTIONS = ['small', 'big', 'db-migration', 'frontend-needed', 'ai', 'risky', 'tech-debt'];
 const BT = String.fromCharCode(96); // backtick, kept out of this template literal
 
@@ -81,7 +83,7 @@ const selectionIn = (el) => {
   return !!s.anchorNode && el.contains(s.anchorNode);
 };
 const selectionLive = () =>
-  ['detail', 'side', 'logbody', 'runstrip'].some((id) => selectionIn(byId(id)));
+  ['detail', 'side', 'logbody', 'runstrip', 'board'].some((id) => selectionIn(byId(id)));
 // navigator.clipboard exists only in a secure context. 127.0.0.1 and *.localhost
 // qualify; a vanity domain like http://plans.test does not — and that is the URL
 // this server prefers when /etc/hosts has it. Fall back to the legacy path there.
@@ -317,7 +319,7 @@ const itemHtml = (p, withProject) => `
       <div class="t">
         <div class="name">${selected === p.key ? openMark : ''}${withProject ? projPill(p.project) : ''}${p.file}</div>
         <div class="chiprow">
-          ${p.status ? '<span class="chip st">' + esc(p.status) + '</span>' : ''}
+          ${STATUSES.includes(p.status) ? '<span class="chip st">' + esc(p.status) + '</span>' : ''}
           ${p.tags.map((t) => '<span class="chip">' + esc(t) + '</span>').join('')}
           ${autoChips(p)}
           ${picked.has(p.key) ? '<span class="chip st">▶ ' + esc(modeLabel(p)) + '</span>' : ''}
@@ -574,10 +576,10 @@ function renderList() {
 function syncUrl() {
   const q = new URLSearchParams(location.search);
   const want = { sel: selected, tab: selected && prTab[selected] !== 'plan' ? prTab[selected] : null,
-    file: selected && prTab[selected] === 'files' ? prFile[selected] : null };
+    file: selected && prTab[selected] === 'files' ? prFile[selected] : null, view: boardOn ? 'board' : null };
   const same = (k) => (q.get(k) || null) === (want[k] || null);
-  if (same('sel') && same('tab') && same('file')) return;
-  const push = !same('sel') || !same('tab');
+  if (same('sel') && same('tab') && same('file') && same('view')) return;
+  const push = !same('sel') || !same('tab') || !same('view');
   for (const [k, v] of Object.entries(want)) v ? q.set(k, v) : q.delete(k);
   const url = location.pathname + (q.toString() ? '?' + q : '');
   push ? history.pushState(null, '', url) : history.replaceState(null, '', url);
@@ -585,14 +587,16 @@ function syncUrl() {
 function readUrl() {
   const q = new URLSearchParams(location.search);
   selected = q.get('sel') || null;
+  boardOn = q.get('view') === 'board';
   if (selected) {
     prTab[selected] = q.get('tab') || 'plan';
     if (q.get('file')) prFile[selected] = q.get('file');
   }
   lastPrDraw = null;
 }
-window.addEventListener('popstate', () => { readUrl(); renderList(); renderDetail(true); });
+window.addEventListener('popstate', () => { readUrl(); applyView(); renderList(); renderDetail(true); renderBoard(); });
 async function renderDetail(loadPlan) {
+  applyView();
   syncUrl();
   const p = find(selected);
   if (!p) return renderEmptyDetail();
@@ -2811,6 +2815,7 @@ async function saveMetaFor(p, status, tags) {
 }
 function renderBar() {
   byId('selcount').textContent = picked.size + ' queued';
+  if (byId('bqcount')) { byId('bqcount').textContent = picked.size + ' queued'; byId('bLaunch').disabled = !picked.size; }
   byId('selmodes').textContent = [...picked].map((k) => {
     const p = find(k);
     return (p ? p.slug.slice(0, 18) : k.slice(0, 18)) + '…(' + (p ? modeLabel(p) : '?') + ')';
@@ -3366,12 +3371,13 @@ document.addEventListener('click', (e) => {
   document.body.appendChild(v);
 }, true);
 // the empty home screen: no plan open, no drawer
-function goHome() { closeLog(); selected = null; renderList(); renderDetail(false); }
+// on the board it closes the plan panel and stays on the board
+function goHome() { closeLog(); selected = null; applyView(); renderList(); renderDetail(false); renderBoard(); }
 byId('home').addEventListener('click', (e) => {
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;   // a new tab opens the page as a link does
   e.preventDefault(); goHome();
 });
-byId('q').addEventListener('input', renderList);
+byId('q').addEventListener('input', () => { renderList(); renderBoard(); });
 byId('suggestAll').addEventListener('click', openSuggestAll);
 byId('collapseAll').addEventListener('click', () => {
   const names = state.map((s) => s.name);
@@ -3960,6 +3966,7 @@ async function refreshOnce() {
     renderList();
     if (selected && !typing) renderDetail(false);
     else if (!selected) renderEmptyDetail();
+    renderBoard();
     if (!firstPaint && !state.length && !byId('onb').classList.contains('open')) {
       let closed = null;
       try { closed = sessionStorage.getItem('dash-guide-closed'); } catch {}
@@ -3972,7 +3979,151 @@ async function refreshOnce() {
   connMsg('');
   if (logKey) loadLog();
 }
+// --- Board: every plan of every project in one column, by where it stands. Every column fills in by itself:
+// from the run, the PR, archiving and the validation rounds. The sidebar is hidden (the board is the list), and
+// a card opens its plan in a panel beside the board (#detail), so the board stays in view. The filters, the
+// search box and the launch queue sit in the board's own toolbar.
+let boardOn = false;
+let boardF = { project: '', tag: '', archived: false };
+try { boardF = { ...boardF, ...JSON.parse(localStorage.getItem('dash-board-f') || '{}') }; } catch {}
+const saveBoardF = () => { try { localStorage.setItem('dash-board-f', JSON.stringify(boardF)); } catch {} };
+const BOARD_COLS = [
+  ['backlog', 'Backlog', 'Not ready yet: no validation round, or its status says in refinement, waiting or parked.'],
+  ['ready', 'Ready', 'Validated and not started. Tick queue, then ▶ Launch queued.'],
+  ['running', 'Running', 'Starting, running now, or launched and still in progress.'],
+  ['needs', 'Needs you', 'The run stopped and waits for your review, or the chat asks for a permission.'],
+  ['failed', 'Failed', 'Did not start, or stopped blocked or failed.'],
+  ['done', 'Done', 'PR merged or plan archived in the last 14 days. Tick archived for older ones.'],
+];
+const DONE_MAX = 40, DAY = 864e5, RECENT = 14 * DAY;
+const NOT_READY = new Set(['in-refinement', 'waiting-on-external', 'parked']);
+// the date a plan file name starts with (20261116-150648-…), or null
+const slugDate = (slug) => { const m = /^(\d{4})(\d{2})(\d{2})-/.exec(slug); return m ? new Date(+m[1], m[2] - 1, +m[3]) : null; };
+const doneAt = (p) => (p.pr && p.pr.mergedAt && Date.parse(p.pr.mergedAt)) || (slugDate(p.slug) || 0).valueOf();
+// first match wins: a merged plan is done even if its old run report still says "waiting on you"
+const boardCol = (p) => p.archived || (p.pr && p.pr.state === 'MERGED') ? 'done'
+  : p.live || starting(p) || outOf(p) === 'running' ? 'running'
+  : notStarted(p) || outOf(p) === 'failed' ? 'failed'
+  : outOf(p) === 'needs-you' || p.chatWaits ? 'needs'
+  : !NOT_READY.has(p.status) && (p.status === 'ready' || p.validations) ? 'ready' : 'backlog';
+// the board hides the sidebar; #detail shows only while a card's plan is open beside it
+function applyView() {
+  document.body.classList.toggle('boardview', boardOn);
+  document.body.classList.toggle('bpanel', boardOn && !!selected);
+  byId('board').hidden = !boardOn;
+  byId('detail').hidden = boardOn && !selected;
+  const b = byId('boardBtn');
+  b.classList.toggle('on', boardOn); b.setAttribute('aria-pressed', String(boardOn));
+  byId('bpClose').hidden = !(boardOn && selected);
+}
+function showBoard(on) { boardOn = on; applyView(); renderBoard(); }
+function openBoard() {
+  closeLog(); selected = null; boardOn = true;
+  renderList(); renderEmptyDetail(); showBoard(true);
+}
+function leaveBoard() { boardOn = false; selected = null; applyView(); renderList(); renderEmptyDetail(); }
+function openFromBoard(key) {
+  if (selected === key) return;
+  selected = key; applyView(); renderDetail(true); renderBoard();
+}
+const boardCard = (p, col) => {
+  const noQueue = p.live || starting(p) || p.worktree;
+  const own = STATUSES.includes(p.status) && p.status !== 'ready' ? '<span class="chip st">' + esc(p.status) + '</span>' : '';
+  const unval = (col === 'backlog' || col === 'ready') && !p.validations ? '<span class="chip" title="No validation round in .validations yet">not validated</span>' : '';
+  const d = slugDate(p.slug);
+  const when = d ? d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '';
+  // #123 in a title links to the card's own repo, not to the repo of the plan open in the panel
+  const keep = CUR_ISSUES; CUR_ISSUES = p.issuesUrl || '';
+  const title = inline(p.title);
+  CUR_ISSUES = keep;
+  // an article, not a button: it holds links and the queue box (a button may not hold controls)
+  return '<article class="bcard ' + dotClass(p) + (p.key === selected ? ' sel' : '') + '" data-go="' + escA(p.key) + '" tabindex="0"' +
+    ' aria-label="' + escA(p.title + ', ' + p.project) + '"' + (p.key === selected ? ' aria-current="true"' : '') + '>' +
+    '<div class="bctop">' + projPill(p.project) + '<span class="bcfile" title="' + escA(p.file) + '">' + esc(when) + '</span></div>' +
+    '<div class="bctitle">' + title + '</div>' +
+    '<div class="chiprow">' + own + unval + p.tags.map((t) => '<span class="chip">' + esc(t) + '</span>').join('') + autoChips(p) + '</div>' +
+    (col === 'ready' ? '<div class="bcacts"><label title="' + (noQueue ? 'It has a worktree or runs already' : 'Queue it for ▶ Launch queued') +
+      '"><input type="checkbox" data-bq="' + escA(p.key) + '"' + (picked.has(p.key) ? ' checked' : '') + (noQueue ? ' disabled' : '') + '> queue</label></div>' : '') +
+    '</article>';
+};
+function renderBoard() {
+  const b = byId('board');
+  if (!boardOn || !b) return;
+  const q = byId('q').value.toLowerCase();
+  const pf = boardF.project;
+  const inProj = (p) => !pf || (pf.startsWith('c:') ? p.client === pf.slice(2) : p.project === pf.slice(2));
+  // archived plans: the last 14 days always, older ones when asked for or found by the search (as in the sidebar)
+  const now = Date.now();
+  const shownArch = (p) => !p.archived || boardF.archived || q || now - doneAt(p) < RECENT;
+  const base = plans.filter((p) => inProj(p) && shownArch(p) && (!q || matchesQ(p, q)));
+  const tags = [...new Set([...base.flatMap((p) => p.tags), boardF.tag].filter(Boolean))].sort();
+  const list = base.filter((p) => !boardF.tag || p.tags.includes(boardF.tag));
+  const cols = Object.fromEntries(BOARD_COLS.map(([id]) => [id, []]));
+  for (const p of list) cols[boardCol(p)].push(p);
+  // newest first; a live run before one that only waits; Done by when it was merged
+  for (const id in cols) cols[id].sort((x, y) => (y.live - x.live) || y.slug.localeCompare(x.slug));
+  cols.done.sort((x, y) => doneAt(y) - doneAt(x));
+  const clients = [...new Set(state.map((s) => s.client))];
+  const opt = (v, label) => '<option value="' + escA(v) + '"' + (pf === v ? ' selected' : '') + '>' + esc(label) + '</option>';
+  const projOpts = opt('', 'All projects') + clients.map((c) => '<optgroup label="' + escA(c) + '">' +
+    (state.filter((s) => s.client === c).length > 1 ? opt('c:' + c, 'All of ' + c) : '') +
+    state.filter((s) => s.client === c).map((s) => opt('p:' + s.name, s.name)).join('') + '</optgroup>').join('');
+  const tagOpts = '<option value="">All tags</option>' + tags.map((t) => '<option' + (boardF.tag === t ? ' selected' : '') + '>' + esc(t) + '</option>').join('');
+  const filtered = pf || boardF.tag || q;
+  const bar = '<div class="bbar">' +
+    '<input id="bq" type="search" autocomplete="off" spellcheck="false" placeholder="search plans, archived too…" aria-label="Search plans" value="' + escA(byId('q').value) + '">' +
+    '<select id="bfProj" aria-label="Project">' + projOpts + '</select>' +
+    '<select id="bfTag" aria-label="Tag">' + tagOpts + '</select>' +
+    '<label title="Archived plans older than 14 days"><input type="checkbox" id="bfArch"' + (boardF.archived ? ' checked' : '') + '> older archived</label>' +
+    (filtered ? '<button class="mini" id="bfClear">✕ clear filters</button>' : '') +
+    '<span class="dim">' + list.length + ' plan' + (list.length === 1 ? '' : 's') + '</span>' +
+    '<span style="flex:1"></span><span class="dim" id="bqcount">' + picked.size + ' queued</span>' +
+    '<button class="primary" id="bLaunch"' + (picked.size ? '' : ' disabled') + '>▶ Launch queued</button></div>';
+  const colHtml = BOARD_COLS.map(([id, name, why]) => {
+    const all = cols[id], shown = id === 'done' ? all.slice(0, DONE_MAX) : all;
+    return '<div class="bcol ' + id + '" data-col="' + id + '"><div class="bchead" title="' + escA(why) + '">' + name +
+      ' <span class="n">' + all.length + '</span></div><div class="bclist">' +
+      (shown.length ? shown.map((p) => boardCard(p, id)).join('') : '<div class="bcempty">' + (id === 'needs' ? 'Nothing waits for you.' : 'None') + '</div>') +
+      (all.length > shown.length ? '<div class="bcempty">+ ' + (all.length - shown.length) + ' older. Search to find them.</div>' : '') +
+      '</div></div>';
+  }).join('');
+  // keep the scroll places and the search box's focus through a repaint (it runs every few seconds)
+  const old = b.querySelector('.bcols');
+  const sx = old ? old.scrollLeft : 0;
+  const sy = old ? [...old.querySelectorAll('.bclist')].map((l) => l.scrollTop) : [];
+  const typing = document.activeElement && document.activeElement.id === 'bq' ? document.activeElement.selectionStart : null;
+  b.innerHTML = bar + '<div class="bcols">' + colHtml + '</div>';
+  const cw = b.querySelector('.bcols');
+  cw.scrollLeft = sx;
+  cw.querySelectorAll('.bclist').forEach((l, i) => { l.scrollTop = sy[i] || 0; });
+  if (typing != null) { const i = byId('bq'); i.focus(); i.setSelectionRange(typing, typing); }
+
+  byId('bq').addEventListener('input', (e) => { byId('q').value = e.target.value; renderList(); renderBoard(); });
+  byId('bfProj').addEventListener('change', (e) => { boardF.project = e.target.value; saveBoardF(); renderBoard(); });
+  byId('bfTag').addEventListener('change', (e) => { boardF.tag = e.target.value; saveBoardF(); renderBoard(); });
+  byId('bfArch').addEventListener('change', (e) => { boardF.archived = e.target.checked; saveBoardF(); renderBoard(); });
+  byId('bfClear')?.addEventListener('click', () => {
+    boardF.project = boardF.tag = ''; saveBoardF();
+    if (q) { byId('q').value = ''; renderList(); }
+    renderBoard();
+  });
+  byId('bLaunch').addEventListener('click', () => byId('launchbtn').click());
+  b.querySelectorAll('.bcard').forEach((el) => {
+    // a link in the title (an issue) and the queue box do their own thing, not open the plan
+    el.addEventListener('click', (e) => { if (!e.target.closest('a, label, button, input')) openFromBoard(el.dataset.go); });
+    el.addEventListener('keydown', (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); openFromBoard(el.dataset.go); }
+    });
+  });
+  b.querySelectorAll('[data-bq]').forEach((el) => el.addEventListener('change', () => {
+    el.checked ? picked.add(el.dataset.bq) : picked.delete(el.dataset.bq);
+    renderBar(); renderList(); renderBoard();
+  }));
+}
+byId('boardBtn').addEventListener('click', () => boardOn ? leaveBoard() : openBoard());
+byId('bpClose').addEventListener('click', () => goHome());
 readUrl();
+applyView();
 byId('side').innerHTML = '<div class="dim" style="padding:14px">loading plans…</div>';
 refresh();
 let lastTick = Date.now();
