@@ -1,17 +1,19 @@
 
-  /* dark = Nord (nordtheme.com); --bg, --input, --codebg, --dim are in-between shades Nord lacks */
-  :root { --bg:#292e39; --panel:#2e3440; --card:#3b4252; --line:#434c5e; --fg:#eceff4;
-          --dim:#a5afc0; --ok:#a3be8c; --run:#81a1c1; --warn:#ebcb8b; --bad:#bf616a;
-          --accent:#88c0d0; --accentfg:#2e3440; --link:#88c0d0; --input:#272c36; --hover:#3b4252; --sel:#434c5e;
-          --btn:#3b4252; --dot:#4c566a; --codebg:#272c36; --codechip:#3b4252; --thbg:#3b4252;
-          --logfg:#d8dee9; --stfg:#88c0d0; --addbg:#36453c; --delbg:#4a363c;
-          --gitM:#8ec8ff; --gitA:#84d6a0; --gitD:#ffa69c; --merge:#c9a6c2; --mergefg:#1b1e25; }
-  :root[data-theme="light"] { --bg:#f4f5f8; --panel:#ffffff; --card:#ffffff; --line:#d9dde6;
-          --fg:#1d2433; --dim:#5f6b81; --ok:#15803d; --run:#2563eb; --warn:#b45309; --bad:#dc2626;
-          --accent:#7c3aed; --accentfg:#fff; --link:#1d4ed8; --input:#f0f2f7; --hover:#eef1f7; --sel:#e3e7f5;
-          --btn:#eef0f6; --dot:#c3c9d8; --codebg:#f6f7fa; --codechip:#e8eaf2; --thbg:#eaedf5;
-          --logfg:#333c50; --stfg:#6d28d9; --addbg:#e3f5e8; --delbg:#fde6e8;
-          --gitM:#0969da; --gitA:#1a7f37; --gitD:#cf222e; --merge:#8250df; --mergefg:#fff; }
+  /* colors copied from the VS Code theme "GitHub Dark" / "GitHub Light" (github.github-vscode-theme), the theme the
+     Claude Code panel takes its colors from; --accent is the Claude Code send-button orange. A few text colors are a
+     step lighter (dark) or darker (light) than the theme, so small text on tinted chips keeps 4.5:1 contrast */
+  :root { --bg:#24292e; --panel:#1f2428; --card:#2f363d; --line:#444d56; --fg:#e1e4e8;
+          --dim:#a8b0b8; --ok:#34d058; --run:#79b8ff; --warn:#ffea7f; --bad:#f97583;
+          --accent:#d97757; --accentfg:#1f2428; --link:#79b8ff; --input:#2f363d; --hover:#282e34; --sel:#39414a;
+          --btn:#444d56; --dot:#6a737d; --codebg:#1f2428; --codechip:#444d56; --thbg:#2f363d;
+          --logfg:#d1d5da; --stfg:#e08a6a; --addbg:#28a74530; --delbg:#d73a4930;
+          --gitM:#79b8ff; --gitA:#34d058; --gitD:#f97583; --merge:#b392f0; --mergefg:#1f2428; }
+  :root[data-theme="light"] { --bg:#f6f8fa; --panel:#ffffff; --card:#ffffff; --line:#e1e4e8;
+          --fg:#24292e; --dim:#586069; --ok:#116329; --run:#0366d6; --warn:#9a6700; --bad:#cb2431;
+          --accent:#b5532f; --accentfg:#fff; --link:#0366d6; --input:#fafbfc; --hover:#ebf0f4; --sel:#e2e5e9;
+          --btn:#e1e4e8; --dot:#d1d5da; --codebg:#f6f8fa; --codechip:#e1e4e8; --thbg:#f6f8fa;
+          --logfg:#444d56; --stfg:#b5532f; --addbg:#34d05822; --delbg:#d73a4922;
+          --gitM:#005cc5; --gitA:#116329; --gitD:#cb2431; --merge:#5a32a3; --mergefg:#fff; }
   /* --fs scales text and reading widths up on wide screens, where fixed px text gets tiny */
   :root { --fs:1; }
   @media (min-width:1800px) { :root { --fs:1.08; } }
