@@ -2770,16 +2770,17 @@ document.querySelectorAll('[data-reveal]').forEach((b) => b.addEventListener('cl
 }));
 </script></body></html>`;
 };
-// a bar at the top right of every page served here: Download, and a version menu on a page
-// with older versions (scripts/page-versions.mjs). ?download gives the file as saved, without the bar
+// a bar at the top right of every page served here: Copy HTML, Download, and a version menu on a
+// page with older versions (scripts/page-versions.mjs). ?download gives the file as saved, without the bar;
+// Copy HTML puts that same file on the clipboard as text, to paste into a chat
 const QA_BAR_ITEM = 'all:initial;display:block;box-sizing:border-box;font:500 12.5px system-ui,-apple-system,sans-serif;color:#eceff4;background:rgb(46,52,64);border:1px solid #4c566a;border-radius:6px;padding:5px 11px;cursor:pointer;white-space:nowrap';
 const QA_BAR_STYLE = `<style>#qa-bar{all:initial;position:fixed;top:10px;right:10px;z-index:2147483647;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;max-width:calc(100vw - 20px)}
-#qa-dl,#qa-old,#qa-ver>summary,#qa-ver a{${QA_BAR_ITEM}}#qa-dl,#qa-ver>summary{opacity:.75}
+#qa-dl,#qa-cp,#qa-old,#qa-ver>summary,#qa-ver a{${QA_BAR_ITEM}}#qa-dl,#qa-cp,#qa-ver>summary{opacity:.75}
 #qa-old{background:#b35c00;color:#fff;border-color:#b35c00;text-decoration:underline}
 #qa-ver{all:initial;display:block;position:relative;z-index:1}#qa-ver>div{all:initial;display:block;position:absolute;top:calc(100% + 4px);right:0;max-height:60vh;overflow:auto}
 #qa-ver a{border-radius:0;margin-top:-1px}#qa-ver a[aria-current]{background:#434c5e;font-weight:700}
-#qa-dl:hover,#qa-dl:focus-visible,#qa-ver>summary:hover,#qa-ver>summary:focus-visible,#qa-ver[open]>summary{opacity:1}
-#qa-dl:hover,#qa-dl:focus-visible,#qa-old:focus-visible,#qa-ver>summary:focus-visible,#qa-ver a:hover,#qa-ver a:focus-visible{outline:2px solid #88c0d0;outline-offset:-2px}@media print{#qa-bar{display:none}}</style>`;
+#qa-dl:hover,#qa-dl:focus-visible,#qa-cp:hover,#qa-cp:focus-visible,#qa-ver>summary:hover,#qa-ver>summary:focus-visible,#qa-ver[open]>summary{opacity:1}
+#qa-dl:hover,#qa-dl:focus-visible,#qa-cp:hover,#qa-cp:focus-visible,#qa-old:focus-visible,#qa-ver>summary:focus-visible,#qa-ver a:hover,#qa-ver a:focus-visible{outline:2px solid #88c0d0;outline-offset:-2px}@media print{#qa-bar{display:none}}</style>`;
 // versions: [{ n, mtime, latest, href, current }], newest first; one entry means no menu
 const qaBar = (versions) => {
   const when = (ms) => new Date(ms).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -2788,7 +2789,21 @@ const qaBar = (versions) => {
   const menu = versions.length > 1 ? `<details id="qa-ver"><summary aria-label="Versions of this page">v${current.n}${current.latest ? ' (latest)' : ''} ▾</summary><div>
 ${versions.map((v) => `<a href="${escH(v.href)}"${v.current ? ' aria-current="page"' : ''}>v${v.n}${v.latest ? ' (latest)' : ''} · ${escH(when(v.mtime))}</a>`).join('\n')}</div></details>` : '';
   return `${QA_BAR_STYLE}<div id="qa-bar">${old ? `<a id="qa-old" href="${escH(latest.href)}">Old version from ${escH(when(current.mtime))}. Go to latest</a>` : ''}${menu}
-<a id="qa-dl" href="?${old ? `v=${current.n}&amp;` : ''}download" download title="Download this page as one HTML file">⬇ Download</a></div>`;
+<button id="qa-cp" type="button" title="Copy this page's HTML file as text, to paste into a chat">⧉ Copy HTML</button>
+<a id="qa-dl" href="?${old ? `v=${current.n}&amp;` : ''}download" download title="Download this page as one HTML file">⬇ Download</a></div>
+<script>(() => {
+  const b = document.getElementById('qa-cp'), src = document.getElementById('qa-dl').href;
+  const show = (t) => { b.textContent = t; setTimeout(() => { b.textContent = '⧉ Copy HTML'; }, 1500); };
+  b.addEventListener('click', async () => {
+    const text = () => fetch(src, { cache: 'no-store' }).then((r) => { if (!r.ok) throw new Error(r.status); return r.text(); });
+    try {
+      // a ClipboardItem holding a promise keeps the click's permission while the file loads (Safari needs this)
+      if (window.ClipboardItem) await navigator.clipboard.write([new ClipboardItem({ 'text/plain': text().then((t) => new Blob([t], { type: 'text/plain' })) })]);
+      else await navigator.clipboard.writeText(await text());
+      show('Copied');
+    } catch { show('Copy failed'); }
+  });
+})();</script>`;
 };
 const sendPage = (req, res, html, name, versions = []) => {
   const dl = new URL(req.url, 'http://x').searchParams.has('download');
