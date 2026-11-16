@@ -103,6 +103,8 @@ The dashboard's "⚡ All" refuses until every registered project has this script
 | `layout.folders[]` | `{path, what}` | no | AGENTS.md Layout and plan-lanes roots |
 | `layout.rootFiles[]`, `layout.softFiles[]`, `layout.envFiles[]` | list | no | plan-lanes CONFIG; env files copied into worktrees (default `.env`) |
 | `modules.<name>` | boolean | no | Missing = on. Names: `codex`, `changelog`, `decision-sheet`, `test-review`, `step-gate`, `post-edit-lint`, `plans-parallel`, `pr-feedback`, `run-skill` |
+| `changelog.locales[]` | list | no | Languages of the customer note (default `["en"]`). Every entry that customers see has all of them |
+| `changelog.versionFile` | string | no | The file whose `version` each PR raises by one step (for example `package.json`). Empty = no version check |
 | `pipeline.defaultMode` | `verify`/`commit`/`pr` | no | Default `pr` |
 | `pipeline.runAllow[]` | list | no | Extra allow rules for every headless run |
 | `pipeline.preflight[]` | list | no | Bare commands every run needs (for example `pnpm theme:generate`, a generator whose output is gitignored). Each gets an allow rule, and the launch preflight runs each once in the new worktree |

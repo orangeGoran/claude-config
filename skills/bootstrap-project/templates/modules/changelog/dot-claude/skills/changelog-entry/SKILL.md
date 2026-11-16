@@ -1,6 +1,6 @@
 ---
 name: changelog-entry
-description: Write the changelog.d/ entry that the Changelog Gate check needs on each PR to @@BASE_BRANCH@@ — one YAML file with kind, scope, pr and a plain-words summary — or say that the PR needs the no-changelog label instead. Use when a PR is opened, when the Changelog Gate check failed, or when the owner asks for a changelog entry or a release note.
+description: Write the changelog.d/ entry that the Changelog Gate check needs on each PR to @@BASE_BRANCH@@ — one YAML file with a plain summary for the team, a developer note and, when customers see the change, a customer note in @@CHANGELOG_LOCALES@@ — and check it with the changelog validator, or say that the PR needs the no-changelog label instead. Use when a PR is opened, when the Changelog Gate check failed, or when the owner asks for a changelog entry or a release note.
 argument-hint: "[short-slug]"
 ---
 
@@ -22,30 +22,60 @@ If the change ships nothing a reader cares about (a dependency update, a CI fix,
 
 All other changes need an entry.
 
-## Step 2 — Write the file
+## Step 2 — Choose the audience
+
+Ask: **can a user, or a customer's agent or app, do or see something new or different?** That includes a new or changed screen, endpoint, error message, limit or behavior, also when the screen for a new endpoint does not exist yet.
+
+| Answer | `audience` | What you write |
+| --- | --- | --- |
+| No | `internal` | `summary` and `internal` |
+| Yes | `both` | `summary`, `internal` and `customer` in @@CHANGELOG_LOCALES@@ |
+
+`customer` alone is rare: use it only when there is nothing for a developer to note. When unsure, use `both`.
+
+## Step 3 — Write the file
 
 Read `changelog.d/README.md` for the format. Then write one new file with the Write tool: `changelog.d/<pr-number-or-date>-<slug>.yaml`. Use the PR number when it is known; else today's date as `YYYYMMDD`. `<slug>` is `$ARGUMENTS` if given, else a short kebab-case name for the change. Never edit an existing entry.
 
 ```yaml
-kind: fixed # added | changed | fixed | removed | security | performance
+kind: added # added | changed | fixed | removed | security | performance
+audience: both # internal | customer | both
 scope: orders # kebab-case area of the change
 pr: 12 # leave this line out when the PR number is not known yet
 summary: |
-  A user can now save an order with an empty note. Before, the save failed.
+  A user can now add a note to an order. The note shows on the order page and
+  in the order email.
+internal: |
+  `PATCH /v1/orders/{id}` takes an optional `note` (max 500 characters).
+  New column `orders.note`. A longer note gives 422 `note_too_long`.
+customer:
+@@CHANGELOG_LOCALES_YAML@@
 ```
 
-Rules for `summary`:
+Rules:
 
-- One or two sentences in plain words, written in ASD-STE100.
-- Say what changed for the reader, not how the code changed.
-- Use real but made-up values when an example helps. Never put real customer data or secrets in the entry.
+- `summary`: always. One short paragraph (2–4 sentences) in plain words, written in ASD-STE100. The owner reads it in place of the `internal` note: what changed, for whom, and any limit or catch. No code names unless the reader needs one.
+- `internal`: always. The developer details: endpoints, fields, error codes, migrations, settings, and anything surprising.
+- `customer`: only for `customer` and `both`, with every language (@@CHANGELOG_LOCALES@@) filled. Translate it yourself; never leave a placeholder. Write for a person who uses the product: what they can now do, not which endpoint changed. No field names, no status codes.
+- Use made-up values when an example helps. Never put real customer data, credentials or unshipped security details in the entry.
+@@IF HAS_VERSION_BUMP@@
 
-## Step 3 — Check
+## Step 3b — Raise the version
 
-- Read the file again. Confirm that `kind` is one of the six values, that `scope` is kebab-case, and that `summary` is not empty.
-- Run `git status --short` and confirm the new file is the only new file under `changelog.d/`.
+Raise `version` in `@@CHANGELOG_VERSION_FILE@@` by exactly one step from the version on `origin/@@BASE_BRANCH@@`:
 
-## Step 4 — Output
+- **patch** (`1.4.2` → `1.4.3`): a fix.
+- **minor** (`1.4.2` → `1.5.0`): a feature, or a new optional field.
+- **major** (`1.4.2` → `2.0.0`): a breaking change: a removed or renamed endpoint or field, a new required request field, a changed status code, a stricter access rule.
 
-- The path of the new file, on its own line.
-- Do not run `git add` or `git commit`. `/skill-auto-pipeline` commits it in a run. In an interactive session, give the owner a copy-paste `git add -- <path>` command.
+The branch has raised it already when `git diff origin/@@BASE_BRANCH@@...HEAD -- @@CHANGELOG_VERSION_FILE@@` shows a `version` line. Do not raise it twice.
+@@END@@
+
+## Step 4 — Check
+
+Run `node .claude/scripts/changelog-validate.mjs --base origin/@@BASE_BRANCH@@`. It must print `PASS`. Fix the cause of each `x` line and run it again.
+
+## Step 5 — Output
+
+- The path of the new file, on its own line, and the `summary` text, so the owner can check the tone.
+- Do not run `git add` or `git commit`. `/skill-auto-pipeline` commits it in a run. In an interactive session, give the owner a copy-paste `git add -- <path>` command for the new file and every other file this skill changed.

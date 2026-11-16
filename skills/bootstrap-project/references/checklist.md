@@ -21,7 +21,7 @@ After the bootstrap, the repo has these files. "Module" files exist only when th
 | `.plans/<timestamp>-check-the-pipeline-end-to-end.md` | core | Only when the repo has no plan yet |
 | the parent plan (`rules.parentPlan`) | core | A skeleton (Goals, Architecture, Phases, Open decisions), only when the file does not exist |
 | `.codex/skills/validate-plan`, `validate-implementation` | codex | |
-| `changelog.d/{README,AGENTS,CLAUDE}.md`, `.claude/skills/changelog-entry`, `.github/workflows/changelog-gate.yml` | changelog | |
+| `changelog.d/{README,AGENTS,CLAUDE}.md`, `.claude/skills/changelog-entry`, `.claude/scripts/changelog-validate.mjs`, `.github/workflows/changelog-gate.yml` | changelog | The gate checks each entry (`summary` and `internal` always, `customer` in every language when customers see it) and the one-step version raise |
 | `.claude/skills/decision-sheet`, `.github/workflows/decision-sheet.yml` | decision-sheet | |
 | `.claude/skills/test-review`, `.claude/agents/test-reviewer.md` | test-review | |
 | `.claude/scripts/workflow-guard.sh`, `workflow-complete-step.sh` | step-gate | PreToolUse hook in settings.json |
@@ -75,6 +75,7 @@ The owner is not a template expert. Ask only what the owner alone can decide. Fi
 | Default run mode, extra run rules | `pipeline.*` | default `pr`; extra rules from docker compose and migration scripts |
 | Commands every run needs first | `pipeline.preflight[]` | a generator whose output is gitignored and that the checks or the browser test read (for example a `theme:generate` script that `predev` / `prebuild` runs, but `vite` alone does not). Never a command that changes tracked files (`generate:types` on committed types): the preflight stops when the tree is not clean |
 | The project's own checks per hard rule, the tests each rule needs, the validator's extra "never" limits | `rules.hard[].details`, `rules.hard[].tests`, `rules.validatorLimits` | In adopt and upgrade mode: copy them from the repo's existing `plan-validator.md`, `skill-1-plan`, `skill-3-test`, `skill-4-verify` and `apply-validation` (one short line each). Then the render keeps them, and no file needs a hand merge. |
+| Changelog languages and version file | `changelog.locales`, `changelog.versionFile` | the existing `changelog.d/README.md` or validator (`LOCALES`), else the product's launch languages in the big plan or SoW, else `["en"]`. `versionFile`: the manifest when it has a `version` (`package.json`, `Cargo.toml`, `pyproject.toml`), else empty |
 | Registrations | `registry.*` | dashboard yes; browser-usability-test yes when there is a web UI or an API. A web UI with `browserTest` also gets the browser-test step, the ship gate and the run allow rules for the skill's scripts (full path and `QA_*=` forms, `curl -s -o /dev/null -w *`): the render adds them, never write them by hand. `appUrl` is the dev server the owner runs; how to start the new code beside it belongs in the profile's `notes.md` |
 | Ticket evidence and board | `git.tickets.*` | the old skills or scripts that comment on issues or move them on a project board (`gh issue comment`, `gh project item-edit`); else leave it out |
 | Services a run needs | `pipeline.services[]` | the old skills' preflight checks, docker compose, the ports in `.env.example`; else leave it out |

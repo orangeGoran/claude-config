@@ -112,6 +112,13 @@
     "pr-feedback": true,
     "run-skill": true
   },
+  "changelog": {
+    "locales": [
+      "en",
+      "de"
+    ],
+    "versionFile": "package.json"
+  },
   "pipeline": {
     "defaultMode": "pr",
     "runAllow": [],
@@ -133,5 +140,6 @@
     "browserTest": true,
     "role": "backend",
     "appUrl": ""
-  }
+  },
+  "firstPlanTs": "20261116-112027"
 }

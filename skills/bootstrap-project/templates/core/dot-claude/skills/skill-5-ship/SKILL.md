@@ -64,7 +64,12 @@ Run the repo's real checks for the changed files (AGENTS.md, **Commands**: lint,
 When the branch adds no file under `changelog.d/` (`git diff --name-only --diff-filter=A origin/<base>...HEAD -- changelog.d/`):
 
 - Interactive: run `/changelog-entry <slug>`. Unattended: read `.claude/skills/changelog-entry/SKILL.md` and follow it.
+@@IF HAS_VERSION_BUMP@@
+- Commit the new file and the version raise: `git add changelog.d/<file> @@CHANGELOG_VERSION_FILE@@`, then `git commit -m "docs(changelog): add entry for <slug>"`.
+@@END@@
+@@IFNOT HAS_VERSION_BUMP@@
 - Commit the new file: `git add changelog.d/<file>`, then `git commit -m "docs(changelog): add entry for <slug>"`.
+@@END@@
 - If the skill decides that no entry is necessary, remember it: Step 5 adds the `no-changelog` label.
 @@END@@
 

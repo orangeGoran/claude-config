@@ -108,7 +108,7 @@ To ship: resume this run in "to PR" mode. It makes the one commit, then opens th
    - When the work adds no file under `changelog.d/`, read `.claude/skills/changelog-entry/SKILL.md` and follow it now, so the entry is part of the one commit. If it decides that no entry is necessary, write that in the Timeline.
 @@END@@
 5. **Commit** — one commit for the whole plan:
-   1. `git status --porcelain`. Every path must belong to this plan: the files it changed, its tests, the plan's move to `.plans/done/`, and a changelog entry if one was written. A path that does not belong (for example a tool's output file) → `FAILED: commit`, with the list under `## Diagnosis`.
+   1. `git status --porcelain`. Every path must belong to this plan: the files it changed, its tests, the plan's move to `.plans/done/`, and a changelog entry (with its version raise) if one was written. A path that does not belong (for example a tool's output file) → `FAILED: commit`, with the list under `## Diagnosis`.
    2. `git add -- <path> <path> …`, naming every path (a deleted or moved path too). Never `git add -A` or `git add .`.
    3. `git commit -m "<type>(<scope>): <what the plan does, in plain words>"`. Conventional Commits, no AI attribution. One commit: never split the work into several.
 

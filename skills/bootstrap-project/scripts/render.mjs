@@ -115,6 +115,16 @@ export function checkParams(p) {
     if (str(s?.url) && !/^https?:\/\/[\w.:/-]+$/.test(s.url)) errs.push(`pipeline.services[${i}].url must be a plain http(s) URL`);
     if (str(s?.container) && !/^[\w.-]+$/.test(s.container)) errs.push(`pipeline.services[${i}].container must be a container name`);
   });
+  const cl = p.changelog;
+  if (cl !== undefined) {
+    if (!cl || typeof cl !== 'object') errs.push('changelog must be an object');
+    else {
+      if (cl.locales !== undefined && !(Array.isArray(cl.locales) && cl.locales.length && cl.locales.every((l) => /^[a-z]{2}(-[A-Z]{2})?$/.test(l)))) {
+        errs.push('changelog.locales must be a list of language codes, for example ["en", "de"]');
+      }
+      if (cl.versionFile !== undefined && cl.versionFile !== '' && !/^[\w./-]+$/.test(cl.versionFile)) errs.push('changelog.versionFile must be a repo path, for example "package.json", or empty');
+    }
+  }
   const board = p.git?.tickets?.board;
   if (board !== undefined && (!str(board.owner) || !/^\d+$/.test(String(board.number ?? '')) || !str(board.status))) {
     errs.push('git.tickets.board needs "owner", a numeric "number" and "status"');
@@ -170,6 +180,7 @@ export function buildVars(p, now = new Date()) {
     ...allowCmds.map((c) => `Bash(${c}*)`),
     ...(moduleOn(p, 'codex') ? CODEX_ALLOW : []),
     ...(moduleOn(p, 'step-gate') ? ['Bash(bash .claude/scripts/workflow-complete-step.sh*)'] : []),
+    ...(moduleOn(p, 'changelog') ? ['Bash(node .claude/scripts/changelog-validate.mjs*)'] : []),
     ...arr(r.extraAllow),
   ];
   // deny: destructive commands only. Never push or PR commands: deny beats every
@@ -257,6 +268,10 @@ export function buildVars(p, now = new Date()) {
   const rootFiles = [...new Set([...arr(ly.rootFiles), 'AGENTS.md', 'CLAUDE.md', 'README.md', '.gitignore',
     ...(str(st.manifest) ? [str(st.manifest)] : []), ...(parent.includes('/') ? [] : [parent])])];
   const softFiles = [...new Set([...arr(ly.softFiles), '.gitignore', ...(str(st.manifest) ? [str(st.manifest)] : []), ...arr(st.lockfiles)])];
+
+  // changelog: the customer-note languages and the file whose version each PR raises
+  const clLocales = arr(p.changelog?.locales).length ? arr(p.changelog.locales) : ['en'];
+  const clVersionFile = str(p.changelog?.versionFile);
 
   const branchChain = [base, staging, prod].filter(Boolean).join(' → ');
   const merge = str(g.mergeStyle, 'squash');
@@ -346,6 +361,11 @@ export function buildVars(p, now = new Date()) {
     BOARD_NUMBER: board ? String(board.number) : '',
     BOARD_STATUS: board ? str(board.status) : '',
     PREFLIGHT_BASH: bashWords(preflight),
+    CHANGELOG_LOCALES: clLocales.map(code).join(', '),
+    CHANGELOG_LOCALES_JS: jsList(clLocales),
+    CHANGELOG_LOCALES_YAML: clLocales.map((l, i) => (i ? `  ${l}: <the ${clLocales[0]} text, translated to ${l}>` : `  ${l}: You can now add a note to an order. The note shows on the order page and in the order email.`)).join('\n'),
+    CHANGELOG_VERSION_FILE: clVersionFile,
+    HAS_VERSION_BUMP: Boolean(clVersionFile),
     BROWSER_TEST_PROJECT: hasBrowserTest ? pr.name : '',
   };
   // one shared block for every skill that reports (templates/partials/reporting-rules.md)
