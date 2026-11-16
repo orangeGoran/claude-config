@@ -24,7 +24,7 @@
   h1 { font-size:calc(15px * var(--fs)); margin:0; }
   #home { color:inherit; text-decoration:none; }
   /* the Plan · PR / Files changed switch sits where the review bar has it: in the middle of the space left of the chat
-     panel (--chatw, set from the panel's width); the left group stops before it */
+     panel, but never over the left group (--tabx, set by placeHdTabs in app.js); the left group stops before it */
   header.mainhd { position:relative; }
   .mainhd .hleft, .mainhd .hright { display:flex; align-items:center; gap:14px; min-width:0; }
   .mainhd .hleft { flex:1; }
@@ -32,8 +32,9 @@
   /* shown only while the open plan waits for GitHub or the server (busy), beside the thin bar at the top */
   .mainhd .hdnote { margin-left:auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; visibility:hidden; }
   body.busy .mainhd .hdnote { visibility:visible; }
-  #hdtabs { position:absolute; top:50%; left:calc((100% - var(--chatw, 0px)) / 2); transform:translate(-50%, -50%); }
-  .mainhd.tabs .hleft { max-width:calc((100% - var(--chatw, 0px)) / 2 - var(--tabsw, 0px) / 2 - 36px); }
+  .mainhd .hleft > :not(.hdnote) { flex-shrink:0; white-space:nowrap; }
+  #hdtabs { position:absolute; top:50%; left:var(--tabx, 50%); transform:translate(-50%, -50%); }
+  .mainhd.tabs .hleft { max-width:calc(var(--tabx, 50%) - var(--tabsw, 0px) / 2 - 36px); }
   .wrap { flex:1; display:flex; min-height:0; }
   aside { width:calc(400px * var(--fs)); border-right:1px solid var(--line); background:var(--panel);
           flex-shrink:0; display:flex; flex-direction:column; }

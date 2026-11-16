@@ -933,7 +933,7 @@ function drawHdTabs(p) {
   if (!h) return;
   h.innerHTML = p && p.pr ? prTabs(p, 'plan', 'hd') : '';
   h.parentElement.classList.toggle('tabs', !!h.innerHTML);
-  h.parentElement.style.setProperty('--tabsw', h.offsetWidth + 'px');
+  placeHdTabs();
   h.querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => {
     prTab[p.key] = el.dataset.tab; lastPrDraw = null; renderDetail(false);
   }));
@@ -988,9 +988,26 @@ function autoChat(p) {
     document.querySelectorAll('[data-chat]').forEach((b) => { b.classList.add('on'); b.setAttribute('aria-pressed', 'true'); });
   }
 }
-// the chat panel's width (and its divider), so the header switch centers over the same space as the review bar's
-new ResizeObserver(() => document.body.style.setProperty('--chatw', (byId('chat').offsetWidth + byId('csplit').offsetWidth) + 'px'))
-  .observe(byId('chat'));
+// the header switch centers over the space left of the chat panel (as the review bar's does), but moves right of the
+// left group (Plans, Code, the review pill, the clock) when a wide chat would push it onto that group
+function placeHdTabs() {
+  const h = byId('hdtabs'), hd = h && h.parentElement;
+  if (!hd) return;
+  const chatw = byId('chat').hidden ? 0 : byId('chat').offsetWidth + byId('csplit').offsetWidth;
+  const left = [...hd.querySelector('.hleft').children].filter((el) => !el.classList.contains('hdnote') && el.offsetParent)
+    .reduce((w, el) => w + el.offsetWidth + 14, 0);
+  const pad = parseFloat(getComputedStyle(hd).paddingLeft) || 0;
+  hd.style.setProperty('--tabsw', h.offsetWidth + 'px');
+  hd.style.setProperty('--tabx', Math.round(Math.max((hd.clientWidth - chatw) / 2, pad + left + 22 + h.offsetWidth / 2)) + 'px');
+}
+// the chat panel's width (and its divider): the toasts stay left of it, the header switch is placed again
+const hdObs = new ResizeObserver(() => {
+  document.body.style.setProperty('--chatw', (byId('chat').offsetWidth + byId('csplit').offsetWidth) + 'px');
+  placeHdTabs();
+});
+hdObs.observe(byId('chat'));
+hdObs.observe(document.querySelector('.mainhd'));
+document.querySelectorAll('.mainhd .hleft > :not(.hdnote)').forEach((el) => hdObs.observe(el));
 function toggleChat(on) {
   chatOn = on == null ? !chatOn : on;
   try { localStorage.setItem('dash-chat-open', chatOn ? '1' : '0'); } catch {}
