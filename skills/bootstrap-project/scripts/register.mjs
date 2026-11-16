@@ -85,7 +85,9 @@ if (reg.dashboard !== false) {
 // --- browser-usability-test profile ---------------------------------------------------
 if (reg.browserTest) {
   const qaHome = opt.qaHome ? path.resolve(opt.qaHome) : path.join(homedir(), '.claude', 'browser-usability-test', 'projects');
-  const profileDir = path.join(qaHome, p.project.name);
+  // the profile name: registry.browserTestProject (an existing profile of this repo), else project.name
+  const profileName = reg.browserTestProject || p.project.name;
+  const profileDir = path.join(qaHome, profileName);
   const profileScript = path.join(CONFIG_REPO, 'skills', 'browser-usability-test', 'scripts', 'profile.mjs');
   const env = opt.qaHome ? `QA_HOME=${sq(qaHome)} ` : '';
   const role = reg.role || 'backend';
@@ -100,10 +102,10 @@ if (reg.browserTest) {
   if (existsSync(path.join(profileDir, 'project.json'))) {
     console.log(`#    the project exists: add this repo to it`);
     console.log(`cd ${sq(repo)}`);
-    console.log(`${env}node ${qp(tilde(profileScript))} add-repo ${sq(p.project.name)} ${sq(role)}`);
+    console.log(`${env}node ${qp(tilde(profileScript))} add-repo ${sq(profileName)} ${sq(role)}`);
   } else {
     console.log(`cd ${sq(repo)}`);
-    console.log(`${env}node ${qp(tilde(profileScript))} init ${sq(p.project.name)} ${sq(role)}`);
+    console.log(`${env}node ${qp(tilde(profileScript))} init ${sq(profileName)} ${sq(role)}`);
   }
   if (reg.appUrl) {
     const pj = qp(tilde(path.join(profileDir, 'project.json')));

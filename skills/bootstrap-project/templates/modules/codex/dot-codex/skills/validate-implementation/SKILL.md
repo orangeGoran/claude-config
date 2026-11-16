@@ -37,7 +37,9 @@ Say which base and which plan you use before you continue.
 3. **Read the diff hunk by hunk, then read each touched file in full.** A hunk can look correct and still break a rule that is only visible in the code around it (a guard above it, a transaction boundary, a null check).
 4. **Follow callers and consumers.** For each changed public symbol, `rg` for its call sites and confirm they still work (signatures, return shapes, errors).
 5. **Compare the plan and the code in both directions.** Promised but missing: the plan says it, the code does not do it. Present but not planned: the code does something the plan does not mention (flag it as scope drift and judge it on its merit).
+@@IF HAS_MIGRATIONS@@
 6. **Read each added or changed migration in full, statement by statement.** A migration runs once against production data. Review it as a data-safety audit.
+@@END@@
 
 ## What to hunt for
 
@@ -49,36 +51,74 @@ Say which base and which plan you use before you continue.
 - Exactly once: a new success or failure branch must write its state change once and send its event once. Find the one owner before you accept a second write or a second event.
 
 ### Project rules (`AGENTS.md`, Hard rules)
-@@VALIDATOR_HUNT@@
+A finding is each place where the code breaks or skips one of these rules:
+@@HARD_RULES@@
 @@IFNOT CONTRACT_IN_RULES@@
 - Contracts: @@CONTRACTS_RULE@@
 @@END@@
 
 ### Discrepancies
-- The code differs from the plan or from the reference pattern the plan cites: deviations without a reason, renamed fields, dropped steps.
-- Registration gaps: a new module, entity, route or event that is not added to the place where the project registers it (see `AGENTS.md`).
+- The code differs from the plan or from the files of its **Reference implementation** section: deviations without a reason, renamed fields, dropped steps.
+- Registration gaps: a new module, entity, route or event that is not added to the place where the project registers it (the plan's **Wiring & registration** section, `AGENTS.md`).
 
 ### Performance
 - N+1 queries: a query inside a loop where one query with `IN (...)` or a join is enough.
-- Queries without a limit on tables that grow; loading full rows where two columns are enough.
-- Sequential awaits of independent work; heavy work on the request path that belongs in a background job.
+- Queries without a limit on tables that grow; loading full rows where two columns are enough; filtering or sorting on a large table by a column with no index.
+- Sequential awaits of independent work; heavy work on the request path that belongs in a background job; a large upload held in memory instead of streamed.
+- A theoretical performance issue on a small table with a fixed size (a list of roles, a settings table) is not a finding.
 
 ### Security
 - An endpoint or entry point with no access check; data that one user can read or change for another user.
-- Secrets or credentials in the code, the fixtures or the logs.
+- Secrets or credentials in the code, the fixtures, the logs or a response body.
 
+@@IF HAS_MIGRATIONS@@
 ### Schema and migrations (data safety)
-Each statement that can drop, truncate or lose data, or that can leave the schema half applied, is **blocking** unless the migration or the plan explains it.
-- A model change with no matching migration, or a migration with changes from another branch.
-- `DROP TABLE`, `DROP COLUMN` or `TRUNCATE` on data that can exist in production. A rename written as DROP + ADD (data loss).
-- A type change that can lose data, or a cast that can fail on existing rows.
-- A new `NOT NULL` column without a default or a backfill; a backfill that runs after the constraint that needs it.
-- A new unique constraint on a column that can already have duplicates; a foreign key `ON DELETE CASCADE` that nobody intended.
-- `down()` that does not reverse `up()` in the reverse order, where a safe reverse is possible.
+When the stack has database migrations, read each added or changed migration as production DDL that runs once against live data. Each statement that can drop, truncate or lose data, or that can leave the schema half applied, is **blocking** unless the migration or the plan explains it.
 
+**Presence and drift**
+- A model change with no matching migration: compare the model changes with the migration's DDL, column by column.
+- A generated migration with changes from another branch or from uncommitted models: each statement must trace back to a model change in this diff.
+
+**Destructive DDL**
+- `DROP TABLE`, `DROP COLUMN` or `TRUNCATE` on data that can exist in production. A rename written as DROP + ADD (data loss); many generators do this, so check each add/drop pair on the same table.
+- A type change that narrows or coerces data, or a cast that can fail on existing rows.
+
+**NOT NULL transitions**
+- A new `NOT NULL` column without a default or an earlier backfill, on a table with rows: it fails in production and passes on an empty dev database.
+- An existing column made `NOT NULL` without a backfill of its NULL values; a changed default that the old app version still needs during the deploy.
+
+**Backfills**
+- The backfill runs **before** the constraint that needs it (check the order of statements in `up()`).
+- The backfill is correct for each state of existing rows (NULL, old values, orphan rows) and never invents data (an arbitrary foreign key, a fixed owner).
+- An unbounded `UPDATE` on a large table that locks it for the whole statement.
+
+**Ordering and atomicity**
+- Each statement depends only on earlier statements: type, table, backfill, constraint, index.
+- Statements that cannot run inside a transaction (for example adding an enum value and using it in the same transaction, or a concurrent index build) are split out.
+- Several new migrations in one branch run in the right order.
+
+**Indexes and constraints**
+- A new unique constraint on a column that can already hold duplicates; a new foreign key or check constraint that existing rows break.
+- A foreign key `ON DELETE CASCADE` that nobody intended: it is a silent mass delete.
+
+**`down()`**
+- `down()` reverses `up()` in the reverse order, or is an explicit no-op with a comment where a reverse would lose data.
+
+@@END@@
 ### Tests
 - Changed behavior without a test; a test that checks the mock and not the behavior; old names in test helpers or seeds.
+- An expected result or UI text that comes from what the app shows, not from the spec or the plan.
 - @@TEST_DATA_RULE@@
+@@IF MOD_CHANGELOG@@
+
+### Release note
+@@IF HAS_VERSION_BUMP@@
+- No new file under `changelog.d/`, or no one-step SemVer raise of the version in `@@CHANGELOG_VERSION_FILE@@`, unless the change qualifies for the `no-changelog` label (a dependency bump, a CI fix, a typo, a pure refactor).
+@@END@@
+@@IFNOT HAS_VERSION_BUMP@@
+- No new file under `changelog.d/`, unless the change qualifies for the `no-changelog` label (a dependency bump, a CI fix, a typo, a pure refactor).
+@@END@@
+@@END@@
 
 ## Output (return this, nothing else)
 
@@ -96,9 +136,11 @@ Each statement that can drop, truncate or lose data, or that can leave the schem
 ### Performance notes
 - <hotspot> — <file:line> — <why it gets slow and at what size> — <cheaper alternative>
 
+@@IF HAS_MIGRATIONS@@
 ### Migration data safety
 - <migration file>: <safe | issues listed above> | no migrations in the diff | MISSING — model changes with no migration: <models>
 
+@@END@@
 ### Plan ↔ code
 - Promised but missing: <item> (plan section) | none
 - Present but not planned: <item> — <keep | flag> | none
@@ -107,9 +149,15 @@ Each statement that can drop, truncate or lose data, or that can leave the schem
 - [ ] Callers of each changed public symbol still work
 @@VALIDATOR_RULE_CHECKS@@
 - [ ] Each state change and event happens exactly once
+@@IF HAS_MIGRATIONS@@
 - [ ] A migration exists for each model change, and each one was read statement by statement
+- [ ] Migrations: no destructive DDL or DROP + ADD rename; NOT NULL additions have a default or a backfill first; constraints fit the existing rows; down() is a true reverse or an explicit no-op
+@@END@@
 - [ ] No N+1 or unbounded queries added
 - [ ] Changed behavior has tests
+@@IF MOD_CHANGELOG@@
+- [ ] Release note present (or `no-changelog` justified)
+@@END@@
 ```
 
 After the report, **always** give a block that the owner can copy to the implementing agent (the `/skill-2-implement` conversation). Turn each blocking issue into an imperative fix instruction with its evidence. Put it in one fenced code block:
@@ -135,11 +183,11 @@ After the fixes, run lint and the tests for the touched files (AGENTS.md, Comman
 
 If the verdict is APPROVE with no findings, the block reads: `Implementation validated clean — no changes required.`
 
-The block must be complete by itself: the branch, each instruction, each evidence citation and failure scenario. Write **no files**. The chat output is the full deliverable.
+The block must be complete by itself: the branch, each instruction, each evidence citation and failure scenario. Write **no files**. The chat output is the full deliverable: the caller (`/decision-sheet`, or the owner) saves it.
 
 ## Rules
 
 - Every blocking finding names a real `file:line` that you read and a concrete failure scenario (input or state → wrong result). Do not write "might be slow" without the mechanism.
 - Check before you report. Read the code around each finding again. If a guard elsewhere already handles it, drop the finding.
-- Be specific, not pedantic. Data loss, data that leaks to the wrong user, and broken project rules are blocking. Style points are non-blocking.
+- Be specific, not pedantic. Data loss, data that leaks to the wrong user, and broken project rules are blocking. Style points are non-blocking. A theoretical performance issue on a small table with a fixed size is not a finding.
 - NEEDS REWORK only when a blocking issue would ship wrong, broken or unsafe code. Otherwise APPROVE WITH CHANGES.

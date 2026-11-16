@@ -11,6 +11,8 @@
   },
   "stack": {
     "summary": "Node.js 24, NestJS, PostgreSQL. Package manager: pnpm.",
+    "httpApi": true,
+    "migrations": true,
     "packageManager": "pnpm",
     "manifest": "package.json",
     "lockfiles": [
@@ -22,19 +24,28 @@
       "testScoped": "pnpm exec vitest run <file>",
       "testE2e": "",
       "lint": "pnpm lint",
+      "lintCheck": "pnpm lint:check",
       "format": "",
       "typecheck": "pnpm typecheck",
       "build": "pnpm build"
     },
     "postEditLint": {
       "fix": "npx oxlint --fix",
-      "format": "npx oxfmt",
+      "format": "npx oxfmt --no-error-on-unmatched-pattern",
       "extensions": [
         "ts",
         "tsx",
         "mts"
       ]
-    }
+    },
+    "extraCommands": [
+      {
+        "label": "Run the API",
+        "cmd": "pnpm start:dev",
+        "note": "(copy `.env.example` to `.env` first)"
+      }
+    ],
+    "nodeVersionFile": ".nvmrc"
   },
   "git": {
     "base": "develop",
@@ -68,7 +79,7 @@
         "rule": "An error response carries a stable error code from the error-code enum, never a free-text message."
       }
     ],
-    "parentPlan": "docs/ARCHITECTURE.md",
+    "parentPlan": "docs/PLAN.md",
     "rulesDocs": [],
     "contracts": {
       "source": "",
@@ -99,6 +110,10 @@
     "softFiles": [],
     "envFiles": [
       ".env"
+    ],
+    "testHarnessDoc": "test/AGENTS.md",
+    "migrationHints": [
+      "migration:generate"
     ]
   },
   "modules": {
@@ -117,7 +132,8 @@
       "en",
       "de"
     ],
-    "versionFile": "package.json"
+    "versionFile": "package.json",
+    "validateCmd": ""
   },
   "pipeline": {
     "defaultMode": "pr",
@@ -138,6 +154,7 @@
     "dashboard": true,
     "color": "",
     "browserTest": true,
+    "browserTestProject": "",
     "role": "backend",
     "appUrl": ""
   },

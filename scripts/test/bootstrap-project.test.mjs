@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -122,6 +122,17 @@ test('a browser-test project gets the full-path, QA_* and curl run rules, with $
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a browser-test run adds the /tmp/claude-<uid> folder, so the session can write its click script', () => {
+  const { dir, repo } = bootstrapRepo(webUi);
+  try {
+    const r = pipelineBash(repo, ['add_dir_args'], 'add_dir_args; printf "%s\\n" "${ADD_DIR_ARGS[@]}"; BROWSER_TEST_PROJECT=; add_dir_args; echo "N=${#ADD_DIR_ARGS[@]}"');
+    assert.equal(r.status, 0, r.stderr);
+    const tmp = realpathSync('/tmp');
+    assert.ok(r.stdout.startsWith(`--add-dir\n${tmp}/claude-${process.getuid()}\n`), r.stdout);
+    assert.match(r.stdout, /N=0/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('the launch preflight refuses a command that no allow rule matches, and passes when all match', () => {
   const { dir, repo } = bootstrapRepo(webUi);
   try {
@@ -229,5 +240,82 @@ echo '{"type":"system","subtype":"compact_boundary","compactMetadata":{"preToken
     assert.doesNotMatch(readFileSync(path.join(sdir, 'old.jsonl'), 'utf8'), /compact_boundary/, 'the older session is never compacted');
     // compacted already: the size is the one after the compaction, so it is not compacted again
     assert.match(run({}), /compaction skipped: context 81k is under the 150k threshold/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+const render = await import(path.join(SKILL, 'scripts/render.mjs'));
+
+test('dedupeRules drops exact duplicates and rules that a broader prefix rule covers', () => {
+  assert.deepEqual(render.dedupeRules(['Bash(pnpm format:check*)', 'Bash(pnpm format:check)', 'Bash(pnpm lint*)', 'Bash(pnpm lint:check)',
+    'Bash(npx oxlint)', 'Bash(npx oxlint *)', 'Read(./**)', 'Read(./**)', 'Bash(git hash-object*)', 'Bash(git hash-object*)']),
+  ['Bash(pnpm format:check*)', 'Bash(pnpm lint*)', 'Bash(npx oxlint)', 'Bash(npx oxlint *)', 'Read(./**)', 'Bash(git hash-object*)']);
+});
+
+test('settings.json: deny holds only destructive rules (force push yes, plain push no), and the shared allow list has no PR rule', () => {
+  const { dir, repo } = bootstrapRepo((p) => { p.rules.extraAllow = ['Bash(pnpm lint:check)', 'Bash(git hash-object*)']; return p; });
+  try {
+    const s = JSON.parse(readFileSync(path.join(repo, '.claude/settings.json'), 'utf8'));
+    // a plain push is never denied (lesson 1); a force push and a new repo are
+    assert.ok(!s.permissions.deny.some((d) => /^Bash\(git push(\*)?\)$/.test(d)), s.permissions.deny.join(', '));
+    for (const d of ['Bash(git push --force*)', 'Bash(git push -f*)', 'Bash(gh repo create*)']) assert.ok(s.permissions.deny.includes(d), d);
+    assert.ok(!s.permissions.allow.some((a) => /^Bash\(gh pr /.test(a)));
+    assert.equal(s.permissions.allow.filter((a) => a.startsWith('Bash(git hash-object')).length, 1);
+    assert.ok(!s.permissions.allow.includes('Bash(pnpm lint:check)'), 'covered by Bash(pnpm lint*)');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a validator prints one list: the generic lines with the new project limits appended', () => {
+  const tmpl = '@@IFNOT HAS_VALIDATOR_LIMITS@@\n- **Never:** sign in, open a browser, or change a database row or a file.\n- **Never read or print secrets:** no password, token or key from `.env` files.\n@@END@@\n';
+  assert.deepEqual(render.mergeLimits(['open a browser', 'change a database row'], tmpl), [], 'all covered: the generic lines stay as they are');
+  assert.deepEqual(render.mergeLimits(['load a page', 'load a page', 'read an OAuth client secret'], tmpl), [
+    '- **Never:** sign in, open a browser, or change a database row or a file. Also never: load a page.',
+    '- **Never read or print secrets:** no password, token or key from `.env` files. Also never: read an OAuth client secret.']);
+  const { dir, repo } = bootstrapRepo((p) => { p.rules.validatorLimits = ['load a page']; return p; });
+  try {
+    const v = readFileSync(path.join(repo, '.claude/agents/plan-validator.md'), 'utf8');
+    assert.equal((v.match(/^- \*\*Never:\*\*/gm) || []).length, 1, v);
+    assert.match(v, /Also never: load a page\./);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the verify audit skips the generic Secrets row when a hard rule covers secrets, and its lint row is check-only', () => {
+  const { dir, repo } = bootstrapRepo((p) => {
+    p.rules.hard.push({ title: 'Config and secrets', rule: 'Code reads config only through the config service.' });
+    return p;
+  });
+  try {
+    const v = readFileSync(path.join(repo, '.claude/skills/skill-4-verify/SKILL.md'), 'utf8');
+    assert.doesNotMatch(v, /^\| \d+ \| Secrets \|/m);
+    assert.match(v, /^\| \d+ \| Config and secrets \|/m);
+    assert.match(v, /^\| 2 \| Lint and format \| `pnpm lint:check`.*Never a `--fix` command/m);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('changelog.validateCmd replaces the rendered validator in the gate, the docs and the allow list', () => {
+  const { dir, repo } = bootstrapRepo((p) => { p.changelog.validateCmd = 'pnpm changelog:validate'; return p; });
+  try {
+    assert.ok(!existsSync(path.join(repo, '.claude/scripts/changelog-validate.mjs')));
+    const gate = readFileSync(path.join(repo, '.github/workflows/changelog-gate.yml'), 'utf8');
+    assert.match(gate, /run: pnpm changelog:validate$/m);
+    assert.match(gate, /CHANGELOG_SKIP: .*no-changelog/);
+    assert.match(gate, /pnpm install --frozen-lockfile/);
+    for (const f of ['changelog.d/README.md', 'changelog.d/AGENTS.md', '.claude/skills/changelog-entry/SKILL.md']) {
+      const t = readFileSync(path.join(repo, f), 'utf8');
+      assert.match(t, /`pnpm changelog:validate`/, f);
+      assert.doesNotMatch(t, /changelog-validate\.mjs/, f);
+    }
+    const allow = JSON.parse(readFileSync(path.join(repo, '.claude/settings.json'), 'utf8')).permissions.allow;
+    assert.ok(allow.includes('Bash(pnpm changelog:validate)'));
+    assert.ok(!allow.some((a) => a.includes('changelog-validate.mjs')));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('registry.browserTestProject names the browser-test profile in auto-pipeline.sh and register.mjs', () => {
+  const { dir, repo } = bootstrapRepo((p) => { webUi(p); p.registry.browserTestProject = 'acme'; return p; });
+  try {
+    assert.match(readFileSync(path.join(repo, '.claude/scripts/auto-pipeline.sh'), 'utf8'), /^BROWSER_TEST_PROJECT="acme"$/m);
+    const r = node('register.mjs', ['.', '--registry', path.join(dir, 'reg.json'), '--qa-home', path.join(dir, 'qa')], repo);
+    assert.equal(r.status, 0, r.stderr);
+    if (!/skipped: .* is missing/.test(r.stdout)) assert.match(r.stdout, /profile\.mjs' (init|add-repo) 'acme'/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

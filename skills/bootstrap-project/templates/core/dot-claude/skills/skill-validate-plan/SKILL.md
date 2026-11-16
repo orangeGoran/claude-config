@@ -11,7 +11,12 @@ Run shell commands bare: one command per call, no pipes, `&&`, redirection or he
 ## Step 0: Resolve the plan file
 
 - If `$ARGUMENTS` names a plan file, use it.
+@@IF MOD_STEP_GATE@@
+- Otherwise use the most recently modified `.plans/*.md` outside `.plans/done/` and `.plans/.workflow-state/`.
+@@END@@
+@@IFNOT MOD_STEP_GATE@@
 - Otherwise use the most recently modified `.plans/*.md` outside `.plans/done/`.
+@@END@@
 - Say which plan you resolved.
 
 ## Step 1: Dispatch the plan-validator agent (required)
@@ -20,7 +25,9 @@ Do not validate the plan yourself. The gate exists to get a review from an agent
 
 - `subagent_type: "plan-validator"`
 - `description: "Validate plan"`
-- `prompt`: the plan path, and the instruction to follow its full process: read the plan, @@RULES_DOCS@@, then check every claim against the repository.
+- `prompt`: the plan path, and the instruction to follow its full process: read the plan, @@RULES_DOCS@@, then check every claim against the repository (paths, symbols, signatures, the reference implementation, wiring, consumers of changed symbols, migrations, "How to verify" commands).
+
+If a parent plan, a roadmap or a related spec belongs with the plan, pass its path too, and tell the agent that it is **context only**: the named plan is the one to validate.
 
 If the agent type is not found (it was created in this session and the session was not reloaded yet), use a general-purpose agent and tell it: "Act as the plan-validator agent. Read `.claude/agents/plan-validator.md` first and follow it exactly." Tell the owner to reload the session.
 

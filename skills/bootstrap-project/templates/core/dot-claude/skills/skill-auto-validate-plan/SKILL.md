@@ -22,7 +22,13 @@ Run every shell command bare: one command per call, no pipes, `&&`, redirection 
 
 ## Step 0 — Resolve the plan and preflight
 
+@@IF MOD_STEP_GATE@@
+- Resolve the plan file as `/skill-validate-plan` does (named in `$ARGUMENTS`, else the most recent `.plans/*.md` outside `.plans/done/` and `.plans/.workflow-state/`). Say which plan you resolved.
+@@END@@
+@@IFNOT MOD_STEP_GATE@@
 - Resolve the plan file as `/skill-validate-plan` does (named in `$ARGUMENTS`, else the most recent `.plans/*.md` outside `.plans/done/`). Say which plan you resolved.
+@@END@@
+- A parent plan, roadmap or spec that comes with the plan is **context only**: pass it to the validators as context, and validate only the named plan.
 - Run `mkdir -p .plans/.validations`.
 @@IF MOD_CODEX@@
 - Find the Codex CLI. Run `command -v codex`. When it prints nothing, run `test -x ~/.local/bin/codex` (the Bash tool does not load `~/.zshrc`, and `~/.local/bin` is the installer default). Use the path you found as `<codex>` in every later Codex command. Write the path exactly as `codex` or `~/.local/bin/codex` (with the `~`, not the expanded home folder): the allow rules match that text. Then run `<codex> login status`.
@@ -60,7 +66,7 @@ You wrote these edits, so read them the hardest. Each hunk must do what its find
 
 1. **Citations.** Open each `file:line` and section reference in or next to an edited hunk again.
 2. **Cross-references.** If a step was added, removed or renumbered, find each `step <n>` in the plan and confirm it still points at the right step.
-3. **Propagation.** For each fix, find each place the plan mentions that subject (Goal, the project rule sections, Contracts, Affected files, Steps, Tests, How to verify) and confirm the fix reached all of them.
+3. **Propagation.** For each fix, find each place the plan mentions that subject (Goal, Hard rules, Endpoint access, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, Steps, Migrations, Tests, How to verify, and any doc-update step) and confirm the fix reached all of them.
 
 Tag each problem `REGRESSION` in this round's decision log. If a round's edits are a net loss, restore its snapshot instead of patching forward: `cp .plans/.validations/<plan-base>-pre-round-<n>.md <plan-file>`.
 
@@ -93,6 +99,8 @@ The agent fails or gives no path → run it again once. A second failure → sto
 Read the raw reports you have (`-codex-raw-<n>.md` and `-validation-<n>.md`). Process each finding from each report as `/apply-validation` says: number it, check it against the repo, `AGENTS.md` and `@@PARENT_PLAN@@`, classify it VALID / PARTIALLY VALID / INVALID with evidence, and apply the valid fixes **to the plan file**.
 
 Write one decision log with the Write tool at `.plans/.validations/<plan-base>-round-<n>.md`: the round header (each validator `ON` or `OFF (<reason>)`), the findings table with the validator that raised each finding, and the regressions from step a. Record the findings that only one validator found: that difference is the reason to run two.
+
+Never put one validator's findings into a file named after the other validator (for example Codex findings in `-validation-<n>.md`). The raw reports stay as they were written: without them, nobody can check that the decision log is faithful.
 @@END@@
 @@IFNOT MOD_CODEX@@
 Process each finding as `/apply-validation` says: number it, check it against the repo, `AGENTS.md` and `@@PARENT_PLAN@@`, classify it VALID / PARTIALLY VALID / INVALID with evidence, and apply the valid fixes **to the plan file**.
@@ -100,7 +108,7 @@ Process each finding as `/apply-validation` says: number it, check it against th
 Write one decision log with the Write tool at `.plans/.validations/<plan-base>-round-<n>.md`: the round header, the findings table, and the regressions from step a.
 @@END@@
 
-**Owner decisions:** never apply a finding that needs a scope or design decision, or that takes an open decision of `@@PARENT_PLAN@@`. Ask the owner with the "Question queue" and "Decision question format" from `/skill-1-plan`. List a decision under Open items if the owner defers it.
+**Owner decisions:** never apply a finding that needs a scope or design decision, or that takes an open decision of `@@PARENT_PLAN@@`. Collect them, then ask the owner in chat with the "Question queue" and "Decision question format" from `/skill-1-plan`: show the numbered list of questions first, then one question per message with the heading `## Question N of M: <title>`. Never use AskUserQuestion for these questions. Accept a plain-text reply. List a decision under Open items if the owner defers it.
 
 ### d. Converge or continue
 

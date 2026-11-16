@@ -17,7 +17,8 @@ set -uo pipefail
 # the end). Empty = skip the lint step.
 LINT_FIX_FILE_CMD="@@LINT_FIX_FILE_CMD@@"
 # EDIT 2: the command that formats ONE file (the file path is added at the end).
-# Empty = skip the format step.
+# Empty = skip the format step. For oxfmt and prettier, --no-error-on-unmatched-pattern
+# keeps an ignored file (gitignored, .prettierignore) from failing the hook.
 FORMAT_FILE_CMD="@@FORMAT_FILE_CMD@@"
 # EDIT 3: the file types to lint, as a bash case pattern (for example *.ts|*.tsx).
 is_lint_file() {

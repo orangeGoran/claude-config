@@ -100,7 +100,7 @@ Rules for the table:
 - **Rows in a lane** — the readiest plan first, then the plans that it blocks.
 - **Status cell** — plain words: `✅ ready, validated ×2`, `ready, not validated`, `no status, large`, `needs-validation`. Use ✅ only for a plan that is `ready` **and** has validation rounds. Take `×N` from the count in `.validations/`. Never guess it.
 - **Touches cell** — area paths in backticks, cut to the part a person knows. Then, by row:
-  - **blocked** — the overlap count in bold and the plan it overlaps: `**8 files overlap** with <slug>`. Take the count from `overlaps[].files` in `--json`. Always name the plan.
+  - **blocked** — the overlap count in bold and the plan it overlaps: `**8 files overlap** with <slug>`. Take the count from `overlaps[].count` in `--json`, never from the length of `overlaps[].files`: the analyzer cuts `files` to at most 8 paths for a hard overlap. Always name the plan.
   - **free of conflict with an earlier row of its lane** — keep the areas and add `— ✅ **runs alongside <plan>**`.
   - **alone in its lane** — add `— **zero overlap with the other lanes**`.
 

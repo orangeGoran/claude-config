@@ -20,6 +20,7 @@ A reviewer (the `plan-validator` agent, Codex, another Claude session, a person)
 
 - If `$ARGUMENTS` names a `.plans/` file, that plan is the target.
 - Otherwise infer it from the report and the conversation: findings about design or plan wording → the plan most recently discussed; findings about code or tests → the working tree or recent commits.
+- A parent plan, roadmap or spec that comes with the report is context only. Do not edit it; the target is the named plan or the code.
 - Say the target before you continue.
 
 ### 2. Parse the findings
@@ -34,7 +35,8 @@ Extract every distinct finding with its severity as given (Blocking / Should fix
   - **VALID:** a real problem. Fix it.
   - **PARTIALLY VALID:** part of it is true, but the proposed fix or scope is wrong. Say what the correct fix is.
   - **INVALID:** the reviewer misread the code, missed a rule, or the case is already handled. Cite the `file:line` or the rule that proves it.
-- Give the highest priority to findings about the hard rules in `AGENTS.md` (@@HARD_RULE_TITLES@@) and about secrets. A reviewer's "fine" is INVALID when the code misses one of these checks:
+- Give the top priority to **destructive-migration** findings: a dropped table or column, a rename written as drop and add, an enum rebuild that loses values, a cleanup `DELETE`, a `NOT NULL` column without a default or a backfill. Data loss in production cannot be undone.
+- Give the same priority to findings about the hard rules in `AGENTS.md` (@@HARD_RULE_TITLES@@) and about secrets. A reviewer's "fine" is INVALID when the code misses one of these checks:
 @@IF HAS_RULE_DETAILS@@
 @@RULE_DETAILS@@
 @@END@@
@@ -49,7 +51,7 @@ After you edit, and before you report, run these three checks. They catch the de
 
 - **Citations you moved.** Open again each `file:line` and section in or next to a hunk you edited.
 - **Cross-references after a renumber.** If steps were added, removed or reordered, search for `step <n>` and confirm each one still points at the step it means.
-- **Each fix reached everywhere.** For each fix, find every other place the target mentions that subject (Affected files, Steps, Tests, How to verify, Hard rules, Contracts) and confirm none still states the old version.
+- **Each fix reached everywhere.** For each fix, find every other place the target mentions that subject (Hard rules, Endpoint access, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, Steps, Migrations, Tests, How to verify, and any doc-update step) and confirm none still states the old version.
 
 ### 5. Report and copyable reply
 
@@ -78,8 +80,13 @@ Keep the reply plain and self-contained. The reviewer has no access to this conv
 
 Every reconciliation writes a **new numbered round file**. Never overwrite an earlier round.
 
+@@IF MOD_STEP_GATE@@
+- `<base>` is the target plan's basename without `.md`. For an implementation target with no single plan, use the plan that `.plans/.workflow-state/` tracks (its folder name), else the current branch name with `/` replaced by `-`.
+@@END@@
+@@IFNOT MOD_STEP_GATE@@
 - `<base>` is the target plan's basename without `.md`. For an implementation target with no single plan, use the current branch name with `/` replaced by `-`.
-- `ls .plans/.validations/` to find the next free `<n>` for `<base>-external-<n>.md`.
+@@END@@
+- `ls .plans/.validations/` to find the next free `<n>` for `<base>-external-<n>.md`. If the folder does not exist, run `mkdir -p .plans/.validations` and use `<n>` = 1.
 - Write the file with the Write tool (no heredoc), with this content:
 
 ```markdown

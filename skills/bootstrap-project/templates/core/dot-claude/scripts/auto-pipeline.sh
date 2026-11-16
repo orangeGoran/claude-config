@@ -67,6 +67,18 @@ BROWSER_TEST_PROJECT="@@BROWSER_TEST_PROJECT@@"
 [ -n "${PREFLIGHT_CMDS+x}" ] || PREFLIGHT_CMDS=()
 BROWSER_TEST_PROJECT="${BROWSER_TEST_PROJECT:-}"
 
+# --add-dir for a browser-test run: run.mjs runs click scripts only from a temp folder, and a
+# headless session writes only in its working directories. /tmp/claude-<uid> holds the
+# session scratchpad, so the click script can be written there.
+add_dir_args() {
+  ADD_DIR_ARGS=()
+  [ -n "$BROWSER_TEST_PROJECT" ] || return 0
+  local d
+  d="$(cd /tmp && pwd -P)/claude-$(id -u)"
+  mkdir -p "$d" && ADD_DIR_ARGS=(--add-dir "$d")
+  return 0
+}
+
 usage() { sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1; }
 
 now() { date '+%Y-%m-%d %H:%M:%S'; }
@@ -159,6 +171,18 @@ check_install_tool() {
   local tool="${INSTALL_CMD%% *}"
   command -v "$tool" >/dev/null 2>&1 || {
     echo "FATAL: $tool is not on PATH (INSTALL_CMD in the CONFIG block)."; exit 1; }
+  # The first use of a newly pinned pnpm version installs that version by itself. Parallel
+  # worktree installs at that moment can leave a half-built *_tmp_* folder, and later
+  # installs crash. One pnpm command here builds it once, before any worktree install.
+  if [ "$tool" = pnpm ]; then
+    ( cd "$REPO" && pnpm --version >/dev/null 2>&1 ) || {
+      echo "FATAL: pnpm does not run (an interrupted self-install?)."
+      echo "       Remove the *_tmp_* folders in the pnpm tools folder (~/Library/pnpm/.tools on macOS,"
+      echo "       ~/.local/share/pnpm/.tools on Linux), then run: pnpm --version"
+      exit 1
+    }
+  fi
+  return 0
 }
 
 # A Read rule for a symlinked folder (~/.claude/skills/<skill> -> a claude-config checkout)
@@ -192,6 +216,7 @@ write_run_settings() { # $1 = output path, $2 = mode (verify|commit|pr)
       "Bash(git restore*)",
       "Bash(git mv*)",
       "Bash(git rev-parse*)",
+      "Bash(git hash-object*)",
       "Bash(mkdir*)",
       ("Read(//" + $r + "/.plans/auto-runs/**)"),
       ("Edit(//" + $r + "/.plans/auto-runs/**)")
@@ -401,8 +426,9 @@ compact_session() { # $1 = worktree, $2 = report, $3 = log, $4 = run settings, $
   echo "- $(now) — compacting session $id ($(( before / 1000 ))k) before the VS Code copy" >> "$2"
   boundaries="$(grep -cF '"subtype":"compact_boundary"' "$file")"
   echo "-> compacting session $id ($before tokens)"
+  add_dir_args
   ( cd "$1" && claude -p "/compact $(compact_instructions)" --resume "$id" \
-      --permission-mode acceptEdits --settings "$4" \
+      --permission-mode acceptEdits --settings "$4" ${ADD_DIR_ARGS[@]+"${ADD_DIR_ARGS[@]}"} \
       --verbose --output-format stream-json ) || rc=$?
   if [ "$(grep -cF '"subtype":"compact_boundary"' "$file")" -le "$boundaries" ]; then
     echo "- $(now) — compaction failed (exit code $rc): session $id keeps its full context" >> "$2"
@@ -430,9 +456,11 @@ start_session() {
       # wait for background subagents and shells (browser test, dev server) instead of
       # stopping them 10 min after the last turn; that ended runs as "session exited"
       export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
+      add_dir_args
       nohup ${awake[@]+"${awake[@]}"} claude -p "$2" \
         --permission-mode acceptEdits \
         --settings "$5" \
+        ${ADD_DIR_ARGS[@]+"${ADD_DIR_ARGS[@]}"} \
         --allowedTools ${ALLOW_RULES[@]+"${ALLOW_RULES[@]}"} \
         --verbose \
         --output-format stream-json || rc=$?
@@ -496,10 +524,21 @@ if [ "${1:-}" = "--cleanup" ]; then
   wt="$(existing_worktree "$slug")"
   branch="auto/$slug"
   if [ -d "$wt" ]; then
-    if [ -n "$(git -C "$wt" status --porcelain)" ]; then
+    # refuse on real uncommitted work; a moved submodule pointer alone is not work
+    if [ -n "$(git -C "$wt" status --porcelain --ignore-submodules=all)" ]; then
       echo "Worktree has uncommitted changes — commit/ship them first, or if truly abandoning:"
       echo "  git -C \"$REPO\" worktree remove --force \"$wt\""
       exit 1
+    fi
+    if [ -f "$wt/.gitmodules" ]; then
+      # uncommitted files inside a submodule are work too: deinit -f would delete them
+      if [ -n "$(git -C "$wt" submodule foreach --quiet --recursive 'git status --porcelain' 2>/dev/null)" ]; then
+        echo "A submodule in the worktree has uncommitted changes — commit or drop them first, or if truly abandoning:"
+        echo "  git -C \"$REPO\" worktree remove --force \"$wt\""
+        exit 1
+      fi
+      # checked-out submodules block `git worktree remove`: deinit them first
+      git -C "$wt" submodule deinit -f --all >/dev/null 2>&1 || true
     fi
     git -C "$REPO" worktree remove "$wt" \
       || { echo "Removal refused. Re-check, then: git -C \"$REPO\" worktree remove --force \"$wt\""; exit 1; }
@@ -512,7 +551,9 @@ if [ "${1:-}" = "--cleanup" ]; then
   fi
   rm -f "$RUNS_DIR/$slug-settings.json"
   if [ -f "$RUNS_DIR/$slug.md" ]; then
-    sed_i "s|^## Status:.*|## Status: CLEANED — worktree and branch removed $(date +%Y-%m-%d)|" "$RUNS_DIR/$slug.md"
+    # the commit that put the plan in .plans/done/ on the base branch, when there is one
+    landed="$(git -C "$REPO" log -1 --format=%h "$BASE_BRANCH" -- ".plans/done/$slug.md" 2>/dev/null || true)"
+    sed_i "s|^## Status:.*|## Status: CLEANED — ${landed:+shipped in $landed, }worktree and branch removed $(date +%Y-%m-%d)|" "$RUNS_DIR/$slug.md"
     sed_i '/^- \*\*Outcome\*\*:/d' "$RUNS_DIR/$slug.md"
   fi
   # drop remote-tracking refs of merged and deleted branches (origin/auto/<slug>)
@@ -721,6 +762,11 @@ EOF
     read -r -a install_argv <<< "$INSTALL_CMD"
     ( cd "$wt" && "${install_argv[@]}" ) >> "$log" 2>&1 \
       || { echo "FAIL: install failed for $slug — see $log"
+           # the tool, node and PATH that the install saw: a wrong PATH is a common cause
+           { echo "FAIL: install failed at $(now)"
+             echo "${install_argv[0]}: $(command -v "${install_argv[0]}" || echo 'NOT ON PATH')  node: $(command -v node || echo 'NOT ON PATH') $(node --version 2>/dev/null || true)"
+             echo "PATH=$PATH"
+           } >> "$log"
            sed_i 's|^## Status: .*|## Status: FAILED: install — see log|' "$report"
            sync_report_outcome "$report"
            echo "- $(now) — install failed; fix the cause and Resume" >> "$report"

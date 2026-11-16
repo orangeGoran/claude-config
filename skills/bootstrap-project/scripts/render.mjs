@@ -36,6 +36,7 @@
 // directive in the output, an invalid params file, or settings.json that is not JSON.
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, chmodSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -92,7 +93,7 @@ export function checkParams(p) {
     if (!strList(h.tests)) errs.push(`rules.hard[${i}].tests must be a list of texts`);
   });
   if (!strList(r.validatorLimits)) errs.push('rules.validatorLimits must be a list of texts');
-  if (!str(r.parentPlan)) errs.push('rules.parentPlan is required (for example "PLAN.md" or "docs/ARCHITECTURE.md")');
+  if (!str(r.parentPlan)) errs.push('rules.parentPlan is required (for example ".plans/20261109-205757-parent.md" or "docs/PLAN.md")');
   const mode = p.pipeline?.defaultMode ?? 'pr';
   if (!MODES.includes(mode)) errs.push(`pipeline.defaultMode must be one of ${MODES.join(', ')}`);
   for (const k of Object.keys(p.modules || {})) {
@@ -102,7 +103,8 @@ export function checkParams(p) {
   // one bare command each, no shell operators, quotes or expansions
   const preflight = p.pipeline?.preflight;
   if (preflight !== undefined && !(Array.isArray(preflight) && preflight.every((x) => typeof x === 'string'))) errs.push('pipeline.preflight must be a list of commands');
-  const cmds = [...Object.values(p.stack?.commands || {}), p.stack?.installCmd, p.stack?.postEditLint?.fix, p.stack?.postEditLint?.format, ...arr(preflight)];
+  const cmds = [...Object.values(p.stack?.commands || {}), p.stack?.installCmd, p.stack?.postEditLint?.fix, p.stack?.postEditLint?.format,
+    p.changelog?.validateCmd, ...arr(preflight)];
   for (const c of cmds) {
     // "<file>" is a placeholder, not a redirection
     if (c && /[;&|<>`$"'\\]/.test(String(c).replace(/<[a-z-]+>/g, ''))) errs.push(`command "${c}" has a shell operator, a quote or a "$"; give one bare command`);
@@ -123,8 +125,17 @@ export function checkParams(p) {
         errs.push('changelog.locales must be a list of language codes, for example ["en", "de"]');
       }
       if (cl.versionFile !== undefined && cl.versionFile !== '' && !/^[\w./-]+$/.test(cl.versionFile)) errs.push('changelog.versionFile must be a repo path, for example "package.json", or empty');
+      if (cl.validateCmd !== undefined && typeof cl.validateCmd !== 'string') errs.push('changelog.validateCmd must be one bare command, for example "pnpm changelog:validate", or empty');
     }
   }
+  const extra = p.stack?.extraCommands;
+  if (extra !== undefined && !(Array.isArray(extra) && extra.every((x) => x && str(x.label) && str(x.cmd) && (x.note === undefined || typeof x.note === 'string')))) {
+    errs.push('stack.extraCommands must be a list of {label, cmd, note?}');
+  }
+  if (p.stack?.nodeVersionFile !== undefined && p.stack.nodeVersionFile !== '' && !/^[\w./-]+$/.test(p.stack.nodeVersionFile)) errs.push('stack.nodeVersionFile must be a repo path, for example ".nvmrc", or empty');
+  if (p.layout?.migrationHints !== undefined && !strList(p.layout.migrationHints)) errs.push('layout.migrationHints must be a list of texts');
+  const btp = p.registry?.browserTestProject;
+  if (btp !== undefined && btp !== '' && !isSafeName(btp)) errs.push('registry.browserTestProject must use only letters, digits, ".", "_" and "-"');
   const board = p.git?.tickets?.board;
   if (board !== undefined && (!str(board.owner) || !/^\d+$/.test(String(board.number ?? '')) || !str(board.status))) {
     errs.push('git.tickets.board needs "owner", a numeric "number" and "status"');
@@ -140,6 +151,68 @@ export const moduleOn = (p, m) => p.modules?.[m] !== false;
 const CODEX_ALLOW = ['Bash(command -v codex)', 'Bash(test -x ~/.local/bin/codex)',
   'Bash(codex exec*)', 'Bash(codex login status*)',
   'Bash(~/.local/bin/codex exec*)', 'Bash(~/.local/bin/codex login status*)'];
+// A headless session often writes the full path (/Users/<me>/.local/bin/codex), and a rule
+// does not expand "~": the run overlay also gets the $HOME form (expanded by bash).
+const CODEX_RUN_ALLOW = [...CODEX_ALLOW, 'Bash($HOME/.local/bin/codex exec*)', 'Bash($HOME/.local/bin/codex login status*)'];
+
+// Bash rule `inner` is covered by prefix rule `pat` ("x*"): the same match as Claude Code.
+const ruleCovers = (pat, inner) => pat.endsWith('*') && inner !== pat && inner.startsWith(pat.slice(0, -1));
+/** Drops exact duplicates and each Bash rule that a broader prefix rule in the list covers. */
+export function dedupeRules(rules) {
+  const list = [...new Set(rules)];
+  const bash = list.map((r) => r.match(/^Bash\((.*)\)$/)?.[1] ?? null);
+  return list.filter((r, i) => bash[i] === null || !bash.some((b, j) => j !== i && b !== null && ruleCovers(b, bash[i])));
+}
+
+// The generic "Never" lines of a validator template: its own text in the
+// @@IFNOT HAS_VALIDATOR_LIMITS@@ block (else every "Never" line), so they follow template edits.
+const genericLines = (tmpl) => {
+  const m = tmpl.match(/^@@IFNOT HAS_VALIDATOR_LIMITS@@\n([\s\S]*?)^@@END@@/m);
+  return (m ? m[1] : tmpl).split('\n').filter((l) => /^- \*\*Never\b/.test(l));
+};
+const genericLimits = (tmpl) => genericLines(tmpl).join(' ');
+const STOP = new Set(['a', 'an', 'the', 'to', 'or', 'and', 'any', 'in', 'of', 'on', 'from', 'no', 'other', 'never', 'it', 'its', 'by', 'with', 'for', 'outside']);
+const words = (s) => String(s).toLowerCase().replace(/[`*()[\]:;.,"']/g, ' ').split(/\s+/)
+  .map((w) => w.replace(/s$/, '')).filter((w) => w && !STOP.has(w));
+/**
+ * The project limits that a validator template does not already print: exact duplicates
+ * and limits whose words all appear in the template's own "Never" lines are dropped,
+ * so each limit shows once.
+ */
+export function extraLimits(limits, tmpl) {
+  const have = new Set(words(genericLimits(tmpl)));
+  const seen = new Set();
+  return limits.filter((l) => {
+    const key = words(l).join(' ');
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return !words(l).every((w) => have.has(w));
+  });
+}
+
+const SECRET_RE = /secret|token|password|credential|\bkeys?\b/i;
+/**
+ * The complete "Never" lines of one validator: its generic lines (in the template's
+ * @@IFNOT HAS_VALIDATOR_LIMITS@@ block) with the project limits they lack appended,
+ * secret limits to the secrets line and the others to the first "Never" line.
+ * Returns [] when no project limit is left, so the template prints its generic lines.
+ */
+export function mergeLimits(limits, tmpl) {
+  const extra = extraLimits(limits, tmpl);
+  if (!extra.length) return [];
+  const lines = genericLines(tmpl);
+  const secretAt = lines.findIndex((l) => /^- \*\*Never read or print\b/.test(l));
+  const actionAt = lines.findIndex((l, i) => i !== secretAt);
+  const add = (i, xs) => {
+    if (!xs.length) return;
+    if (i < 0) { lines.push(...xs.map((x) => '- **Never:** ' + x)); return; }
+    lines[i] = lines[i].replace(/\.?\s*$/, '.') + ' Also never: ' + xs.join('; ') + '.';
+  };
+  const secret = extra.filter((x) => SECRET_RE.test(x)), action = extra.filter((x) => !SECRET_RE.test(x));
+  add(secretAt >= 0 ? secretAt : actionAt, secret);
+  add(actionAt, action);
+  return lines;
+}
 
 /** Turns the interview answers into the placeholder values. */
 export function buildVars(p, now = new Date()) {
@@ -160,31 +233,44 @@ export function buildVars(p, now = new Date()) {
   const parent = str(r.parentPlan);
   const rulesDocs = [...new Set(['AGENTS.md', parent, ...arr(r.rulesDocs)])];
 
+  // changelog: the project's own validator command, when it has one (else the rendered script)
+  const clValidateCmd = str(p.changelog?.validateCmd);
+  const changelogValidate = clValidateCmd || `node .claude/scripts/changelog-validate.mjs --base origin/${base}`;
+
   const commandRows = [
     ['Install', st.installCmd], ['Test (full)', cmd.test], ['Test (one file)', cmd.testScoped],
-    ['Test (end to end)', cmd.testE2e], ['Lint', cmd.lint], ['Format', cmd.format],
-    ['Type check', cmd.typecheck], ['Build', cmd.build],
+    ['Test (end to end)', cmd.testE2e], ['Lint', cmd.lint],
+    // a check-only lint row only when the stack has one (for example a lint:check script)
+    ...(str(cmd.lintCheck) ? [['Lint (check only)', cmd.lintCheck]] : []),
+    ['Format', cmd.format], ['Type check', cmd.typecheck], ['Build', cmd.build],
   ];
+  // the repo's own rows (dev server, services, contract export), kept on every upgrade
+  const extraRows = arr(st.extraCommands).map((x) => `| ${str(x.label)} | ${code(str(x.cmd))}${str(x.note) ? ' ' + str(x.note) : ''} |`);
   const commandsMd = '| What | Command |\n| --- | --- |\n' +
-    commandRows.map(([k, v]) => `| ${k} | ${str(v) ? code(str(v)) : NA} |`).join('\n');
+    [...commandRows.map(([k, v]) => `| ${k} | ${str(v) ? code(str(v)) : NA} |`), ...extraRows].join('\n');
 
   // allow rules: one prefix rule per real command
   const allowCmds = [...new Set([st.installCmd, ...Object.values(cmd)].map((c) => str(c)).filter(Boolean)
     .map((c) => c.replace(/\s*<[^>]*>.*$/, '').replace(/\s+"?\{?file\}?"?$/, '')))];
+  // never a push or PR rule here (gh pr view/diff too): PR rules live only in the
+  // "to PR" overlay of auto-pipeline.sh (lesson 1; verify.mjs checks it)
   const allow = [
     'Read(./**)', 'Edit(./**)',
     'Bash(git status*)', 'Bash(git diff*)', 'Bash(git log*)', 'Bash(git show*)',
     'Bash(git branch --show-current)', 'Bash(git ls-files*)', 'Bash(git merge-base*)', 'Bash(git check-ignore*)',
+    // the test-review revert check compares file hashes before and after (every mode)
+    'Bash(git hash-object*)',
     'Bash(grep *)', 'Bash(ls *)', 'Bash(diff *)', 'Bash(cp .plans/*)', 'Bash(mkdir -p .plans/*)',
-    'Bash(gh pr view*)', 'Bash(gh pr diff*)', 'Bash(gh issue view*)', 'Bash(gh run view*)',
+    'Bash(gh issue view*)', 'Bash(gh run view*)',
     ...allowCmds.map((c) => `Bash(${c}*)`),
     ...(moduleOn(p, 'codex') ? CODEX_ALLOW : []),
     ...(moduleOn(p, 'step-gate') ? ['Bash(bash .claude/scripts/workflow-complete-step.sh*)'] : []),
-    ...(moduleOn(p, 'changelog') ? ['Bash(node .claude/scripts/changelog-validate.mjs*)'] : []),
+    ...(moduleOn(p, 'changelog') ? [clValidateCmd ? `Bash(${clValidateCmd})` : 'Bash(node .claude/scripts/changelog-validate.mjs*)'] : []),
     ...arr(r.extraAllow),
   ];
-  // deny: destructive commands only. Never push or PR commands: deny beats every
-  // allow rule, also the per-run --allowedTools overlay of the "to PR" mode.
+  // deny: destructive commands only. Never a plain push or PR rule: deny beats every
+  // allow rule, also the per-run --allowedTools overlay of the "to PR" mode (lesson 1).
+  // A force push and a new repo are destructive and no skill uses them, so they stay denied.
   const deny = [
     'Bash(git reset --hard*)', 'Bash(git clean*)', 'Bash(rm -rf*)',
     'Bash(git push --force*)', 'Bash(git push -f*)', 'Bash(gh repo create*)', 'Bash(gh repo delete*)',
@@ -202,7 +288,7 @@ export function buildVars(p, now = new Date()) {
   const installWords = str(st.installCmd).split(/\s+/).slice(0, 2).join(' ');
   const runExtra = [...(installWords ? [`Bash(${installWords}*)`] : []), ...arr(p.pipeline?.runAllow)];
   if (moduleOn(p, 'step-gate')) runExtra.push('Bash(bash .claude/scripts/workflow-complete-step.sh*)');
-  if (moduleOn(p, 'codex')) runExtra.push(...CODEX_ALLOW);
+  if (moduleOn(p, 'codex')) runExtra.push(...CODEX_RUN_ALLOW);
 
   // service check before a run (skill-auto-pipeline Step 0)
   const services = arr(p.pipeline?.services).map((s) => ({ name: str(s.name), url: str(s.url), container: str(s.container) }));
@@ -247,7 +333,11 @@ export function buildVars(p, now = new Date()) {
   const ruleDetailsMd = hard.filter((h) => h.details.length).map((h) => `- **${h.title}:**` + sub(h.details)).join('\n');
   const limits = arr(r.validatorLimits).map((x) => str(x)).filter(Boolean);
   let n = 2;
-  const auditRows = [`| ${n} | Lint and format | The repo's lint and format commands (AGENTS.md, Commands). Error and warning counts. |`];
+  // check-only: an audit that fixes files proves nothing
+  const lintRow = str(cmd.lintCheck)
+    ? `${code(str(cmd.lintCheck))} (AGENTS.md, Commands, "Lint (check only)") and a format command that only checks, on the changed files. Never a \`--fix\` command. Error and warning counts.`
+    : 'The check-only lint and format commands of AGENTS.md, Commands, on the changed files. Never a `--fix` command; with only a fixing command, report "check-only command not available yet". Error and warning counts.';
+  const auditRows = [`| ${n} | Lint and format | ${lintRow} |`];
   for (const h of hard) {
     const how = [h.check, ...h.details].filter(Boolean).map((x) => x.replace(/\|/g, '\\|'));
     auditRows.push(`| ${++n} | ${h.title} | ${h.rule.replace(/\|/g, '\\|')}${how.length ? ' Check: ' + how.join(' ') : ''} Name the file:line of each place you checked. |`);
@@ -257,7 +347,9 @@ export function buildVars(p, now = new Date()) {
   if (!contractInRules) auditRows.push(`| ${++n} | Contracts | ${contractsRule} |`);
   auditRows.push(`| ${++n} | JSDoc | Every new or changed public function has a doc comment in ASD-STE100. Report only what the diff added or changed. |`);
   auditRows.push(`| ${++n} | Tests | Every test in the plan's **Tests** list exists, and each rule above that the change touches has a test that fails when the rule breaks. |`);
-  auditRows.push(`| ${++n} | Secrets | No keys, passwords, tokens or private paths in the code or fixtures. Fixtures use made-up data only. |`);
+  // a hard rule about secrets already covers this row (no duplicate row)
+  const secretsInRules = hard.some((h) => /secret/i.test(h.title));
+  if (!secretsInRules) auditRows.push(`| ${++n} | Secrets | No keys, passwords, tokens or private paths in the code or fixtures. Fixtures use made-up data only. |`);
   auditRows.push(`| ${++n} | Plan scope | Every plan step is done. No file outside **Affected files** changed without a reason in the summary. No open owner decision taken silently. |`);
 
   // layout
@@ -277,6 +369,32 @@ export function buildVars(p, now = new Date()) {
   const merge = str(g.mergeStyle, 'squash');
   const pel = st.postEditLint || {};
   const exts = arr(pel.extensions).map((e) => String(e).replace(/^\*?\.?/, ''));
+  // oxfmt and prettier fail on a file they ignore (a gitignored or .prettierignore path);
+  // the flag keeps such a file from failing the hook
+  const fmtCmd = str(pel.format);
+  const formatFileCmd = /(^|[\s/])(oxfmt|prettier)(\s|$)/.test(fmtCmd) && !fmtCmd.includes('--no-error-on-unmatched-pattern')
+    ? `${fmtCmd} --no-error-on-unmatched-pattern` : fmtCmd;
+
+  // the pipeline order in AGENTS.md: the same as skill-auto-pipeline
+  const chain = ['`/skill-2-implement`', '`/skill-3-test`',
+    `\`/skill-4-verify\` (\`/code-review\` loop + rule audit${moduleOn(p, 'test-review') ? ', then `/test-review --fix`' : ''})`,
+    'plan to `.plans/done/` and one commit for the whole plan',
+    ...(moduleOn(p, 'decision-sheet') ? ['`/decision-sheet`'] : []), '`/skill-5-ship` (draft PR)'].join(' → ');
+
+  // a migration that a generator writes has no file name in the plan: these words count too
+  const migrationHints = arr(ly.migrationHints).length ? arr(ly.migrationHints).map((x) => str(x)).filter(Boolean) : ['migration:generate'];
+
+  // the CI steps the changelog gate needs before a project command (package manager, node, install)
+  const pm = str(st.packageManager);
+  const clCiSetup = [];
+  if (clValidateCmd && ['pnpm', 'npm', 'yarn'].includes(clValidateCmd.split(/\s+/)[0])) {
+    if (pm === 'pnpm') clCiSetup.push('      - uses: pnpm/action-setup@v6');
+    clCiSetup.push('      - uses: actions/setup-node@v7', '        with:',
+      str(st.nodeVersionFile) ? `          node-version-file: ${str(st.nodeVersionFile)}` : '          node-version: lts/*',
+      ...(['pnpm', 'npm', 'yarn'].includes(pm) ? [`          cache: ${pm}`] : []));
+    const ciInstall = { pnpm: 'pnpm install --frozen-lockfile', npm: 'npm ci', yarn: 'yarn install --frozen-lockfile' }[pm];
+    if (ciInstall) clCiSetup.push(`      - run: ${ciInstall}`);
+  }
 
   const vars = {
     PROJECT_NAME: pr.name,
@@ -323,11 +441,39 @@ export function buildVars(p, now = new Date()) {
     LANES_ROOT_FILES: jsList(rootFiles),
     LANES_HARD_DOCS: jsList(parent && !parent.startsWith('.plans/') ? [parent] : []),
     LANES_SOFT_FILES: jsList(softFiles),
-    SETTINGS_ALLOW: JSON.stringify([...new Set(allow)], null, 2).replace(/\n/g, '\n    '),
+    SETTINGS_ALLOW: JSON.stringify(dedupeRules(allow), null, 2).replace(/\n/g, '\n    '),
     SETTINGS_DENY: JSON.stringify(deny, null, 2).replace(/\n/g, '\n    '),
     SETTINGS_HOOKS: JSON.stringify(hooks, null, 2).replace(/\n/g, '\n  '),
     LINT_FIX_FILE_CMD: str(pel.fix),
-    FORMAT_FILE_CMD: str(pel.format),
+    SECRETS_IN_RULES: secretsInRules,
+    FORMAT_FILE_CMD: formatFileCmd,
+    PIPELINE_CHAIN: chain,
+    // optional stack facts: unset keeps the generic "when the project has ..." text
+    HAS_HTTP_API: st.httpApi !== false,
+    HAS_MIGRATIONS: st.migrations !== false,
+    HAS_LINT_CHECK: Boolean(str(cmd.lintCheck)),
+    LINT_CHECK_CMD: str(cmd.lintCheck),
+    HAS_TEST_HARNESS_DOC: Boolean(str(ly.testHarnessDoc)),
+    TEST_HARNESS_DOC: str(ly.testHarnessDoc),
+    HAS_SOFT_FILES: arr(ly.softFiles).length > 0,
+    SOFT_FILES_MD: arr(ly.softFiles).map((f) => `- ${code(str(f))}`).join('\n'),
+    LINT_CHECK_STEP: str(cmd.lintCheck) ? `then the "Lint (check only)" row (${code(str(cmd.lintCheck))}).` : 'then the "Lint (check only)" row when the table has one.',
+    LINT_CHECK_USE: str(cmd.lintCheck) ? `Use the "Lint (check only)" row of the \`AGENTS.md\` **Commands** table (${code(str(cmd.lintCheck))}),`
+      : 'Use the "Lint (check only)" row of the `AGENTS.md` **Commands** table when it has one,',
+    TEST_HARNESS_READ: str(ly.testHarnessDoc) ? `Read ${code(str(ly.testHarnessDoc))} and the nested \`AGENTS.md\` of the test folder first.`
+      : 'Read the nested `AGENTS.md` of the test folder first, if there is one.',
+    // the per-file lint and format commands (stack.postEditLint) for test-review
+    FILE_LINT_HINT: (str(pel.fix) || formatFileCmd)
+      ? 'the per-file commands: ' + [str(pel.fix), formatFileCmd].filter(Boolean).map((c) => code(`${c} <file>`)).join(' and ')
+      : 'for example the per-file commands of the post-edit lint hook, when the repo has one',
+    MIGRATIONS_GAP: st.migrations === false ? '' : 'Migrations, ',
+    ENDPOINT_GAP: st.httpApi === false ? '' : 'a new endpoint without an Endpoint access row, when the project has an HTTP API; end-to-end tests that do not cover success, validation error, 401/403, 404 (and another tenant, when the project is multi-tenant) for each endpoint; ',
+    LANES_MIGRATION_HINTS: jsList(migrationHints),
+    CHANGELOG_VALIDATE: changelogValidate,
+    HAS_CHANGELOG_CMD: Boolean(clValidateCmd),
+    CHANGELOG_CI_SETUP: clCiSetup.join('\n'),
+    HAS_CHANGELOG_CI_SETUP: clCiSetup.length > 0,
+    HAS_MAKEFILE: false, // set by renderAll from the repo files
     TYPECHECK_CMD: str(cmd.typecheck),
     LINT_EXTENSIONS_CASE: exts.length ? exts.map((e) => `*.${e}`).join('|') : '*.__none__',
     // the setup date: from firstPlanTs (saved on the first render), so an upgrade keeps it
@@ -366,7 +512,8 @@ export function buildVars(p, now = new Date()) {
     CHANGELOG_LOCALES_YAML: clLocales.map((l, i) => (i ? `  ${l}: <the ${clLocales[0]} text, translated to ${l}>` : `  ${l}: You can now add a note to an order. The note shows on the order page and in the order email.`)).join('\n'),
     CHANGELOG_VERSION_FILE: clVersionFile,
     HAS_VERSION_BUMP: Boolean(clVersionFile),
-    BROWSER_TEST_PROJECT: hasBrowserTest ? pr.name : '',
+    // the browser-usability-test profile name (default: the project name)
+    BROWSER_TEST_PROJECT: hasBrowserTest ? str(reg.browserTestProject, pr.name) : '',
   };
   // one shared block for every skill that reports (templates/partials/reporting-rules.md)
   vars.REPORTING_RULES = renderText(readFileSync(path.join(TEMPLATES, 'partials', 'reporting-rules.md'), 'utf8'),
@@ -426,8 +573,10 @@ function walk(dir, rel = '') {
 const isExecutable = (p) => /^\.claude\/scripts\/.*\.(sh|mjs)$/.test(p);
 
 /** Renders every enabled template. Returns [{ path, content, kind }]. */
-export function renderAll(params, { upgrade = false, now = new Date() } = {}) {
+export function renderAll(params, { upgrade = false, now = new Date(), repo = null } = {}) {
   const vars = buildVars(params, now);
+  if (repo) vars.HAS_MAKEFILE = hasMakefile(repo);
+  const limits = arr(params.rules?.validatorLimits).map((x) => str(x)).filter(Boolean);
   const sources = [
     ...walk(path.join(TEMPLATES, 'core')),
     ...MODULES.filter((m) => moduleOn(params, m)).flatMap((m) => walk(path.join(TEMPLATES, 'modules', m))),
@@ -444,13 +593,25 @@ export function renderAll(params, { upgrade = false, now = new Date() } = {}) {
       p = vars.PARENT_PLAN;
       kind = 'once';
     }
+    if (p === '.claude/scripts/changelog-validate.mjs' && vars.HAS_CHANGELOG_CMD) {
+      // the project has its own validator (changelog.validateCmd): no second one
+      files.set(p, { path: p, content: '', kind: 'orphan', note: 'changelog.validateCmd is set, so this script is unused; delete by hand' });
+      continue;
+    }
     if (p === '.plans/first-plan.md') {
       if (upgrade) continue;
       p = `.plans/${vars.FIRST_PLAN_TS}-check-the-pipeline-end-to-end.md`;
       kind = 'first-plan';
     }
     let content;
-    try { content = renderText(readFileSync(s.abs, 'utf8'), vars, path.relative(SKILL_DIR, s.abs)); } catch (e) { die(e.message); }
+    const tmpl = readFileSync(s.abs, 'utf8');
+    // a validator prints each limit once: drop the project limits its own "Never" lines cover
+    let fileVars = vars;
+    if (tmpl.includes('@@VALIDATOR_LIMITS@@')) {
+      const merged = mergeLimits(limits, tmpl);
+      fileVars = { ...vars, VALIDATOR_LIMITS: merged.join('\n'), HAS_VALIDATOR_LIMITS: merged.length > 0 };
+    }
+    try { content = renderText(tmpl, fileVars, path.relative(SKILL_DIR, s.abs)); } catch (e) { die(e.message); }
     if (p.endsWith('.json')) {
       try { JSON.parse(content); } catch (e) { die(`${s.rel}: rendered JSON is not valid: ${e.message}`); }
     }
@@ -469,6 +630,14 @@ export function renderAll(params, { upgrade = false, now = new Date() } = {}) {
     }
   }
   return [...files.values()];
+}
+
+/** Returns true when the repo has a Makefile (any folder), so .editorconfig gets its tab block. */
+function hasMakefile(repo) {
+  if (['Makefile', 'makefile', 'GNUmakefile'].some((f) => existsSync(path.join(repo, f)))) return true;
+  try {
+    return execFileSync('git', ['ls-files', '--', '*Makefile', '*makefile', '*.mk'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() !== '';
+  } catch { return false; }
 }
 
 /** Merges the .gitignore lines: keeps the repo file and appends the missing lines. */
@@ -552,7 +721,7 @@ export function plan(repo, files, { resetConfig = false } = {}) {
     const abs = path.join(repo, f.path);
     if (f.kind === 'first-plan' && planHasPlans) return [];
     if (f.kind === 'once' && existsSync(abs)) return [];
-    if (f.kind === 'orphan') return existsSync(abs) ? [{ ...f, status: 'orphan', note: `module "${f.module}" is off; delete by hand if unused` }] : [];
+    if (f.kind === 'orphan') return existsSync(abs) ? [{ ...f, status: 'orphan', note: f.note || `module "${f.module}" is off; delete by hand if unused` }] : [];
     const ensureNl = (s) => (s === '' || s.endsWith('\n') ? s : s + '\n');
     if (f.kind === 'merge') {
       const cur = existsSync(abs) ? readFileSync(abs, 'utf8') : '';
@@ -621,7 +790,7 @@ function main(argv) {
     params.firstPlanTs = stamp(new Date());
     writeFileSync(paramsFile, JSON.stringify(params, null, 2) + '\n');
   }
-  const rows = plan(repo, renderAll(params, { upgrade: opt.upgrade }), { resetConfig: opt.resetConfig });
+  const rows = plan(repo, renderAll(params, { upgrade: opt.upgrade, repo }), { resetConfig: opt.resetConfig });
   // a fresh stage each time, so files of a module that was turned off do not linger
   const stage = path.resolve(opt.stage || path.join(tmpdir(), `bootstrap-${params.project.name}`));
   const marker = path.join(stage, '.bootstrap-stage');

@@ -15,8 +15,10 @@ A plan file path under `.plans/`. If none is given, use the most recently modifi
 
 Review by reading. A live test belongs to the plan's own run, not to this review.
 
+@@IFNOT HAS_VALIDATOR_LIMITS@@
 - **Never:** sign in to an app, send a mutating request (POST, PUT, PATCH, DELETE) to a running service, open a browser, start or stop a service or container, run a migration, or change a database row or a file outside `.plans/.validations/`.
 - **Never read or print secrets or real data:** no keys, tokens or passwords from `.env` files or the shell environment, no customer data from a database.
+@@END@@
 @@IF HAS_VALIDATOR_LIMITS@@
 @@VALIDATOR_LIMITS@@
 @@END@@
@@ -24,11 +26,20 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 - A claim you cannot prove within these limits is "not verified". Say what would prove it. Do not work around the limits.
 - Run shell commands bare: one command per call, no pipes, `&&`, redirection or heredocs.
 
+In your final reply, list each command that touched a service or the database (or write "none").
+
 ## How to work
 
-1. **Read the plan from start to end.** Note every file, line, section (§), symbol, schema, table, command and step it names.
-2. **Read the rules:** @@RULES_DOCS@@, and every nested `AGENTS.md` in the folders the plan touches. `@@PARENT_PLAN@@` is the parent plan; the plan must not contradict it.
-3. **Check every claim against the repository.** Open the files; do not trust the plan's description. Confirm that paths, line numbers, quoted text and symbols exist as stated.
+1. **Read the plan from start to end.** Note every file, line, section (§), symbol, signature, schema, table, endpoint, command and step it names.
+2. **Read the rules:** @@RULES_DOCS@@, and every nested `AGENTS.md` in the folders the plan touches. `@@PARENT_PLAN@@` is the parent plan; the plan must not contradict it. A parent plan or roadmap that the caller passes next to the plan is context only: validate the named plan.
+3. **Check every claim against the repository.** Open the files; do not trust the plan's description. Confirm that paths, line numbers, quoted text and symbols exist as stated. For each claim:
+   - **References and signatures:** each file, function and type exists, and each call has the right argument count, order and return type. Ask: would it compile?
+   - **Reference implementation:** open the files of the plan's **Reference implementation** section. Confirm that the plan mirrors them, and that each deviation has a reason. Flag a silent deviation.
+   - **Breaking changes:** search for the consumers of each symbol the plan changes (`grep` for the name, in every module and app). Flag a consumer that the plan's **Breaking changes** section does not list.
+   - **Wiring:** for each new provider, model, route or module, check the plan's **Wiring & registration** section against the code: the module that declares it, the export, the import in the consumer's module, and every registration list.
+@@IF HAS_MIGRATIONS@@
+   - **Schema:** a plan that adds tables, columns or enums has a migration in its **Migrations** section and follows the schema rules in `AGENTS.md`.
+@@END@@
 4. **Run the plan's "How to verify" commands in your head against the current files.** Confirm each one exists (AGENTS.md, **Commands**, or the manifest), can pass after the steps, and can fail when the work is wrong.
 
 ## What to hunt for
@@ -43,7 +54,7 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 - **Estimates vs measurements:** the plan states a count or size without the command that measured it.
 - **Edge cases:** empty input, duplicates, missing permissions, a service that is down, concurrent runs.
 - **Owner decisions:** the plan takes a decision that `@@PARENT_PLAN@@` lists as open.
-- **Template gaps:** missing Goal, Context, Affected files, Steps, Tests or How to verify; vague steps; verify steps that cannot fail.
+- **Template gaps:** a missing or empty Goal, Context, Hard rules, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, Steps, @@MIGRATIONS_GAP@@Tests or How to verify section (an empty section must say "None" or "No new wiring"); @@ENDPOINT_GAP@@a Tests section without its Harness constraints; steps that are vague or longer than 2–5 minutes; verify steps that cannot fail.
 
 ## Output
 
@@ -65,6 +76,9 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 
 ### Checklist
 - [ ] All referenced files, lines, sections and symbols exist as stated
+- [ ] Reference implementation mirrored, deviations justified
+- [ ] Breaking changes for changed symbols listed (consumer search done)
+- [ ] Wiring & registration matches the code (declared, exported, imported, registered)
 - [ ] Scope stays inside the goal; no open decision is taken silently
 @@VALIDATOR_RULE_CHECKS@@
 @@IFNOT CONTRACT_IN_RULES@@
@@ -94,12 +108,15 @@ If the verdict is APPROVE with no findings, the block reads: `Plan validated cle
 
 ## Write the artifact (required, last action)
 
-Write the full output with the Write tool to `.plans/.validations/<plan-basename>-validation-<n>.md`. `<n>` is the next free number: list `.plans/.validations/` first, and never overwrite an earlier round. Do not write anywhere else.
+Write the full output with the Write tool to `.plans/.validations/<plan-basename>-validation-<n>.md`. `<n>` is the next free number: list `.plans/.validations/` first, and never overwrite an earlier round. If the folder does not exist, `<n>` is 1. Do not write anywhere else.
+
+An old un-numbered `<plan-basename>-validation.md` file (from before the numbered rounds) stays as it is. Do not count it, and do not overwrite it.
 
 End your reply with the artifact path on its own line. That path is the proof that you ran.
 
 ## Rules
 
 - Every blocking finding names a real `file:line` that you read.
+- Be specific, not pedantic. A gap that gives wrong data, leaks data to the wrong user, or breaks a hard rule is blocking. A style point is non-blocking.
 - If you cannot verify a claim, say so. Do not assume it is fine.
 - NEEDS REWORK only when a blocking issue would give wrong, broken or unsafe work. Otherwise APPROVE WITH CHANGES.

@@ -7,7 +7,7 @@ Rules for `changelog.d/`. Read this file before you change files here. The entry
 @@IF HAS_VERSION_BUMP@@
 - Each PR with an entry raises `version` in `@@CHANGELOG_VERSION_FILE@@` by one step.
 @@END@@
-- `node .claude/scripts/changelog-validate.mjs --base origin/@@BASE_BRANCH@@` must print `PASS`.
+- `@@CHANGELOG_VALIDATE@@` must print `PASS`.
 - Never edit or delete an entry of another PR. Add a new file.
 - A PR that ships nothing a reader cares about gets the label `no-changelog` instead of an entry. Do not write an empty entry to satisfy the check.
 - Use `/changelog-entry` to write an entry.

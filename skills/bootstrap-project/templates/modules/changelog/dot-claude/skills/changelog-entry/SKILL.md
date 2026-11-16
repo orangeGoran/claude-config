@@ -73,7 +73,7 @@ The branch has raised it already when `git diff origin/@@BASE_BRANCH@@...HEAD --
 
 ## Step 4 — Check
 
-Run `node .claude/scripts/changelog-validate.mjs --base origin/@@BASE_BRANCH@@`. It must print `PASS`. Fix the cause of each `x` line and run it again.
+Run `@@CHANGELOG_VALIDATE@@`. It must print `PASS`. Fix each problem it names and run it again.
 
 ## Step 5 — Output
 

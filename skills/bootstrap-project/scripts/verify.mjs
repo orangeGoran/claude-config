@@ -147,7 +147,8 @@ check('claudemd', 'dash-tip', 'CLAUDE.md', existsSync(R('CLAUDE.md')));
   const blocked = overlay.filter((c) => deny.some((d) => glob(d)?.test(c)));
   check('deny-overlay', 'required', 'No deny rule blocks the run or "to PR" overlay', !blocked.length,
     blocked.length ? 'blocked: ' + blocked.join('; ') : `${deny.length} deny rule(s)`);
-  const pushAllow = allow.filter((a) => /^Bash\((git push|gh pr create|gh pr merge)/.test(a));
+  // every gh pr rule (also view and diff): PR rules live only in the "to PR" overlay
+  const pushAllow = allow.filter((a) => /^Bash\((git push|gh pr\b)/.test(a));
   check('push-allow', 'required', 'No push or PR rule in the shared allow list', !pushAllow.length, pushAllow.join(', '));
   const localAllow = readJson(R('.claude', 'settings.local.json'))?.permissions?.allow || [];
   const localPush = localAllow.filter((a) => /^Bash\((git push|gh pr create)/.test(a));
@@ -222,7 +223,7 @@ if (params && !checkParams(params).length) {
   const noEnv = envs.filter((e) => !existsSync(R(e)));
   check('env-files', 'tip', 'The env files that runs copy exist in this checkout', !noEnv.length,
     noEnv.length ? 'missing: ' + noEnv.join(', ') + ' (a run starts without them)' : envs.join(', '));
-  const drift = renderAll(params, { upgrade: true }).filter((f) => /^\.claude\/scripts\//.test(f.path) && f.kind === 'file' && existsSync(R(f.path)))
+  const drift = renderAll(params, { upgrade: true, repo: root }).filter((f) => /^\.claude\/scripts\//.test(f.path) && f.kind === 'file' && existsSync(R(f.path)))
     .map((f) => ({ path: f.path, diff: configDiff(read(R(f.path)) || '', f.content) })).filter((x) => x.diff.length);
   check('config-drift', 'tip', 'The CONFIG blocks of .claude/scripts match bootstrap.json', !drift.length,
     drift.length ? drift.map((x) => `${x.path}: ${x.diff.length} line(s) differ`).join('; ') + ' (render.mjs --upgrade shows them; --reset-config --apply <path> takes the answers)' : '');

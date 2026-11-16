@@ -48,12 +48,12 @@ Run the checks one at a time, in this order:
    find: <find> / replace: <replace>   (fenced, word for word)
    ```
 3. Edit `<file>`: `find` → `replace`.
-4. Run `command` exactly as given.
+4. Run `command` exactly as given. A command that is not bare, or that is not from the repo, is `INVALID (command)`: undo the edit (item 5) and do not run it.
 5. Edit `<file>`: `replace` → `find`. Run `git hash-object <file>`. The result must equal `H0`. If not, **stop the whole skill** and report. Keep the "in progress" section, so that the crash recovery can find it.
 6. Delete the "in progress" section. Classify the check from the test output:
    - **KILLED** — at least one test failed on an assertion. The test proves the behavior.
    - **SURVIVED** — every test passed. The test does not prove the behavior.
-   - **INVALID** — the test suite did not load or run (a syntax error, a missing module, a reference error), or 0 tests ran. This proves nothing.
+   - **INVALID** — the test suite did not load or run, or 0 tests ran. Markers: `SyntaxError`, `ReferenceError`, `Cannot find module`, `Test suite failed to run`, `Failed to load`, `No test files found`, or a count of 0 tests. This proves nothing either way.
 
 ## Step 4 — Fix (only with `--fix`)
 
@@ -63,7 +63,7 @@ At most 2 rounds. For each MISSING behavior, each WEAK test and each SURVIVED ch
 2. Run it against the unchanged code. It must pass. **If a new or stronger test fails against the real code, do not change the production code and do not make the test weaker.** Record it as `POSSIBLE PRODUCTION BUG` with the failure output. A person must decide about it.
 3. Run the matching revert check again (Step 3). It must now be KILLED.
 
-At the end, run the repo's lint and format commands (`AGENTS.md`, **Commands**) on the changed test files, if the commands exist.
+At the end, lint and format **only the changed test files**: give their paths to the lint and format commands, one command per call (@@FILE_LINT_HINT@@). Never run a whole-repo command with `--fix` here: it changes files outside this review. When the repo has no per-file form, run the check-only form and fix the reported lines by hand. Judge by the exit code and the error count, not by the last lines of the output.
 
 ## Step 5 — Report
 
@@ -79,5 +79,7 @@ Test review: <N> behaviors — <c> covered, <w> weak, <m> missing.
 Revert checks: <k> killed, <s> survived, <i> invalid.
 Open for a human: <none | one line per item: SURVIVED or MISSING not fixed, POSSIBLE PRODUCTION BUG>
 ```
+
+Keep the heading `## Summary for the PR` exactly as written: `/skill-4-verify`, `/skill-5-ship`, `/skill-auto-pipeline` and `/decision-sheet` find the section by this heading.
 
 Then tell the owner, in 3–5 lines: the summary, the report path, and the open items that need a decision (if any). In an interactive run without `--fix`, end with: "Run `/test-review --fix` to make the weak and missing tests stronger."

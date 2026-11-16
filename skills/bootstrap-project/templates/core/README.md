@@ -2,10 +2,6 @@
 
 @@PROJECT_SUMMARY@@
 
-## Status
-
-The project is set up for planned, Claude Code–assisted work. See `AGENTS.md`, section **Status**, for the current state.
-
 ## Read this first
 
 | File | What it holds |

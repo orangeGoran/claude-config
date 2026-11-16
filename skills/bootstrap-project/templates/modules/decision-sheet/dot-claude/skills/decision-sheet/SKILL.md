@@ -38,10 +38,15 @@ Read, do not guess. Each number in a question must come from one of these facts.
 - `git status --short` (untracked files are new: read them)
 - `git log --format=%s <mb>..HEAD`
 
-Also read: the plan; the `changelog.d/` entry of this branch, if the project has `changelog.d/`; the contract changes (contract source: @@CONTRACT_SOURCE@@); the `## Timeline`, `## Code review` and `## Verification` sections of the pipeline report; the summary of the test-review report, if there is one.
+Also read: the plan; the `changelog.d/` entry of this branch, if the project has `changelog.d/`; the contract changes (contract source: @@CONTRACT_SOURCE@@); the `## Timeline`, `## Code review` and `## Verification` sections of the pipeline report; the `## Summary for the PR` section of the test-review report, if there is one.
 @@IF HAS_BROWSER_TEST@@
 
+@@IF HAS_TICKETS@@
 Browser test: read the plan's **Browser test** section, the `## Browser test` section of the pipeline report, and the PR body's **Browser test** section when the PR is open (`gh pr view --json body`). Count the tickets of the plan and the tickets whose evidence comment has pictures. These counts are the sheet's "Browser test" line, and they must match the PR body.
+@@END@@
+@@IFNOT HAS_TICKETS@@
+Browser test: read the plan's **Browser test** section, the `## Browser test` section of the pipeline report, and the PR body's **Browser test** section when the PR is open (`gh pr view --json body`). Note whether the test ran, its rounds, its report page link and its open findings. These facts are the sheet's "Browser test" line, and they must match the PR body.
+@@END@@
 @@END@@
 
 @@IF MOD_CODEX@@
@@ -72,7 +77,10 @@ Ask only about these six kinds, and only when the facts show one:
 3. **Production impact.** A migration (read each statement: `NOT NULL` on an existing column, an `UPDATE` backfill, a type change, an index on a large table), a manual deploy step, a new key in `.env.example`, a changed default in a seed or a configuration.
 4. **Access change.** Who can now do something that they could not do before, or the reverse: a new or changed access check, permission or role, a public endpoint, a rate limit.
 5. **Choice nobody planned.** A Timeline entry where the pipeline chose a convention because the plan was silent, a merge conflict where the run picked one side, or an unplanned change that a review judged VALID.
-6. **Open finding.** A test-review finding marked as a possible production bug, a verify finding marked deferred, a VALID review finding that is not fixed, or a fact that a security check needs (ask for the missing fact).
+6. **Open finding.** A test-review `POSSIBLE PRODUCTION BUG`, or a SURVIVED or MISSING item that its `--fix` did not fix; a verify finding marked deferred; a VALID review finding that is not fixed; a fact that a security check needs (ask for the missing fact).
+@@IF HAS_BROWSER_TEST@@
+   A browser test that the plan requires but that did not run, or that has open findings, is a kind-6 item too.
+@@END@@
 
 Order the questions by risk, highest first. **More than 5 → the PR is too big for a two-minute read.** Keep all of them (to hide one is worse), and set the status to 🔴 with "split suggested".
 
@@ -108,10 +116,15 @@ Disagree? Untick or comment, then run `/pr-feedback <PR#>`.
 ## Checked by machines
 ✅ Local gates: <each check that ran, with its counts>
 ✅ Verify: <n> findings fixed, <n> open
-✅ Test review: <the first two lines of its summary>
+✅ Test review: <the first two lines of its `## Summary for the PR`>
 ℹ️ Contract changes: <one short item per change, or "none">
 @@IF HAS_BROWSER_TEST@@
+@@IF HAS_TICKETS@@
 ✅ Browser test: <k> of <n> tickets have before/after pictures; report page <link>
+@@END@@
+@@IFNOT HAS_TICKETS@@
+✅ Browser test: <rounds>, <n> findings fixed, <n> open; report page <link>
+@@END@@
 @@END@@
 @@IF MOD_CODEX@@
 ⏭ Codex: skipped (<reason>). Run `/pr-feedback <PR#> --codex` to add it later.
@@ -122,7 +135,12 @@ Disagree? Untick or comment, then run `/pr-feedback <PR#>`.
 - No questions → put `No decisions needed.` in place of the list, and keep the rest. The CI check passes with zero boxes.
 - Each "Checked by machines" line states what really ran. A check that did not run is ⏭ with the reason, never ✅.
 @@IF HAS_BROWSER_TEST@@
+@@IF HAS_TICKETS@@
 - The "Browser test" line is ✅ only when every ticket has pictures and the PR body shows them. Otherwise it is 🔴 with the real count ("4 of 6 tickets have pictures"), and that is a kind-6 item. When the plan says `None — <reason>`, write `⏭ Browser test: none — <reason>`.
+@@END@@
+@@IFNOT HAS_TICKETS@@
+- The "Browser test" line is ✅ only when the test ran, has no open finding, and the PR body links its report page. A required test that did not run, or open findings, make it 🔴 with the real counts, and that is a kind-6 item. When the plan says `None — <reason>`, write `⏭ Browser test: none — <reason>`.
+@@END@@
 @@END@@
 - Numbers start at 1 each time you build the sheet again. `/pr-feedback` matches boxes by their text, not their number.
 

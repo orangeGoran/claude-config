@@ -33,18 +33,19 @@ Files marked `??` are new and untracked. Read them.
 1. **List the behaviors.** A behavior is one effect that a user or caller sees: a status code, a response field, a row that is written or not written, an event, an access rule, a state change. Take them from the plan (if given) **and** from the production diff. A behavior that the code adds but the plan does not mention still counts. Ignore renames, doc comments, formatting and docs.
 2. **Rank them by risk.** Highest first: the hard rules in `AGENTS.md` (@@HARD_RULE_TITLES@@), access and permission checks, data writes and deletes, state changes, breaking API changes. Lowest: log lines and documentation decorators.
 3. **Find the test for each behavior.** Search the test files in the diff and next to the changed files. Open the test and read its assertions. Never judge a test by its name.
-4. **Judge each assertion.** Read the nested `AGENTS.md` of the test folder first, if there is one. It can list known traps of the test harness. Mark a test **WEAK** when it can pass while the behavior is broken, for example:
+4. **Judge each assertion.** @@TEST_HARNESS_READ@@ It can list known traps of the test harness. Mark a test **WEAK** when it can pass while the behavior is broken, for example:
    - it checks only the status code, but the behavior is in the body;
    - it checks "is defined" or "is true" where an exact value is known;
    - it checks that a function was called, but not the arguments that carry the behavior;
    - the assertion is in a callback or branch that possibly never runs;
    - it imports the production constant that it should state again (a value from an external spec);
+   - its expected value or UI text comes from what the app shows today, not from the spec, the plan or the rule document that defines the behavior;
    - the negative case is missing: an error behavior (404, 403, 409, a rejected input) is tested only on the success path.
 5. **Propose revert checks** for the top behaviors (max 10, highest risk first). A revert check is one small edit to **production code** that undoes exactly one behavior, so the test for that behavior must fail. Rules:
    - `find` is an exact text copied from the **current** file (with its whitespace) that occurs **once** in that file. Keep it short: 1–6 lines.
-   - `replace` must still load and run: no undefined name, no syntax error. Otherwise the test fails for the wrong reason. Good edits: remove one condition from a filter, invert a guard, return early, remove one field from a mapper, change the error that is thrown.
+   - `replace` must still load and run: no undefined name, no syntax error. Otherwise the test fails for the wrong reason. A type mismatch or an unused variable is fine when the test runner does not type-check (for example a transpile-only setup); a crash on load is not. Good edits: remove one condition from a filter, invert a guard, return early, remove one field from a mapper, change the error that is thrown.
    - Never change a test file, a migration, a fixture or a comment.
-   - `command` is one bare test command that runs the test that must fail. Take its form from `AGENTS.md`, section **Commands** (Test (one file)), and add a test-name filter when the runner has one. At most 3 of the 10 may be slow end-to-end tests.
+   - `command` is one bare test command that runs the test that must fail. Take its form from `AGENTS.md`, section **Commands** ("Test (one file)", or "Test (end to end)" for an end-to-end test), and add a test-name filter when the runner has one. When the row says "not available yet", use "Test (full)" and say so in Notes. At most 3 of the 10 may be slow end-to-end tests.
 
 ## Output (return this, nothing else)
 

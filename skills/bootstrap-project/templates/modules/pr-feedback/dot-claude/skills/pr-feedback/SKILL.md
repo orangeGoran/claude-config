@@ -93,7 +93,7 @@ What do you want to do?
 1. **The owner's local edits first.** Commit them by path, as they are: `chore(<scope>): reviewer edits`. Never "improve" them in the same commit.
 2. For each comment, decide what it asks. When a comment has two meanings with different results, ask in chat (decision format) before you change code. Otherwise apply it. Follow the patterns of the codebase and `AGENTS.md`.
 3. A comment that asks a question and not for a change: answer it in the reply (Step 6), with file:line evidence. Do not change code.
-4. Run the scoped tests for the changed files with the **Test (one file)** command from `AGENTS.md`, **Commands**. When a route or a public interface changed, also run the matching end-to-end test, if the repo has the command. Run the lint and format commands on the changed files. Fix the failures (at most 2 tries for each one, then stop and report).
+4. Run the scoped tests for the changed files with the "Test (one file)" command from `AGENTS.md`, **Commands**. When that row says "not available yet", write "scoped tests: not available yet" and run "Test (full)" once instead. When a route or a public interface changed, also run the matching end-to-end test with "Test (end to end)", unless that row is "not available yet" (then say so). Run the lint and format commands on the changed files, and judge them by the exit code and the error count. Fix the failures (at most 2 tries for each one, then stop and report).
 @@IF MOD_TEST_REVIEW@@
 5. If production code changed: `/test-review --fix --focus "<the behaviors that these fixes changed>"`.
 @@END@@

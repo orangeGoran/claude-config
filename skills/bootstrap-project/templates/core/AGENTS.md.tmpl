@@ -2,11 +2,7 @@
 
 @@PROJECT_SUMMARY@@ Required reading: `@@PARENT_PLAN@@` (the parent plan: goals, architecture, open decisions).
 
-Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS.md`) next to it. Never write rules into a `CLAUDE.md`. When a folder gets its own rules, add an `AGENTS.md` + `CLAUDE.md` pair in that folder.
-
-## Status
-
-Set up on @@TODAY@@ with `/bootstrap-project`. Update this section when the state of the project changes (for example: "Phase 1 in progress").
+Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS.md`) next to it. Never write rules into a `CLAUDE.md`. When a folder gets its own rules, add an `AGENTS.md` + `CLAUDE.md` pair in that folder: a new folder `AGENTS.md` needs both files and a line in this root file that names it.
 
 ## Hard rules
 
@@ -49,18 +45,18 @@ Set up on @@TODAY@@ with `/bootstrap-project`. Update this section when the stat
 - `/skill-auto-validate-plan` loops (max 4 rounds): the `plan-validator` agent writes `.plans/.validations/<plan-basename>-validation-<n>.md`, the valid findings go into the plan, and each round leaves a `-round-<n>.md` decision log. `/skill-validate-plan` is one round with no edits.
 @@END@@
 - `/apply-validation` checks a pasted review (another agent, another session, a person) against the repo and writes `-external-<n>.md`.
-- The dashboard runs `.claude/scripts/auto-pipeline.sh <mode> <plan>`. It creates a worktree `../worktrees/@@PROJECT_NAME@@/<slug>` on branch `auto/<slug>` from `origin/@@BASE_BRANCH@@` and runs `/skill-auto-pipeline` headless: `/skill-2-implement` → `/skill-3-test` → `/skill-4-verify` (`/code-review` loop + rule audit) → plan to `.plans/done/` and one commit for the whole plan → `/skill-5-ship` (draft PR). Modes: stop at verify (nothing committed), full (one local commit), to PR. The report is `.plans/auto-runs/<slug>.md`.
+- The dashboard runs `.claude/scripts/auto-pipeline.sh <mode> <plan>`. It creates a worktree `../worktrees/@@PROJECT_NAME@@/<slug>` on branch `auto/<slug>` from `origin/@@BASE_BRANCH@@` and runs `/skill-auto-pipeline` headless: @@PIPELINE_CHAIN@@. Modes: stop at verify (nothing committed), full (one local commit), to PR. The report is `.plans/auto-runs/<slug>.md`.
 - `/skill-2-implement <plan file>` alone implements one plan in the current tree, with no commits.
 - `/skill-3-test` and `/skill-4-verify` also run alone, after a manual `/skill-2-implement`.
 - `/skill-5-ship` merges `@@BASE_BRANCH@@`, runs the checks, pushes the branch and opens a draft PR. Only when the owner asks.
 @@IF MOD_TEST_REVIEW@@
-- `/test-review` checks the tests of a change against the plan (the `test-reviewer` agent). The pipeline runs it after `/skill-3-test`.
+- `/test-review` checks the tests of a change against the plan (the `test-reviewer` agent). The pipeline runs it inside `/skill-4-verify`.
 @@END@@
 @@IF MOD_CHANGELOG@@
 - `/changelog-entry` writes the `changelog.d/` entry of a change. Every PR adds one, or carries the `no-changelog` label.
 @@END@@
 @@IF MOD_DECISION_SHEET@@
-- `/decision-sheet` writes the decisions of a change for the reviewer. `/skill-5-ship` adds it to the PR.
+- `/decision-sheet` writes the decisions of a change for the reviewer. The pipeline runs it after the commit, before `/skill-5-ship`, which adds it to the PR.
 @@END@@
 @@IF MOD_PLANS_PARALLEL@@
 - `/plans-parallel` reads `node .claude/scripts/plan-lanes.mjs --json` and proposes which plans can run at the same time.

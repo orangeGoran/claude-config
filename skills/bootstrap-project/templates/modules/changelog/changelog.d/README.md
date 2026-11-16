@@ -37,7 +37,7 @@ customer:
 Then raise `version` in `@@CHANGELOG_VERSION_FILE@@` by exactly one step: **patch** for a fix, **minor** for a feature, **major** for a breaking change (a removed or renamed endpoint or field, a new required request field, a changed status code, a stricter access rule). A new optional field is minor.
 
 @@END@@
-Check it locally: `node .claude/scripts/changelog-validate.mjs --base origin/@@BASE_BRANCH@@` must print `PASS`.
+Check it locally: `@@CHANGELOG_VALIDATE@@` must print `PASS`.
 
 ## Choose an audience
 

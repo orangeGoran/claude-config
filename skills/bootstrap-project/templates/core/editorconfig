@@ -8,8 +8,11 @@ trim_trailing_whitespace = true
 indent_style = space
 indent_size = 2
 
+# Markdown: two trailing spaces are a hard line break, so editors must keep them.
 [*.md]
 trim_trailing_whitespace = false
+@@IF HAS_MAKEFILE@@
 
 [Makefile]
 indent_style = tab
+@@END@@

@@ -53,8 +53,13 @@ const IGNORE_PATTERNS = [/(^|\/)(dist|build|coverage|node_modules|\.build)\//];
 
 // Without a `## Affected files` section, read the files from these sections
 // (heading starts with the text). Without those either, the whole plan minus SKIP.
-const SCOPE_SECTIONS = ['steps'];
-const SKIP_SECTIONS = ['context', 'out of scope', 'follow-ups', 'how to verify', 'open questions'];
+const SCOPE_SECTIONS = ['implementation steps', 'steps'];
+// 'reference implementation': files a plan only reads, never changes
+const SKIP_SECTIONS = ['context', 'reference implementation', 'out of scope', 'follow-ups', 'how to verify', 'open questions'];
+
+// A plan whose migration file a generator writes names no migrations/ path. These words
+// in the plan text mark it as a plan that adds a migration too.
+const MIGRATION_HINTS = @@LANES_MIGRATION_HINTS@@;
 
 // readable lane label for one file: <container>/<name> for app and package folders,
 // else the top folder. EDIT 2: add a deeper rule for big source folders.
@@ -361,7 +366,8 @@ const plans = Object.entries(planText).map(([slug, text]) => {
     softFiles: soft,
     unresolvedNames: unresolved,
     areas,
-    addsMigration: files.some((f) => /(^|\/)migrations?\//.test(f)),
+    // a generated migration has no file name in the plan, so the generator words count too
+    addsMigration: files.some((f) => /(^|\/)migrations?\//.test(f)) || MIGRATION_HINTS.some((h) => text.includes(h)),
     opsCommandHits: opsHits,
     opsManual: opsHits >= 5 && hard.length < 8,
     looksRoadmap,

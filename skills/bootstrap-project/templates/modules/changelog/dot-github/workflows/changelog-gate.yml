@@ -1,8 +1,16 @@
 # .github/workflows/changelog-gate.yml
 # Fails a pull request that adds no file under changelog.d/, that has an entry
 # with a missing or wrong field, or that does not raise the version by one step
-# (when the project has a version file). The rules are in
-# .claude/scripts/changelog-validate.mjs (no dependencies; the runner's node runs it).
+# (when the project has a version file).
+@@IF HAS_CHANGELOG_CMD@@
+# The rules are in the project's own validator (`@@CHANGELOG_VALIDATE@@`). It reads
+# CHANGELOG_BASE_REF (the branch to compare with) and CHANGELOG_SKIP ("true" with the
+# no-changelog label: check the entry files only).
+@@END@@
+@@IFNOT HAS_CHANGELOG_CMD@@
+# The rules are in .claude/scripts/changelog-validate.mjs (no dependencies; the
+# runner's node runs it).
+@@END@@
 #
 # A separate workflow, not a job in a CI workflow: it listens for `labeled` and
 # `unlabeled`, so the `no-changelog` label runs the check again by itself
@@ -34,14 +42,27 @@ jobs:
   changelog-gate:
     name: Changelog Gate
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # covers a dependency install before a project validator; the check takes seconds
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # the check compares with the merge base, which a shallow clone does not have
           fetch-depth: 0
           persist-credentials: false
 
+@@IF HAS_CHANGELOG_CMD@@
+@@IF HAS_CHANGELOG_CI_SETUP@@
+@@CHANGELOG_CI_SETUP@@
+@@END@@
+      # runs also with the no-changelog label: the entry files are still checked
+      - name: Check the changelog entries and the version
+        env:
+          CHANGELOG_BASE_REF: origin/${{ github.base_ref }}
+          CHANGELOG_SKIP: ${{ contains(github.event.pull_request.labels.*.name, 'no-changelog') }}
+        run: @@CHANGELOG_VALIDATE@@
+@@END@@
+@@IFNOT HAS_CHANGELOG_CMD@@
       - name: Check the changelog entries and the version
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -52,3 +73,4 @@ jobs:
           else
             node .claude/scripts/changelog-validate.mjs --base "origin/$BASE_REF"
           fi
+@@END@@

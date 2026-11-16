@@ -26,7 +26,11 @@ You run **unattended** (headless `claude -p`, nobody watching) inside a dedicate
 
 **Run commands bare.** Allow rules match command prefixes. `git status` is allowed, but `git status && git log` or `<test command> 2>&1 | tail` is auto-denied headless. Run one bare command per call, with no pipes, `&&`, redirection or heredocs. A denied command is not a missing tool: write the exact command in the diagnosis.
 
-**Background helpers.** The session ends when no background work is left. Before you wait for a helper, name it. If a helper finished without doing its job, start a new one with corrected instructions, or do the work yourself.
+**Background helpers.** The session ends when no background work is left. A helper that is not running any more can end the run silently, with the status still `RUNNING`.
+
+- Before you start a helper, check that its prompt has no unfilled placeholder (for example `<...>`, `TODO`, `FILES_PLACEHOLDER`, an empty list). Fill each one, or do not start the helper.
+- If a helper finished without doing its job, start a new one with corrected instructions, or do the work yourself. Never send a `SendMessage` correction to a helper that has finished, and do not wait for it to "resume".
+- Before you end a turn to wait for helpers, name each helper you wait for. Wait only for a helper whose "finished" notice has not arrived.
 
 **Owner decisions.** (1) Do what the plan says. (2) If the plan is silent and the choice is minor and conventional, follow the codebase and record the choice in the Timeline. (3) If the choice is significant (behavior, schema, an open decision in `@@PARENT_PLAN@@`, anything an external spec should define), do not guess: `/skill-2-implement` writes the question down and skips the dependent steps. See "Needs decision" below.
 
@@ -71,6 +75,7 @@ The report is the owner's window into this run. The plans dashboard reads it. Af
    - It also runs `/test-review --fix`. Copy its `## Summary for the PR` under `## Test review`.
 @@END@@
    - Run every command in the plan's "How to verify" yourself, as bare commands.
+   - If its code-review loop or its test review changed a file, run the full test command once (AGENTS.md, **Commands**, "Test (full)"; skip it when that row is "not available yet") as a regression gate. The skill runs only the scoped tests. A failure counts toward the failure budget.
    - Copy its review order, table, rounds, numbered findings (`F1`, `F2`, …, with file:line and state) and open items (each question exactly as written) under `## Verification` and `## Code review`.
    - Any row still Fail after its fixes → `FAILED: verify`. Open items that need the owner → **Needs decision**. Otherwise status `VERIFIED`.
 
@@ -104,11 +109,12 @@ To ship: resume this run in "to PR" mode. It makes the one commit, then opens th
 @@IF MOD_STEP_GATE@@
 4. **Document** — run `bash .claude/scripts/workflow-complete-step.sh <slug> document`. After the fourth step mark, the script moves the plan to `.plans/done/` itself. Do not run `git mv`, and do not commit yet. If the plan is still in `.plans/`, a step mark is missing: run the missing marks (`implement`, `test`, `verify`) only when that phase passed, else `FAILED: document`. Status `DOCUMENTED`.
 @@END@@
+   - Record the new conventions now: read `.claude/skills/skill-5-ship/SKILL.md` and do its **Docs** step (Step 1.5) without its commit item, so the doc edits are part of the one commit. Write the files you changed, or "nothing to record", in the Timeline.
 @@IF MOD_CHANGELOG@@
    - When the work adds no file under `changelog.d/`, read `.claude/skills/changelog-entry/SKILL.md` and follow it now, so the entry is part of the one commit. If it decides that no entry is necessary, write that in the Timeline.
 @@END@@
 5. **Commit** — one commit for the whole plan:
-   1. `git status --porcelain`. Every path must belong to this plan: the files it changed, its tests, the plan's move to `.plans/done/`, and a changelog entry (with its version raise) if one was written. A path that does not belong (for example a tool's output file) → `FAILED: commit`, with the list under `## Diagnosis`.
+   1. `git status --porcelain`. Every path must belong to this plan: the files it changed, its tests, the plan's move to `.plans/done/`, the doc edits of the Document phase, and a changelog entry (with its version raise) if one was written. A path that does not belong (for example a tool's output file) → `FAILED: commit`, with the list under `## Diagnosis`.
    2. `git add -- <path> <path> …`, naming every path (a deleted or moved path too). Never `git add -A` or `git add .`.
    3. `git commit -m "<type>(<scope>): <what the plan does, in plain words>"`. Conventional Commits, no AI attribution. One commit: never split the work into several.
 
@@ -130,7 +136,12 @@ Nothing is pushed. To open the PR, resume this run in "to PR" mode, or:
 @@END@@
 7. **Ship** — `/skill-5-ship` cannot be invoked as a skill from here (`disable-model-invocation`). Read `.claude/skills/skill-5-ship/SKILL.md` and follow it end to end with `--unattended --report <report> --base <base>`. It sets the final status: `PR OPEN — <url>` (with a `PR: <url>` line) or `BLOCKED: …`.
 @@IF HAS_BROWSER_TEST@@
+@@IF HAS_TICKETS@@
    - Its browser-test gate can stop the ship with `BLOCKED — browser test (<reason>)` and no PR. Copy the reason under `## Diagnosis`: which ticket has no pictures, or what the PR body lacks.
+@@END@@
+@@IFNOT HAS_TICKETS@@
+   - Its browser-test gate can stop the ship with `BLOCKED — browser test (<reason>)` and no PR. Copy the reason under `## Diagnosis`: the test did not run, it has no report page, or the PR body does not link it.
+@@END@@
 @@END@@
 8. On `PR OPEN`, append and end the session:
 

@@ -17,8 +17,10 @@ Say which plan file you use before you continue. If a parent plan or a spec come
 
 Review by reading. A live test belongs to the plan's own run, not to this review.
 
+@@IFNOT HAS_VALIDATOR_LIMITS@@
 - **Never:** sign in, send an authenticated request, send POST, PUT, PATCH or DELETE to any service, open a browser, or change a database row, a storage object or a file.
 - **Never read or print secrets:** no password, token, key or other secret from `.env` files, the shell environment or a database.
+@@END@@
 @@IF HAS_VALIDATOR_LIMITS@@
 @@VALIDATOR_LIMITS@@
 @@END@@
@@ -32,13 +34,16 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 2. **Read the rules.** Read @@RULES_DOCS@@ in full, plus every `AGENTS.md` in the folders the plan touches and in their parent folders. List them with `git ls-files --cached --others --exclude-standard AGENTS.md '*/AGENTS.md'` (this also lists a new, uncommitted file). The plan must obey these rules.
 3. **Check every claim against the real repository.** Do not trust the plan's description of existing code. Open it.
    - **References:** confirm that each file, function and type exists (read the file, `rg` for the symbol). Flag each path that does not exist and each signature the plan gets wrong.
-   - **Reference pattern:** open the "closest existing pattern" files the plan cites. Confirm the plan follows them. Flag deviations the plan does not explain.
+   - **Reference implementation:** open the files of the plan's **Reference implementation** section. Confirm the plan mirrors them. Flag deviations the plan does not explain.
+   - **Signatures and wiring:** each call has the right argument count, order and return type (would it compile?). For each new provider, model, route or module, the plan's **Wiring & registration** section matches the code: declared, exported, imported by the consumer's module, and registered.
    - **Integration shape:** when the plan says "mirror", "same as" or "follow X", compare the control flow of the reference file and the target file. Flag each place where a literal copy would duplicate a side effect, skip a central normalization, bypass a guard, or break an ownership comment.
    - **Affected files:** search for the consumers of each changed symbol (`rg <symbol>`). Flag breaking changes the plan does not list.
 @@IFNOT CONTRACT_IN_RULES@@
    - **Contracts:** @@CONTRACTS_RULE@@ Flag a plan that writes a type or enum value by hand.
 @@END@@
+@@IF HAS_MIGRATIONS@@
    - **Schema:** when the plan adds tables, columns or enums, confirm it has a migration step and follows the schema rules in `AGENTS.md`.
+@@END@@
 4. **Check the "How to verify" commands.** Each command must exist when it runs (AGENTS.md, Commands, or the manifest) and must be able to fail.
 
 ## What to hunt for
@@ -49,8 +54,24 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 - **Edge cases:** empty or missing input, two requests at the same time, retries and idempotency, pagination, permissions not granted.
 - **Duplicate side effects:** a new success or failure branch that can write a state change or send an event two times. Name the one owner of each state change.
 - **Broken references:** dead paths, wrong function names, types or enum values that do not exist.
-- **Template gaps:** a missing Goal, Context, Steps, Tests or How to verify section; vague steps; a verify step that cannot fail.
+- **Template gaps:** a missing or empty Goal, Context, Hard rules, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, Steps, @@MIGRATIONS_GAP@@Tests or How to verify section (an empty section must say "None" or "No new wiring"); @@ENDPOINT_GAP@@a Tests section without its Harness constraints; vague steps; a verify step that cannot fail.
+@@IF MOD_CHANGELOG@@
+@@IF HAS_VERSION_BUMP@@
+- **Release note:** no step that adds the `changelog.d/` entry and the version raise, unless the change qualifies for the `no-changelog` label.
+@@END@@
+@@IFNOT HAS_VERSION_BUMP@@
+- **Release note:** no step that adds the `changelog.d/` entry, unless the change qualifies for the `no-changelog` label.
+@@END@@
+@@END@@
 - **Security:** a new endpoint or entry point with no access check; data that one user can read from another user.
+
+## High-risk integration checks
+
+Run these checks whenever the plan touches sign-in, sessions, tokens, secrets, access checks or error handling:
+
+- **Catch topology before catch content.** When the plan adds an error branch, find where the target maps errors to responses (a global error handler, a filter, a middleware). The plan must name the exact place where the new branch goes, and no response may echo an internal message or a URL query.
+- **Secrets in flight.** A token, a one-time code, an authorization code or a key must never reach a log line or a response body. The plan must name the redaction step.
+- **Outcome vs literal reference.** "Mirror X" is not enough when the target has a different structure. The plan must say which behavior it mirrors and which integration the target needs on its own.
 
 ## Output (return this, nothing else)
 
@@ -69,14 +90,18 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 - <case> — <why it matters>
 
 ### Checklist
-- [ ] All referenced files, functions and types exist
-- [ ] The reference pattern is followed (deviations explained)
-- [ ] Breaking changes for changed symbols are listed
+- [ ] All referenced files, functions and types exist, and each call would compile
+- [ ] Reference implementation mirrored, deviations justified
+- [ ] Breaking changes for changed symbols listed (consumer search done)
+- [ ] Wiring & registration matches the code
 @@VALIDATOR_RULE_CHECKS@@
 @@IFNOT CONTRACT_IN_RULES@@
 - [ ] Contracts respected
 @@END@@
 - [ ] "How to verify" commands are real and can fail
+@@IF MOD_CHANGELOG@@
+- [ ] Release note step present (or `no-changelog` justified)
+@@END@@
 ```
 
 After the report, **always** give a second block that the owner can copy to the planning agent (the `/skill-1-plan` conversation). Name the exact plan file. Turn each blocking issue into an imperative edit instruction with its evidence. Put the block in one fenced code block:
@@ -102,7 +127,7 @@ Do not change anything the validation did not flag.
 
 If the verdict is APPROVE with no findings, the block reads: `Plan validated clean — no changes required.`
 
-The block must be complete by itself: the plan path, each instruction and each evidence citation. Do not refer to "the report above" in it. Write **no files**. The chat output is the full deliverable.
+The block must be complete by itself: the plan path, each instruction and each evidence citation. Do not refer to "the report above" in it. Write **no files**. The chat output is the full deliverable: the caller (`/skill-auto-validate-plan`) saves it.
 
 ## Rules
 
