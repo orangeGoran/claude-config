@@ -2770,17 +2770,18 @@ document.querySelectorAll('[data-reveal]').forEach((b) => b.addEventListener('cl
 }));
 </script></body></html>`;
 };
-// a bar at the top right of every page served here: Copy HTML, Download, and a version menu on a
-// page with older versions (scripts/page-versions.mjs). ?download gives the file as saved, without the bar;
-// Copy HTML puts that same file on the clipboard as text, to paste into a chat
+// a bar at the top right of every page served here: Copy HTML, Copy file, Download, and a version menu
+// on a page with older versions (scripts/page-versions.mjs). ?download gives the file as saved, without
+// the bar; Copy HTML puts that same file on the clipboard as text (for a Claude chat), Copy file puts
+// the file itself there (POST /copy-file), so Cmd+V attaches it in a chat that limits pasted text (Teams)
 const QA_BAR_ITEM = 'all:initial;display:block;box-sizing:border-box;font:500 12.5px system-ui,-apple-system,sans-serif;color:#eceff4;background:rgb(46,52,64);border:1px solid #4c566a;border-radius:6px;padding:5px 11px;cursor:pointer;white-space:nowrap';
 const QA_BAR_STYLE = `<style>#qa-bar{all:initial;position:fixed;top:10px;right:10px;z-index:2147483647;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;max-width:calc(100vw - 20px)}
-#qa-dl,#qa-cp,#qa-old,#qa-ver>summary,#qa-ver a{${QA_BAR_ITEM}}#qa-dl,#qa-cp,#qa-ver>summary{opacity:.75}
+#qa-dl,#qa-cp,#qa-cf,#qa-old,#qa-ver>summary,#qa-ver a{${QA_BAR_ITEM}}#qa-dl,#qa-cp,#qa-cf,#qa-ver>summary{opacity:.75}
 #qa-old{background:#b35c00;color:#fff;border-color:#b35c00;text-decoration:underline}
 #qa-ver{all:initial;display:block;position:relative;z-index:1}#qa-ver>div{all:initial;display:block;position:absolute;top:calc(100% + 4px);right:0;max-height:60vh;overflow:auto}
 #qa-ver a{border-radius:0;margin-top:-1px}#qa-ver a[aria-current]{background:#434c5e;font-weight:700}
-#qa-dl:hover,#qa-dl:focus-visible,#qa-cp:hover,#qa-cp:focus-visible,#qa-ver>summary:hover,#qa-ver>summary:focus-visible,#qa-ver[open]>summary{opacity:1}
-#qa-dl:hover,#qa-dl:focus-visible,#qa-cp:hover,#qa-cp:focus-visible,#qa-old:focus-visible,#qa-ver>summary:focus-visible,#qa-ver a:hover,#qa-ver a:focus-visible{outline:2px solid #88c0d0;outline-offset:-2px}@media print{#qa-bar{display:none}}</style>`;
+#qa-dl:hover,#qa-dl:focus-visible,#qa-cp:hover,#qa-cp:focus-visible,#qa-cf:hover,#qa-cf:focus-visible,#qa-ver>summary:hover,#qa-ver>summary:focus-visible,#qa-ver[open]>summary{opacity:1}
+#qa-dl:hover,#qa-dl:focus-visible,#qa-cp:hover,#qa-cp:focus-visible,#qa-cf:hover,#qa-cf:focus-visible,#qa-old:focus-visible,#qa-ver>summary:focus-visible,#qa-ver a:hover,#qa-ver a:focus-visible{outline:2px solid #88c0d0;outline-offset:-2px}@media print{#qa-bar{display:none}}</style>`;
 // versions: [{ n, mtime, latest, href, current }], newest first; one entry means no menu
 const qaBar = (versions) => {
   const when = (ms) => new Date(ms).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -2789,11 +2790,17 @@ const qaBar = (versions) => {
   const menu = versions.length > 1 ? `<details id="qa-ver"><summary aria-label="Versions of this page">v${current.n}${current.latest ? ' (latest)' : ''} ▾</summary><div>
 ${versions.map((v) => `<a href="${escH(v.href)}"${v.current ? ' aria-current="page"' : ''}>v${v.n}${v.latest ? ' (latest)' : ''} · ${escH(when(v.mtime))}</a>`).join('\n')}</div></details>` : '';
   return `${QA_BAR_STYLE}<div id="qa-bar">${old ? `<a id="qa-old" href="${escH(latest.href)}">Old version from ${escH(when(current.mtime))}. Go to latest</a>` : ''}${menu}
-<button id="qa-cp" type="button" title="Copy this page's HTML file as text, to paste into a chat">⧉ Copy HTML</button>
+<button id="qa-cp" type="button" title="Copy this page's HTML as text, to paste into a Claude chat">⧉ Copy HTML</button>
+<button id="qa-cf" type="button" title="Copy this page as a file, to paste as an attachment (Teams, Slack, email)">📎 Copy file</button>
 <a id="qa-dl" href="?${old ? `v=${current.n}&amp;` : ''}download" download title="Download this page as one HTML file">⬇ Download</a></div>
 <script>(() => {
-  const b = document.getElementById('qa-cp'), src = document.getElementById('qa-dl').href;
-  const show = (t) => { b.textContent = t; setTimeout(() => { b.textContent = '⧉ Copy HTML'; }, 1500); };
+  const b = document.getElementById('qa-cp'), f = document.getElementById('qa-cf'), src = document.getElementById('qa-dl').href;
+  [b, f].forEach((el) => { el.dataset.label = el.textContent; });
+  const show = (t, el = b) => { el.textContent = t; setTimeout(() => { el.textContent = el.dataset.label; }, 1500); };
+  f.addEventListener('click', async () => {
+    const r = await fetch('/copy-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ href: src }) }).catch(() => null);
+    show(r && r.ok ? 'Copied, paste with ⌘V' : 'Copy failed', f);
+  });
   b.addEventListener('click', async () => {
     const text = () => fetch(src, { cache: 'no-store' }).then((r) => { if (!r.ok) throw new Error(r.status); return r.text(); });
     try {
@@ -2813,6 +2820,21 @@ const sendPage = (req, res, html, name, versions = []) => {
   const s = String(html), at = s.lastIndexOf('</body>'), bar = qaBar(versions);
   res.end(at < 0 ? s + bar : s.slice(0, at) + bar + s.slice(at));
 };
+// what ?download gives for a page link (with ?v=<n>, that older version): { html, name } or null
+const pageDownload = (pathname, v) => {
+  const pg = qaPageFile(pathname);
+  if (!pg || !existsSync(pg.file)) return null;
+  // a draft's images sit next to it: packed in, so a download is one file
+  if (pg.kind === 'draft') return { html: inlineHtml(readFileSync(pg.file, 'utf8'), path.dirname(pg.file), { page: pg.file }), name: path.basename(pg.file) };
+  if (!v) return { html: readFileSync(pg.file), name: pg.name };
+  const old = olderVersions(pg.file).find((o) => String(o.n) === v);
+  return old ? { html: readFileSync(old.path), name: pg.name.replace(/\.html$/, `-v${old.n}.html`) } : null;
+};
+// Copy file: the download is written to a temp folder and that file is put on the macOS clipboard
+// the way Finder's Copy does (a file URL), so pasting attaches it. Teams reads it on paste, so it stays
+const COPY_DIR = path.join(os.tmpdir(), 'qa-copy-file');
+const CLIPBOARD_FILE_JXA = `function run(argv) { ObjC.import('AppKit'); const pb = $.NSPasteboard.generalPasteboard;
+  pb.clearContents; if (!pb.writeObjects($([$.NSURL.fileURLWithPath(argv[0])]))) throw new Error('clipboard refused'); }`;
 // a saved page, or with ?v=<n> one of its older versions, downloaded as <name>-v<n>.html
 const sendSaved = (req, res, file, name) => {
   const { pathname, searchParams } = new URL(req.url, 'http://x');
@@ -2857,6 +2879,22 @@ const reportServer = http.createServer((req, res) => {
       const pg = qaPageFile(href);
       if (!pg || !existsSync(pg.file)) { res.writeHead(404); return res.end('page not found'); }
       execFile('open', ['-R', pg.file], (err) => { res.writeHead(err ? 500 : 204); res.end(); });
+    });
+  }
+  // Copy file: from a page's own bar, for a page this server lists
+  if (pathname === '/copy-file' && req.method === 'POST') {
+    const why = crossSiteReason(req);
+    if (why) { res.writeHead(403); return res.end(why); }
+    let body = '';
+    req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy(); });
+    return req.on('end', () => {
+      let dl = null;
+      try { const u = new URL(JSON.parse(body).href, 'http://x'); dl = pageDownload(u.pathname, u.searchParams.get('v')); } catch {}
+      if (!dl) { res.writeHead(404); return res.end('page not found'); }
+      const file = path.join(COPY_DIR, dl.name.replace(/[^A-Za-z0-9._-]/g, '_'));
+      try { mkdirSync(COPY_DIR, { recursive: true }); writeFileSync(file, dl.html); }
+      catch { res.writeHead(500); return res.end('could not write the file'); }
+      execFile('osascript', ['-l', 'JavaScript', '-e', CLIPBOARD_FILE_JXA, file], (err) => { res.writeHead(err ? 500 : 204); res.end(); });
     });
   }
   const pg = req.method === 'GET' && qaPageFile(pathname);
