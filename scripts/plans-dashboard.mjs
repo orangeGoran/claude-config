@@ -1073,6 +1073,123 @@ const archivePlan = async (proj, slug) => {
   renameSync(src, path.join(proj.doneDir, slug + '.md'));
   return { ok: true, output: `Moved to ${path.join(proj.doneDir, slug + '.md')} — commit the move if the folder is tracked.` };
 };
+// --- scout proposals (scripts/scout.mjs writes them with status "proposed") ---
+// Confirm: a new chat in the repo root runs /skill-1-plan, which writes the plan over the proposal,
+// so the plan keeps its card. Dismiss: archived with status "dismissed"; the scout reads that and
+// proposes the finding again only when it gets worse.
+const scoutConfirmPrompt = (rel) => `/skill-1-plan Turn the scout proposal in ${rel} into a plan.
+
+Read that file first: it says what the scout found, with the evidence. Save the finished plan to that same file and replace the proposal, so the plan keeps its place on the dashboard. Keep the evidence in the plan's Context section.`;
+const scoutProposal = (proj, slug) => {
+  if (loadMeta(proj)[slug]?.status !== 'proposed') return 'This plan is not a scout proposal that waits for you.';
+  if (!existsSync(path.join(proj.plansDir, slug + '.md'))) return 'Plan file not found.';
+  return '';
+};
+const scoutConfirm = async (proj, slug) => {
+  const why = scoutProposal(proj, slug);
+  if (why) return { ok: false, output: why };
+  const before = loadChat(proj, slug);
+  // the scout's own session (its summary of the finding) goes on; otherwise a new one
+  saveChat(proj, slug, { ...before, root: true, current: before.root ? before.current || null : null, fork: false });
+  const rel = path.relative(proj.root, path.join(proj.plansDir, slug + '.md'));
+  const r = await chatMessage(proj, slug, { text: scoutConfirmPrompt(rel), mode: 'default', model: 'default' });
+  if (!r.ok) { saveChat(proj, slug, before); return r; }
+  const m = loadMeta(proj);
+  m[slug] = { ...m[slug], status: null };
+  saveMeta(proj, m);
+  return { ok: true };
+};
+const scoutDismiss = async (proj, slug) => {
+  const why = scoutProposal(proj, slug);
+  if (why) return { ok: false, output: why };
+  const r = await archivePlan(proj, slug);
+  if (!r.ok) return r;
+  const m = loadMeta(proj);
+  m[slug] = { ...m[slug], status: 'dismissed' };
+  saveMeta(proj, m);
+  return { ok: true };
+};
+// --- the 🔭 Scout drawer: what is set up on this Mac, each project's last run, the log, Run now ---
+const SCOUT_CFG = path.join(HOME, '.claude', 'scout.json');
+const SCOUT_LOG = path.join(CENTRAL, 'logs', 'scout.log');
+const SCOUT_SCRIPT = path.join(DASH_REPO, 'scripts', 'scout.mjs');
+const SCOUT_PLIST = path.join(HOME, 'Library', 'LaunchAgents', 'com.plans-dashboard.scout.plist');
+const SCOUT_LOCK = path.join(CENTRAL, 'scout.lock');
+let scoutChild = null;
+// a run in progress, started here or by launchd: the scout writes its pid to scout.lock
+const scoutRunning = () => {
+  const l = loadJson(SCOUT_LOCK, null);
+  if (!l || !l.pid) return scoutChild ? { startedAt: null } : null;
+  try { process.kill(l.pid, 0); return { startedAt: l.startedAt || null }; } catch { return scoutChild ? { startedAt: null } : null; }
+};
+// the profile names in ~/.aws/config and ~/.aws/credentials, without reading any key
+const awsProfiles = () => {
+  const names = new Set();
+  for (const f of ['config', 'credentials']) {
+    let t = '';
+    try { t = readFileSync(path.join(HOME, '.aws', f), 'utf8'); } catch {}
+    for (const m of t.matchAll(/^\[(?:profile\s+)?([^\]\s]+)\s*\]/gm)) names.add(m[1]);
+  }
+  return names;
+};
+const logTail = (f, lines) => {
+  try {
+    const st = statSync(f), n = Math.min(st.size, 64 * 1024), buf = Buffer.alloc(n), fd = openSync(f, 'r');
+    try { readSync(fd, buf, 0, n, st.size - n); } finally { closeSync(fd); }
+    return buf.toString('utf8').split('\n').slice(-lines).join('\n').trim();
+  } catch { return ''; }
+};
+const scoutStatus = () => {
+  const cfg = loadJson(SCOUT_CFG, null), profiles = awsProfiles();
+  const projects = Object.entries((cfg && cfg.projects) || {}).map(([name, c]) => ({
+    name, registered: !!projByName(name), checks: c.checks || null,
+    aws: c.aws && c.aws.profile ? { profile: c.aws.profile, ok: profiles.has(c.aws.profile) } : null,
+    ...(({ lastRun, learn, checkRuns }) => ({ lastRun: lastRun || null, learn: learn || null, checkRuns: checkRuns || {} }))(loadJson(path.join(CENTRAL, 'state', name, 'scout.json'))),
+    checksOn: c.checks || null,
+    runs: loadJson(path.join(CENTRAL, 'state', name, 'scout-runs.json'), []),
+  }));
+  const running = scoutRunning();
+  return {
+    config: !!cfg, configPath: tilde(SCOUT_CFG), example: tilde(path.join(DASH_REPO, 'scripts', 'scout.example.json')),
+    script: tilde(SCOUT_SCRIPT), docs: tilde(path.join(DASH_REPO, 'docs', 'scout.md')),
+    installed: existsSync(SCOUT_PLIST), mac: process.platform === 'darwin',
+    notifier: ['/opt/homebrew/bin/terminal-notifier', '/usr/local/bin/terminal-notifier'].some((f) => existsSync(f)),
+    running: !!running, startedAt: (running || {}).startedAt || null,
+    current: running ? loadJson(path.join(CENTRAL, 'scout-current.json'), null) : null,
+    projects, logPath: tilde(SCOUT_LOG), log: logTail(SCOUT_LOG, 200),
+  };
+};
+// Unmute a check or one finding: the scout counts only what happens after this moment
+const scoutUnmute = (b) => {
+  if (!safeName(b.project) || !projByName(b.project)) return { ok: false, output: 'Unknown project.' };
+  const what = b.check ? 'check:' + String(b.check) : b.key ? 'key:' + String(b.key) : '';
+  if (!what || what.length > 300) return { ok: false, output: 'Say which check or finding to unmute.' };
+  const f = path.join(CENTRAL, 'state', b.project, 'scout.json'), st = loadJson(f, null);
+  if (!st) return { ok: false, output: 'The scout has not run for this project yet.' };
+  st.unmuted = { ...(st.unmuted || {}), [what]: new Date().toISOString() };
+  if (st.learn) {
+    if (b.check) delete (st.learn.mutedChecks || {})[b.check];
+    if (b.key) delete (st.learn.mutedKeys || {})[b.key];
+  }
+  writeFileSync(f, JSON.stringify(st, null, 2) + '\n');
+  return { ok: true };
+};
+// ▶ Run now: the same run as the 07:00 job, into the same log
+const scoutRun = () => {
+  if (scoutRunning()) return { ok: false, output: 'The scout is already running.' };
+  if (!existsSync(SCOUT_CFG)) return { ok: false, output: 'Set up ' + tilde(SCOUT_CFG) + ' first.' };
+  mkdirSync(path.dirname(SCOUT_LOG), { recursive: true });
+  const fd = openSync(SCOUT_LOG, 'a');
+  // its own process group: a dashboard restart does not stop the run, and scout.lock shows it again
+  const child = spawn(process.execPath, [SCOUT_SCRIPT], { env: ENV, stdio: ['ignore', fd, fd], detached: true });
+  child.unref();
+  closeSync(fd);
+  scoutChild = child;
+  const done = () => { if (scoutChild === child) scoutChild = null; };
+  child.on('exit', done);
+  child.on('error', done);
+  return { ok: true };
+};
 const unarchivePlan = (proj, slug) => {
   const src = path.join(proj.doneDir, slug + '.md');
   if (!existsSync(src)) return { ok: false, output: 'Archived plan not found.' };
@@ -1617,13 +1734,19 @@ const followVscodeCopy = (proj, slug, a) => {
   saveChat(proj, slug, a);
   return a;
 };
-// the sessions a plan's runs made; the chat's copies are its own and not listed
+// A confirmed scout proposal plans in a chat in the repo root (a.root), because it has no worktree
+// yet. Once a pipeline run makes the worktree, the plan's sessions are the worktree's again.
+const rootChat = (proj, slug, a) => !!a.root && !(proj.hasPipeline && existsSync(worktreeOf(proj, slug)));
+// the sessions a plan's runs made; the chat's copies are its own and not listed. A root chat shares
+// the repo root's transcript dir with every other session there, so only its own sessions (a.own) count.
 const planSessions = (proj, slug) => {
-  const wtPath = proj.hasPipeline ? worktreeOf(proj, slug) : proj.root;
+  const a = loadChat(proj, slug), root = rootChat(proj, slug, a);
+  const wtPath = proj.hasPipeline && !root ? worktreeOf(proj, slug) : proj.root;
   const transcriptDir = transcriptDirFor(wtPath);
-  const copies = new Set(loadChat(proj, slug).copies || []);
-  const sessions = sessionsIn(transcriptDir, proj.hasPipeline ? null : sessionIdsInLog(proj, slug))
-    .filter((s) => !copies.has(s.id));
+  const copies = new Set(a.copies || []);
+  const only = root ? new Set([...(proj.hasPipeline ? [] : sessionIdsInLog(proj, slug)), ...(a.own || [])])
+    : proj.hasPipeline ? null : sessionIdsInLog(proj, slug);
+  const sessions = sessionsIn(transcriptDir, only).filter((s) => !copies.has(s.id));
   return { wtPath, transcriptDir, sessions };
 };
 // headless runs ignore .claude/settings.json, so its allow rules travel on the command line
@@ -2004,6 +2127,8 @@ const chatOnLine = (ch, j) => {
       a.fork = false;
       ch.fork = false;
     } else if (a.current) a.current.id = j.session_id;
+    else if (a.root) a.current = { id: j.session_id, base: j.session_id, copy: false };
+    if (a.root) a.own = [...new Set([...(a.own || []), j.session_id])];
     saveChat(proj, slug, a);
     chatMetaSave(ch);
     chatEmitState(proj, slug);
@@ -2067,11 +2192,15 @@ const chatOnLine = (ch, j) => {
 };
 const chatStart = (proj, slug, b) => {
   const key = proj.name + '/' + slug;
+  let a = loadChat(proj, slug);
+  // the run made the worktree: the root chat's session stays in the repo root, so the chat moves on
+  if (a.root && !rootChat(proj, slug, a)) { a = { ...a, root: false, current: null, fork: false }; saveChat(proj, slug, a); }
   const { wtPath, sessions } = planSessions(proj, slug);
-  const a = followVscodeCopy(proj, slug, loadChat(proj, slug));
-  const id = a.current ? a.current.id : (sessions.at(-1) || {}).id;
-  if (!id) return { error: 'This plan has no Claude session to continue yet.' };
-  if (!a.current) a.current = { id, base: id, copy: false };
+  a = followVscodeCopy(proj, slug, a);
+  // a root chat with no session yet starts a new one; chatOnLine records its id
+  const id = a.current ? a.current.id : a.root ? null : (sessions.at(-1) || {}).id;
+  if (!id && !a.root) return { error: 'This plan has no Claude session to continue yet.' };
+  if (!a.current && id) a.current = { id, base: id, copy: false };
   const fork = !!a.fork;
   saveChat(proj, slug, a);
   const mode = CHAT_MODES.includes(b.mode) ? b.mode : 'default';
@@ -2082,7 +2211,7 @@ const chatStart = (proj, slug, b) => {
   const meta = { project: proj.name, slug, session: fork ? null : id, fork, mode, model: model || 'default' };
   const { child, metaFile } = chatRelayStart(key, meta, ['claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
     '--include-partial-messages', '--setting-sources', 'user,project,local', '--permission-prompt-tool', 'stdio', '--permission-mode', mode,
-    ...(model ? ['--model', model] : []), '--resume', id, ...(fork ? ['--fork-session'] : []),
+    ...(model ? ['--model', model] : []), ...(id ? ['--resume', id, ...(fork ? ['--fork-session'] : [])] : []),
     ...(rules.length ? ['--allowedTools', ...rules] : [])], wtPath);
   return chatAttach(proj, slug, child, { ...meta, metaFile, fresh: true });
 };
@@ -2383,6 +2512,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       return res.end(PAGE);
     }
+    if (url.pathname === '/api/scout' && req.method === 'GET') return json(res, 200, scoutStatus());
     if (url.pathname === '/api/state') {
       enqueueMissingSummaries();
       return json(res, 200, await fullState());
@@ -2533,6 +2663,8 @@ const server = http.createServer(async (req, res) => {
         if (!proj) return json(res, 400, { error: 'bad project' });
         return json(res, 200, { ok: true, target: openInVsCode(proj) });
       }
+      if (url.pathname === '/api/scout/run') return json(res, 200, scoutRun());
+      if (url.pathname === '/api/scout/unmute') return json(res, 200, scoutUnmute(b));
       if (!proj || !safeName(b.slug)) return json(res, 400, { error: 'bad request' });
       if (url.pathname === '/api/launch-generic')
         return json(res, 200, launchGeneric(proj, b.slug, +b.launcher || 0));
@@ -2558,6 +2690,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (url.pathname === '/api/archive') return json(res, 200, await archivePlan(proj, b.slug));
       if (url.pathname === '/api/unarchive') return json(res, 200, unarchivePlan(proj, b.slug));
+      if (url.pathname === '/api/scout/confirm') return json(res, 200, await scoutConfirm(proj, b.slug));
+      if (url.pathname === '/api/scout/dismiss') return json(res, 200, await scoutDismiss(proj, b.slug));
       if (url.pathname === '/api/vscode') return json(res, 200, { ok: true, target: openInVsCode(proj, b.slug) });
       if (url.pathname === '/api/chat/send') return json(res, 200, await chatMessage(proj, b.slug, b));
       if (url.pathname === '/api/chat/answer') return json(res, 200, chatAnswer(proj, b.slug, b));

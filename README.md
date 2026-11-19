@@ -51,6 +51,7 @@ To change your choices later, run `scripts/setup.sh` again. Every question it as
 ## What's inside
 
 - **Plans dashboard**: lists the plan files of your projects and runs them with Claude Code, several at once. [Guide](docs/plans-dashboard.md) · [Add a project](docs/add-project.md)
+- **Scout**: looks for work every morning (red CI, flaky tests, stuck PRs, security alerts, production errors, slow endpoints) and proposes it on the dashboard. You confirm before anything is planned. [Guide](docs/scout.md)
 - **`CLAUDE.md`**: global rules, loaded in every project.
 - **Skills**: each one is optional. A project skill with the same name wins over the global one.
 

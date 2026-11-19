@@ -150,6 +150,7 @@ Generic run state (pid, exit code, log) lives under `~/.claude/pipeline-dashboar
 | Column | A plan is here when (first match wins) |
 |---|---|
 | Done | its PR is merged, or the plan is archived |
+| Proposed | its status is `proposed`: the [scout](scout.md) found it, and **✓ Confirm** or **✕ Dismiss** waits for you |
 | Running | it starts, runs now, or was launched and is still in progress |
 | Failed | it did not start, or the run stopped blocked or failed |
 | Needs you | the run waits for your review, or the chat asks for a permission |

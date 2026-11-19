@@ -1,0 +1,18 @@
+{
+  "projects": {
+    "my-api": {
+      "base": "develop",
+      "checks": ["ci-red", "flaky", "stuck-prs", "security", "prod-errors", "slow-endpoints"],
+      "model": "sonnet",
+      "idleDays": 5,
+      "maxOpen": 15,
+      "aws": {
+        "profile": "my-api-scout",
+        "region": "eu-west-1",
+        "logGroups": ["/my-api/prod/api", "/my-api/prod/worker"],
+        "requestLogGroups": ["/my-api/prod/api"],
+        "slow": { "factor": 2, "floorMs": 500, "minRequests": 20 }
+      }
+    }
+  }
+}

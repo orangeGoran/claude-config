@@ -17,7 +17,7 @@ document.getElementById('themeBtn').addEventListener('click', () => {
 });
 // only what the dashboard cannot see by itself: validation rounds, a merged PR and archiving show on their own,
 // so an old saved "needs-validation" or "done" is not shown
-const STATUSES = ['in-refinement', 'ready', 'waiting-on-external', 'parked'];
+const STATUSES = ['proposed', 'in-refinement', 'ready', 'waiting-on-external', 'parked'];
 const TAG_SUGGESTIONS = ['small', 'big', 'db-migration', 'frontend-needed', 'ai', 'risky', 'tech-debt'];
 const BT = String.fromCharCode(96); // backtick, kept out of this template literal
 
@@ -613,7 +613,8 @@ async function renderDetail(loadPlan) {
   if (tab !== 'plan') return renderPrTab(p, tab, loadPlan);
   lastPrDraw = null;
   if (p.kind === 'wt') return renderWtDetail(p, loadPlan);
-  const launcherModes = !p.hasPipeline && !p.archived
+  // a proposal launches nothing until it is confirmed and planned
+  const launcherModes = p.status !== 'proposed' && !p.hasPipeline && !p.archived
     ? ((p.launchers || []).length ? `
     <div class="modes"><b>Launcher:</b>
       ${p.launchers.map((l, i) => '<label><input type="radio" name="m" value="' + i + '" ' +
@@ -623,7 +624,7 @@ async function renderDetail(loadPlan) {
     <div class="modes"><b>No launcher configured for ${esc(p.project)} yet.</b>
       <button id="editL" class="primary">⚙ Set up launcher</button></div>`)
     : '';
-  const pipelineModes = p.hasPipeline && !p.archived &&
+  const pipelineModes = p.status !== 'proposed' && p.hasPipeline && !p.archived &&
     ((!p.run && !p.live) || (!p.live && outOf(p) === 'failed')) ? `
     <div class="modes"><b>Where to stop:</b>
       ${(p.modes || []).map((m) => '<label><input type="radio" name="m" value="' + escA(m.id) + '" ' +
@@ -705,7 +706,11 @@ async function renderDetail(loadPlan) {
     if (p.pr && l.url.replace(/[/]+$/, '') === p.pr.url.replace(/[/]+$/, '')) continue;
     btn(l.label.replace(/^Ticket\s+(?=#)/i, ''), () => openRunLink(p, l.url), 'primary');
   }
-  if (stt === 'starting') {
+  if (p.status === 'proposed' && !p.archived && stt === 'fresh') {
+    btn('✓ Confirm: plan it', () => scoutAct(p, 'confirm'), 'primary');
+    btn('✕ Dismiss', () => scoutAct(p, 'dismiss'), 'danger');
+    btn('🖥 Open in VS Code', vsc, null, moreWrap);
+  } else if (stt === 'starting') {
     btn('⏳ Starting… setting up the worktree', () => {}).disabled = true;
   } else if (p.archived) {
     btn('↩ Unarchive plan', () => post('/api/unarchive', { project: p.project, slug: p.slug }, true));
@@ -3988,6 +3993,7 @@ let boardF = { project: '', tag: '', archived: false };
 try { boardF = { ...boardF, ...JSON.parse(localStorage.getItem('dash-board-f') || '{}') }; } catch {}
 const saveBoardF = () => { try { localStorage.setItem('dash-board-f', JSON.stringify(boardF)); } catch {} };
 const BOARD_COLS = [
+  ['proposed', 'Proposed', 'Found by the scout (scripts/scout.mjs). Confirm starts /skill-1-plan in a new chat; Dismiss archives it.'],
   ['backlog', 'Backlog', 'Not ready yet: no validation round, or its status says in refinement, waiting or parked.'],
   ['ready', 'Ready', 'Validated and not started. Tick queue, then ▶ Launch queued.'],
   ['running', 'Running', 'Starting, running now, or launched and still in progress.'],
@@ -3996,12 +4002,13 @@ const BOARD_COLS = [
   ['done', 'Done', 'PR merged or plan archived in the last 14 days. Tick archived for older ones.'],
 ];
 const DONE_MAX = 40, DAY = 864e5, RECENT = 14 * DAY;
-const NOT_READY = new Set(['in-refinement', 'waiting-on-external', 'parked']);
+const NOT_READY = new Set(['proposed', 'in-refinement', 'waiting-on-external', 'parked']);
 // the date a plan file name starts with (20261116-150648-…), or null
 const slugDate = (slug) => { const m = /^(\d{4})(\d{2})(\d{2})-/.exec(slug); return m ? new Date(+m[1], m[2] - 1, +m[3]) : null; };
 const doneAt = (p) => (p.pr && p.pr.mergedAt && Date.parse(p.pr.mergedAt)) || (slugDate(p.slug) || 0).valueOf();
 // first match wins: a merged plan is done even if its old run report still says "waiting on you"
 const boardCol = (p) => p.archived || (p.pr && p.pr.state === 'MERGED') ? 'done'
+  : p.status === 'proposed' && !p.live && !starting(p) && !p.run ? 'proposed'
   : p.live || starting(p) || outOf(p) === 'running' ? 'running'
   : notStarted(p) || outOf(p) === 'failed' ? 'failed'
   : outOf(p) === 'needs-you' || p.chatWaits ? 'needs'
@@ -4044,6 +4051,9 @@ const boardCard = (p, col) => {
     '<div class="chiprow">' + own + unval + p.tags.map((t) => '<span class="chip">' + esc(t) + '</span>').join('') + autoChips(p) + '</div>' +
     (col === 'ready' ? '<div class="bcacts"><label title="' + (noQueue ? 'It has a worktree or runs already' : 'Queue it for ▶ Launch queued') +
       '"><input type="checkbox" data-bq="' + escA(p.key) + '"' + (picked.has(p.key) ? ' checked' : '') + (noQueue ? ' disabled' : '') + '> queue</label></div>' : '') +
+    (col === 'proposed' ? '<div class="bcacts"><button class="mini primary" data-sc="confirm" data-k="' + escA(p.key) +
+      '" title="Start /skill-1-plan in a new chat that turns this proposal into a plan">✓ Confirm</button>' +
+      '<button class="mini" data-sc="dismiss" data-k="' + escA(p.key) + '" title="Archive it. The scout proposes it again only if it gets 2× worse.">✕ Dismiss</button></div>' : '') +
     '</article>';
 };
 function renderBoard() {
@@ -4083,7 +4093,7 @@ function renderBoard() {
     const all = cols[id], shown = id === 'done' ? all.slice(0, DONE_MAX) : all;
     return '<div class="bcol ' + id + '" data-col="' + id + '"><div class="bchead" title="' + escA(why) + '">' + name +
       ' <span class="n">' + all.length + '</span></div><div class="bclist">' +
-      (shown.length ? shown.map((p) => boardCard(p, id)).join('') : '<div class="bcempty">' + (id === 'needs' ? 'Nothing waits for you.' : 'None') + '</div>') +
+      (shown.length ? shown.map((p) => boardCard(p, id)).join('') : '<div class="bcempty">' + (id === 'needs' ? 'Nothing waits for you.' : id === 'proposed' ? 'No proposals.' : 'None') + '</div>') +
       (all.length > shown.length ? '<div class="bcempty">+ ' + (all.length - shown.length) + ' older. Search to find them.</div>' : '') +
       '</div></div>';
   }).join('');
@@ -4115,11 +4125,222 @@ function renderBoard() {
       if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); openFromBoard(el.dataset.go); }
     });
   });
+  b.querySelectorAll('[data-sc]').forEach((el) => el.addEventListener('click', () => {
+    const p = find(el.dataset.k);
+    if (p) scoutAct(p, el.dataset.sc);
+  }));
   b.querySelectorAll('[data-bq]').forEach((el) => el.addEventListener('change', () => {
     el.checked ? picked.add(el.dataset.bq) : picked.delete(el.dataset.bq);
     renderBar(); renderList(); renderBoard();
   }));
 }
+// a scout proposal: Confirm starts /skill-1-plan in a new chat in the repo root and opens that chat;
+// Dismiss archives the proposal, and the scout remembers it
+async function scoutAct(p, act) {
+  const r = await post('/api/scout/' + act, { project: p.project, slug: p.slug });
+  if (!r.ok) return;
+  if (act === 'confirm') {
+    if (boardOn) openFromBoard(p.key);
+    else { selected = p.key; renderList(); renderDetail(true); }
+    toggleChat(true);
+  } else if (selected === p.key) selected = null;
+  refresh();
+}
+// --- 🔭 Scout drawer: the setup steps this Mac still needs, each project's last run, the log, ▶ Run now.
+// The header button shows ○ while a step is missing and ⚠ when the last run had a failed check.
+const SCOUT_TITLE = '🔭 scout';
+const scoutHealth = (s) => !s.config || (s.mac && !s.installed) || s.projects.some((p) => !p.registered || (p.aws && !p.aws.ok)) ? 'off'
+  : s.projects.some((p) => p.lastRun && p.lastRun.warnings && p.lastRun.warnings.length) ? 'warn' : 'ok';
+function paintScoutBtn(s) {
+  const h = scoutHealth(s), b = byId('scoutBtn');
+  b.textContent = '🔭 Scout' + (h === 'off' ? ' ○' : h === 'warn' ? ' ⚠' : '');
+  b.title = h === 'off' ? 'The scout is not fully set up on this Mac: open it for the steps'
+    : h === 'warn' ? 'A check failed in the last scout run: open it for the log' : 'The scout: last runs, log and setup';
+}
+const scoutPeek = () => fetch('/api/scout').then((r) => r.json()).then(paintScoutBtn).catch(() => {});
+function openScout() {
+  closeLog(); setBack(null);
+  byId('logtitle').textContent = SCOUT_TITLE;
+  byId('logpane').classList.add('open');
+  byId('logbody').innerHTML = '<div class="setup">loading…</div>';
+  renderScout();
+}
+let scoutWasRunning = false;
+let scoutPick = null, scoutPage = 0;   // the run shown (project + at; null = the newest) and the history page
+const SC_PAGE = 8;
+const scClock = (sec) => Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+const nextSeven = () => {
+  const d = new Date(); d.setHours(7, 0, 0, 0);
+  if (d <= new Date()) d.setDate(d.getDate() + 1);
+  return (d.getDate() === new Date().getDate() ? 'today' : 'tomorrow') + ' 07:00';
+};
+// the Board, filtered to one tag: a check name ("security"), or "scout" for every proposal
+// Not saved: the link filters this visit only, and a reload brings back the filters you set yourself.
+function boardWithTag(tag) {
+  boardF.project = ''; boardF.tag = tag;
+  closeLog(); openBoard();
+}
+// one run of one project as a card: its steps, the proposals it wrote, what resolved itself, what waits
+function scoutRunCard(r, live) {
+  const openLink = (slug, title) => find(r.project + '/' + slug)
+    ? '<a href="#" data-sopen="' + escA(r.project + '/' + slug) + '">' + esc(title) + '</a>' : '<span>' + esc(title) + '</span>';
+  let h = '<div class="sc-card"><div class="sc-head"><b>' + esc(r.project) + '</b><span class="dim">' +
+    (live ? 'running now' : esc(new Date(r.at).toLocaleString()) + (r.seconds != null ? ' · ' + r.seconds + ' s' : '')) + '</span></div>';
+  if (!live && r.summary) h += '<div class="sc-sum">' + (r.made && r.made.length
+    ? '<a href="#" data-stag="scout">' + esc(r.summary) + ' →</a>' : esc(r.summary)) + '</div>';
+  h += '<ol class="sc-steps">';
+  for (const x of r.steps || []) {
+    const st = !x.secs ? 'now' : x.failed ? 'bad' : 'ok';
+    const tag = (x.tags || []).length === 1 ? x.tags[0] : 'scout';
+    h += '<li class="' + st + '" data-stag="' + escA(tag) + '" title="Open the Board with the proposals of this check">' +
+      '<span class="sc-ic">' + (st === 'now' ? '<span class="sc-spin"></span>' : st === 'bad' ? '⚠' : '✓') + '</span>' +
+      '<div class="sc-body"><div class="sc-what">' + esc(x.what) + '<span class="sc-secs">' + esc(x.secs || '') + '</span></div>' +
+      (x.result ? '<div class="sc-res">' + esc(x.result) + '</div>' : '') +
+      (x.why ? '<div class="sc-why">' + esc(x.why) + '</div>' : '') +
+      ((x.made || []).length ? '<ul class="sc-made">' + x.made.map((m) => '<li>' + openLink(m.slug, m.title) + '<span class="sc-secs">' + esc(m.secs || '') + '</span></li>').join('') + '</ul>' : '') +
+      '</div></li>';
+  }
+  h += '</ol>';
+  const fold = (cls, label, list, line) => list && list.length ? '<details class="sc-skip ' + cls + '"><summary>' + label + '</summary><ul>' + list.map(line).join('') + '</ul></details>' : '';
+  h += fold('res', '✓ ' + (r.resolved || []).length + ' proposal(s) resolved on their own, archived', r.resolved, (k) => '<li>' + openLink(k.slug, k.title) + '</li>');
+  h += fold('', '⏸ ' + (r.held || []).length + ' finding(s) wait for room: too many proposals wait for you', r.held, (k) => '<li>' + esc(k.title) + '</li>');
+  h += fold('', '🔇 ' + (r.muted || []).length + ' finding(s) muted', r.muted, (k) => '<li>' + esc(k.title) + ' <span class="dim">— ' + esc(k.why) + '</span></li>');
+  h += fold('', (r.skipped || []).length + ' finding(s) already proposed', r.skipped, (k) => '<li>' + esc(k.title) + ' <span class="dim">— ' + esc(k.why.replace(/ as \S+$/, '')) + '</span></li>');
+  return h + '</div>';
+}
+async function renderScout() {
+  const showing = () => byId('logpane').classList.contains('open') && byId('logtitle').textContent === SCOUT_TITLE;
+  if (!showing()) return;
+  const s = await (await fetch('/api/scout')).json();
+  if (!showing()) return;
+  paintScoutBtn(s);
+  // a project whose runs predate the run records (scout-runs.json) still has its lastRun
+  const runs = s.projects.flatMap((p) => (p.runs && p.runs.length ? p.runs : p.lastRun ? [{ ...p.lastRun, project: p.name, steps: [],
+    summary: p.lastRun.findings + ' finding(s), ' + p.lastRun.proposed + ' new proposal(s)' }] : [])).sort((x, y) => y.at.localeCompare(x.at));
+  const last = runs[0];
+
+  // 1. status
+  let h = '<div class="setup sc">';
+  if (s.running) {
+    const took = s.startedAt ? Math.max(0, Math.round((Date.now() - Date.parse(s.startedAt)) / 1000)) : null;
+    const cur = ((s.current && s.current.projects) || []).flatMap((p) => p.steps || []).filter((x) => !x.secs).pop();
+    h += '<div class="sc-card sc-status run"><div class="sc-big"><span class="sc-spin"></span>Running' + (took != null ? ' <span class="sc-time">' + scClock(took) + '</span>' : '') + '</div>' +
+      '<div class="sc-sub">' + esc(cur ? cur.what + '…' : 'starting…') + ' You can close this panel: the run goes on.</div></div>';
+  } else {
+    const warns = last && last.warnings && last.warnings.length;
+    const waiting = plans.filter((p) => p.status === 'proposed' && !p.archived).length;
+    h += '<div class="sc-card sc-status' + (warns ? ' warn' : '') + '"><div class="sc-row"><div>' +
+      (last ? '<div class="sc-big">' + (warns ? '⚠ ' + last.warnings.length + ' check(s) failed' : '✓ Last run ok') + '</div>' +
+        '<div class="sc-sub">' + esc(new Date(last.at).toLocaleString()) + ' · ' + esc(last.summary) + (s.installed ? ' · next ' + nextSeven() : '') + '</div>'
+        : '<div class="sc-big">No run yet</div><div class="sc-sub">' + (s.installed ? 'First run ' + nextSeven() + ', or now.' : 'Finish the setup below, then run it.') + '</div>') +
+      (waiting ? '<div class="sc-sub"><a href="#" data-stag="scout">' + waiting + ' proposal(s) wait for you on the Board →</a></div>' : '') +
+      '</div><button class="primary" id="scoutRun"' + (!s.config ? ' disabled' : '') + '>▶ Run now</button></div></div>';
+  }
+
+  // 2. the run: the live one, the picked one, or the newest of each project
+  if (s.running && s.current) for (const r of s.current.projects) h += scoutRunCard(r, true);
+  else {
+    const pick = scoutPick && runs.find((r) => r.project + '@' + r.at === scoutPick);
+    for (const r of pick ? [pick] : s.projects.map((p) => runs.find((r) => r.project === p.name)).filter(Boolean)) h += scoutRunCard(r, false);
+  }
+
+  // 3. what the scout learned: per check, what it found and what you did with its proposals
+  const NAMES = { 'ci-red': 'Red CI', flaky: 'Flaky tests', 'stuck-prs': 'Stuck PRs', security: 'Security alerts', 'prod-errors': 'Production errors', 'slow-endpoints': 'Slow endpoints' };
+  for (const p of s.projects) {
+    const L = p.learn || { mutedChecks: {}, mutedKeys: {}, stats: {} }, runsBy = p.checkRuns || {};
+    const checks = (p.checksOn || Object.keys(NAMES)).filter((c) => NAMES[c]);
+    if (!Object.keys(runsBy).length && !Object.keys(L.stats || {}).length) continue;
+    h += '<div class="sc-card"><div class="sc-head"><b>Checks' + (s.projects.length > 1 ? ' · ' + esc(p.name) : '') + '</b>' +
+      '<span class="dim">what each check found, and what you did with its proposals</span></div><table class="sc-hist sc-checks"><thead><tr>' +
+      '<th>Check</th><th title="Runs without a failure">Runs</th><th>Found</th><th>Proposed</th><th title="Confirmed">✓</th><th title="Dismissed">✕</th><th title="Resolved on its own">↻</th><th></th></tr></thead><tbody>' +
+      checks.map((c) => {
+        const r = runsBy[c] || { runs: 0, found: 0, quiet: 0 }, st = (L.stats || {})[c] || {}, muted = (L.mutedChecks || {})[c];
+        const note = muted ? '<span class="sc-mute" title="' + escA(muted) + '">🔇 muted</span> <button class="mini" data-sunmute="check" data-p="' + escA(p.name) + '" data-v="' + escA(c) + '">Unmute</button>'
+          : r.quiet >= 14 ? '<span class="dim" title="It still runs: a green check costs almost nothing">0 found in ' + r.quiet + ' runs</span>' : '';
+        return '<tr' + (muted ? ' class="muted"' : '') + '><td data-stag="' + escA(c) + '" title="Open the Board with this check\u2019s proposals">' + esc(NAMES[c]) + '</td><td>' + r.runs + '</td><td>' + r.found + '</td><td>' + (st.proposed || 0) + '</td>' +
+          '<td>' + (st.confirmed || 0) + '</td><td>' + (st.dismissed || 0) + '</td><td>' + (st.resolved || 0) + '</td><td>' + note + '</td></tr>';
+      }).join('') + '</tbody></table>';
+    const keys = Object.entries(L.mutedKeys || {});
+    if (keys.length) h += '<div class="sc-mkeys"><b>🔇 Muted findings</b><ul>' + keys.map(([k, v]) => '<li><span>' + esc(v.title) + ' <span class="dim">— ' + esc(v.why) + '</span></span>' +
+      '<button class="mini" data-sunmute="key" data-p="' + escA(p.name) + '" data-v="' + escA(k) + '">Unmute</button></li>').join('') + '</ul></div>';
+    h += '<p class="hint">A check is muted after you dismiss its last 5 proposals in a row; a finding after 3 proposals with no confirm. It still runs and counts. A confirm, or a proposal that resolves on its own, breaks the row.</p></div>';
+  }
+
+  // 4. earlier runs, a page at a time
+  if (runs.length > 1) {
+    const pages = Math.ceil(runs.length / SC_PAGE);
+    scoutPage = Math.min(scoutPage, pages - 1);
+    const shown = scoutPick || (runs[0].project + '@' + runs[0].at);
+    h += '<div class="sc-card"><div class="sc-head"><b>Runs</b><span class="dim">' + runs.length + ' kept</span></div><table class="sc-hist">' +
+      runs.slice(scoutPage * SC_PAGE, (scoutPage + 1) * SC_PAGE).map((r) => {
+        const id = r.project + '@' + r.at;
+        return '<tr data-srun="' + escA(id) + '"' + (id === shown ? ' class="on"' : '') + '><td>' + esc(new Date(r.at).toLocaleString()) + '</td>' +
+          (s.projects.length > 1 ? '<td>' + esc(r.project) + '</td>' : '') +
+          '<td>' + (r.made || []).length + ' new</td><td>' + (r.resolved || []).length + ' resolved</td>' +
+          '<td>' + ((r.warnings || []).length ? '<span class="bad">⚠ ' + r.warnings.length + '</span>' : '<span class="okc">✓</span>') + '</td></tr>';
+      }).join('') + '</table>' +
+      (pages > 1 ? '<div class="sc-pager"><button class="mini" data-spage="-1"' + (scoutPage ? '' : ' disabled') + '>‹ Newer</button><span class="dim">' +
+        (scoutPage + 1) + ' / ' + pages + '</span><button class="mini" data-spage="1"' + (scoutPage < pages - 1 ? '' : ' disabled') + '>Older ›</button></div>' : '') + '</div>';
+  }
+
+  // 4. setup: one line when every step is done
+  const steps = [];
+  const step = (ok, text, cmd, note) => steps.push({ ok, html: '<div class="sstep ' + (ok ? 'ok' : 'todo') + '"><span>' + (ok ? '✓' : '○') + '</span><div>' + text +
+    (!ok && cmd ? '<div class="scmd"><code>' + esc(cmd) + '</code><button class="mini" data-scopy="' + escA(cmd) + '">Copy</button></div>' : '') +
+    (!ok && note ? '<div class="hint">' + note + '</div>' : '') + '</div></div>' });
+  step(s.config, 'Config file <code>' + esc(s.configPath) + '</code>', 'cp ' + s.example + ' ' + s.configPath, 'Then edit it: one entry per project, keyed by its dashboard name.');
+  for (const p of s.projects) {
+    step(p.registered, '<b>' + esc(p.name) + '</b> is on the dashboard', '', 'Add it in ⚙ settings, with the same name as in the config.');
+    if (p.aws) step(p.aws.ok, '<b>' + esc(p.name) + '</b>: AWS profile <code>' + esc(p.aws.profile) + '</code>', 'aws configure --profile ' + p.aws.profile,
+      'Paste the access key of the read-only scout user (guide → Read-only AWS access). Never a root or admin profile.');
+  }
+  if (s.mac) step(s.installed, 'Daily job at 07:00 (launchd)', 'node ' + s.script + ' --install');
+  if (s.mac) step(s.notifier, 'Notifications open this page when clicked (optional)', 'brew install terminal-notifier', 'Without it, a click on a scout notification opens Script Editor.');
+  const missing = steps.filter((x) => !x.ok).length;
+  h += '<details class="sc-card sc-fold"' + (missing ? ' open' : '') + '><summary>' + (missing ? '○ Setup: ' + missing + ' step(s) left' : '✓ Setup on this Mac: all ' + steps.length + ' steps done') + '</summary>' +
+    steps.map((x) => x.html).join('') + '<p class="hint">Guide: <code>' + esc(s.docs) + '</code></p></details>';
+
+  // 5. the raw log, for reading by hand
+  h += '<details class="sc-card sc-fold" id="scoutRaw"' + (scoutRawOpen ? ' open' : '') + '><summary>Raw log <span class="dim">' + esc(s.logPath) + ' · last 200 lines</span></summary>' +
+    '<pre class="slog" id="scoutLog" tabindex="0" aria-label="Scout log">' + esc(s.log || 'No runs yet.') + '</pre></details></div>';
+
+  const body = byId('logbody');
+  const top = body.scrollTop;
+  body.innerHTML = h;
+  body.scrollTop = top;
+  const lg = byId('scoutLog'); lg.scrollTop = lg.scrollHeight;
+  byId('scoutRaw').addEventListener('toggle', (e) => { scoutRawOpen = e.target.open; });
+  body.querySelectorAll('[data-scopy]').forEach((b) => b.addEventListener('click', async () => {
+    const ok = await copyText(b.dataset.scopy);
+    b.textContent = ok ? 'Copied' : 'Copy failed';
+    setTimeout(() => { b.textContent = 'Copy'; }, 1500);
+  }));
+  body.querySelectorAll('[data-sopen]').forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    closeLog();
+    if (boardOn) openFromBoard(a.dataset.sopen);
+    else { selected = a.dataset.sopen; renderList(); renderDetail(true); }
+  }));
+  body.querySelectorAll('[data-stag]').forEach((el) => el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-sopen]')) return;
+    e.preventDefault(); boardWithTag(el.dataset.stag);
+  }));
+  body.querySelectorAll('[data-sunmute]').forEach((el) => el.addEventListener('click', async () => {
+    const r = await post('/api/scout/unmute', { project: el.dataset.p, [el.dataset.sunmute]: el.dataset.v });
+    if (r.ok) renderScout();
+  }));
+  body.querySelectorAll('[data-srun]').forEach((el) => el.addEventListener('click', () => { scoutPick = el.dataset.srun; renderScout(); }));
+  body.querySelectorAll('[data-spage]').forEach((el) => el.addEventListener('click', () => { scoutPage += +el.dataset.spage; renderScout(); }));
+  byId('scoutRun')?.addEventListener('click', async () => { const r = await post('/api/scout/run', {}); if (r.ok) { scoutPick = null; renderScout(); } });
+  // while it runs, follow it; when it ends, the new proposals come onto the board
+  if (s.running) setTimeout(renderScout, 1500);
+  else if (scoutWasRunning) refresh();
+  scoutWasRunning = s.running;
+}
+let scoutRawOpen = false;
+byId('scoutBtn').addEventListener('click', () => (byId('logpane').classList.contains('open') && byId('logtitle').textContent === SCOUT_TITLE ? closeLog() : openScout()));
+scoutPeek();
+setInterval(scoutPeek, 60000);
 byId('boardBtn').addEventListener('click', () => boardOn ? leaveBoard() : openBoard());
 byId('bpClose').addEventListener('click', () => goHome());
 readUrl();
@@ -4133,6 +4354,11 @@ setInterval(() => {
   lastTick = Date.now(); refresh();
 }, 1000);
 if (new URLSearchParams(location.search).get('settings')) openSettings();
+// a click on a scout notification; after the first paint, so the drawer knows the plans
+if (new URLSearchParams(location.search).get('scout')) {
+  const scoutWhenPainted = () => (firstPaint ? openScout() : setTimeout(scoutWhenPainted, 200));
+  scoutWhenPainted();
+}
 if (new URLSearchParams(location.search).get('tour')) {
   const tourWhenPainted = () => (firstPaint ? startTour() : setTimeout(tourWhenPainted, 200));
   tourWhenPainted();

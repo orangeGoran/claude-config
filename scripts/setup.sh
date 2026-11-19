@@ -69,6 +69,15 @@ if [ "${PICKED[1]}" = 1 ]; then
   # setup-macos.sh asked for the domain if we didn't pass one; read back what it served
   url="$(sed -n 's/^\([^ {]*\) {.*/https:\/\/\1/p' "$HOME/.claude/pipeline-dashboard/caddy-site.caddy" 2>/dev/null | head -1)"
   url="${url:-https://${DOMAIN:-plans.test}}"
+  # the scout's config and AWS keys stay on each Mac (not in this repo): install its daily job only
+  # when this Mac has a config; otherwise the 🔭 Scout drawer lists the steps
+  if [ -f "$HOME/.claude/scout.json" ]; then
+    ans=y
+    [ "$YES" = 1 ] || read -r -p "Run the scout every day at 07:00 (~/.claude/scout.json found)? [Y/n] " ans
+    case "${ans:-y}" in [Nn]*) ;; *) node "$HERE/scout.mjs" --install ;; esac
+  else
+    printf '\nScout: not set up on this Mac. The 🔭 Scout button on the dashboard lists the steps (docs/scout.md).\n'
+  fi
   printf '\nDone. Opening %s — the guide there helps you add your repos.\n' "$url"
   open "$url" 2>/dev/null || true
 else

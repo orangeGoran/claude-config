@@ -148,7 +148,7 @@ const start = async () => {
   const child = spawn(process.execPath, [SCRIPT], {
     env: { ...process.env, HOME: home, DASH_PORT: String(port), DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1',
            QA_REPORTS_PORT: String(qaPort), QA_HOME: '', CLAUDE_TMP: path.join(tmp, 'claude-tmp'),
-           PATH: path.join(ghDir, 'bin') + ':' + process.env.PATH, FAKE_GH_DIR: ghDir },
+           PATH: path.join(ghDir, 'bin') + ':' + process.env.PATH, FAKE_GH_DIR: ghDir, SCOUT_NO_NOTIFY: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let err = '';
@@ -1224,4 +1224,92 @@ test("a plan that names its branch shows that branch's PR, and its worktree leav
     // the local-changes view finds the worktree through the plan's branch
     assert.equal((await (await get('/api/local?project=branchdemo&slug=20261109-120000-feat-x')).json()).none, true);
   } finally { writeFileSync(reg, was); }
+});
+
+test('a scout proposal: Confirm starts /skill-1-plan in a new chat in the repo root, Dismiss archives it', async () => {
+  const until = async (fn, what) => {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) { const v = await fn(); if (v) return v; await sleep(100); }
+    assert.fail('timed out waiting for ' + what);
+  };
+  const log = path.join(ghDir, 'claude-calls.log');
+  const calls = () => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];
+  const before = calls().length;
+  for (const s of ['20261120-070000-scout-ci-red-fix-ci', '20261120-070001-scout-flaky-e2e']) {
+    writeFileSync(path.join(plansDir, s + '.md'), '# Scout: ' + s + '\n\n## Summary\n\nCI is red.\n');
+    assert.deepEqual(await post('/api/meta', { project: 'demo', slug: s, status: 'proposed', tags: ['scout'] }), { ok: true });
+  }
+  const plan = async (s) => (await state())[0].plans.find((p) => p.slug === s);
+  try {
+    // only a proposal can be confirmed
+    assert.equal((await post('/api/scout/confirm', { project: 'demo', slug: 'demo-plan' })).ok, false);
+
+    const a = '20261120-070000-scout-ci-red-fix-ci';
+    assert.deepEqual(await post('/api/scout/confirm', { project: 'demo', slug: a }), { ok: true });
+    const start = await until(() => calls().slice(before).find((l) => l.startsWith('-p ') && l.includes('--input-format')), 'the chat to start');
+    assert.doesNotMatch(start, /--resume/, 'a new session, not one of the repo root');
+    const chat = await until(async () => { const c = await (await get('/api/chat?project=demo&slug=' + a)).json(); return c.current && c; }, 'the session id');
+    assert.equal(chat.current.id, 'ses-probe');
+    const p = await plan(a);
+    assert.equal(p.status, null, 'the proposal leaves the Proposed column');
+    assert.equal(p.asked, true, 'the plan has a chat now');
+    const sent = JSON.parse(readFileSync(path.join(home, '.claude', 'pipeline-dashboard', 'state', 'demo', 'ask', a + '.json'), 'utf8'));
+    assert.equal(sent.root, true);
+    assert.deepEqual(sent.own, ['ses-probe']);
+    await post('/api/chat/stop', { project: 'demo', slug: a });
+
+    const b = '20261120-070001-scout-flaky-e2e';
+    assert.deepEqual(await post('/api/scout/dismiss', { project: 'demo', slug: b }), { ok: true });
+    assert.equal(existsSync(path.join(plansDir, 'done', b + '.md')), true);
+    assert.equal((await plan(b)).status, 'dismissed');
+    assert.equal((await post('/api/scout/dismiss', { project: 'demo', slug: b })).ok, false, 'twice is refused');
+  } finally {
+    for (const f of [path.join(plansDir, '20261120-070000-scout-ci-red-fix-ci.md'), path.join(plansDir, 'done', '20261120-070001-scout-flaky-e2e.md')])
+      rmSync(f, { force: true });
+  }
+});
+
+test('the Scout drawer lists the missing setup steps, runs the scout and shows its last run and log', async () => {
+  const scoutState = async () => (await get('/api/scout')).json();
+  let s = await scoutState();
+  assert.equal(s.config, false);
+  assert.equal(s.installed, false);
+  assert.equal((await post('/api/scout/run', {})).ok, false, 'no config, no run');
+
+  writeFileSync(path.join(home, '.claude', 'scout.json'), JSON.stringify({ projects: {
+    demo: { base: 'main', checks: ['stuck-prs'], aws: { profile: 'demo-scout', region: 'eu-west-1', logGroups: ['/x'] } },
+    ghost: { checks: ['stuck-prs'] } } }));
+  s = await scoutState();
+  assert.equal(s.config, true);
+  assert.deepEqual(s.projects.map((p) => [p.name, p.registered, p.aws && p.aws.ok]), [['demo', true, false], ['ghost', false, null]]);
+  mkdirSync(path.join(home, '.aws'), { recursive: true });
+  writeFileSync(path.join(home, '.aws', 'config'), '[profile demo-scout]\nregion = eu-west-1\n');
+  assert.equal((await scoutState()).projects[0].aws.ok, true, 'the profile is found by name, no key is read');
+
+  // a run of the one project on the dashboard: its failed check shows in the log and in the last run
+  writeFileSync(path.join(home, '.claude', 'scout.json'), JSON.stringify({ projects: { demo: { base: 'main', checks: ['stuck-prs'] } } }));
+  assert.equal((await post('/api/scout/run', {})).ok, true);
+  const deadline = Date.now() + 20000;
+  do { await sleep(200); s = await scoutState(); } while (Date.now() < deadline && s.running);
+  assert.equal(s.running, false);
+  assert.match(s.log, /demo: 0 finding\(s\), 0 new proposal\(s\)/);
+  assert.ok(s.projects[0].lastRun, 'the last run is shown');
+  assert.match(s.projects[0].lastRun.warnings.join(' '), /gh pr list/, 'the fake gh answers no JSON, so the check is reported as failed');
+});
+
+test('Unmute lets the scout count a muted check or finding again from now', async () => {
+  const f = path.join(home, '.claude', 'pipeline-dashboard', 'state', 'demo', 'scout.json');
+  writeFileSync(f, JSON.stringify({ findings: {}, learn: { mutedChecks: { 'stuck-prs': 'you dismissed its last 5 proposals' },
+    mutedKeys: { 'ci-red:CI': { title: 'Fix CI', why: 'proposed 3 times, never confirmed' } }, stats: {} }, checkRuns: { 'stuck-prs': { runs: 9, found: 9, quiet: 0 } } }));
+  let s = await (await get('/api/scout')).json();
+  assert.ok(s.projects.find((p) => p.name === 'demo').learn.mutedChecks['stuck-prs']);
+  assert.deepEqual(await post('/api/scout/unmute', { project: 'demo', check: 'stuck-prs' }), { ok: true });
+  assert.deepEqual(await post('/api/scout/unmute', { project: 'demo', key: 'ci-red:CI' }), { ok: true });
+  assert.equal((await post('/api/scout/unmute', { project: 'nope', check: 'x' })).ok, false);
+  const st = JSON.parse(readFileSync(f, 'utf8'));
+  assert.deepEqual(Object.keys(st.unmuted).sort(), ['check:stuck-prs', 'key:ci-red:CI']);
+  assert.deepEqual(st.learn.mutedChecks, {});
+  assert.deepEqual(st.learn.mutedKeys, {});
+  s = await (await get('/api/scout')).json();
+  assert.equal(s.projects.find((p) => p.name === 'demo').checkRuns['stuck-prs'].runs, 9);
 });

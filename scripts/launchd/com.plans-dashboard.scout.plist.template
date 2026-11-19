@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template, not usable as-is. `node scripts/scout.mjs --install` fills in the placeholders and
+  installs the result (see docs/scout.md).
+
+  Runs the scout every day at 07:00. When the Mac sleeps at 07:00, launchd runs it once when the
+  Mac wakes.
+
+  __NODE__    absolute path to the node binary
+  __SCRIPT__  absolute path to scout.mjs
+  __LOG__     absolute path to the log file
+  __PATH__    the PATH of the shell that ran install: launchd has no PATH of its own, and the
+              scout calls gh, aws and claude
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.plans-dashboard.scout</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>__SCRIPT__</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__PATH__</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__LOG__</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG__</string>
+</dict>
+</plist>
