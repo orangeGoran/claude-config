@@ -117,6 +117,7 @@ The dashboard's "⚡ All" refuses until every registered project has this script
 | `pipeline.preflight[]` | list | no | Bare commands every run needs (for example `pnpm theme:generate`, a generator whose output is gitignored). Each gets an allow rule, and the launch preflight runs each once in the new worktree |
 | `registry.browserTestProject` | string | no | The browser-usability-test profile name (safe name). Default `project.name`. Set it when the repo already has a profile under another name (`~/.claude/browser-usability-test/projects/<name>/`): `BROWSER_TEST_PROJECT` in `auto-pipeline.sh` and the `register.mjs` profile commands use it |
 | `registry.{dashboard,color,browserTest,role,appUrl}` | mixed | no | Registrations. `browserTest: true` with a role other than `backend` and an `appUrl` (the app the owner runs, the "old code" side) also turns on the browser-test step (`skill-1-plan` section, `skill-3-test` Step 2.5), the ship gate (`skill-5-ship` Step 5.5), the run allow rules for the skill's scripts by full path (`$HOME`, expanded by bash) and `curl -s -o /dev/null -w *`, and the profile check of the launch preflight. Without `appUrl` all of it stays off |
+| `renderHash` | string | no | Written by `render.mjs --apply`, never by hand: a fingerprint of the template output for these answers. The plans dashboard compares it with `render.mjs --status` and shows "bootstrap update" when the templates or the answers changed since the last apply. Missing = the dashboard counts the files that differ instead |
 
 ## Template syntax
 

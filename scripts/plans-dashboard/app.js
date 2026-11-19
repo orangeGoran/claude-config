@@ -500,7 +500,13 @@ function renderList() {
         '<button class="pbtn" data-vscode="' + esc(pr) + '" title="Open ' + escA(sp.root) +
           ' in VS Code" aria-label="Open in VS Code">🖥</button>' + runBadges +
         (sp.setupLevel === 'red' ? '<span class="chip bad x" data-guide="' + escA(sp.root) +
-          '" title="something required is missing — see what and how to fix it">needs setup</span>' : '') +
+          '" title="something required is missing — see what and how to fix it">needs setup</span>'
+          : sp.bootstrap ? '<span class="chip warn x" data-guide="' + escA(sp.root) + '" title="' +
+            (sp.bootstrap === 'missing' ? 'never set up with /bootstrap-project'
+              : sp.bootstrap === 'error' ? 'render.mjs could not check .claude/bootstrap.json'
+              : 'the bootstrap-project templates changed since the last apply — run /bootstrap-project --upgrade') +
+            ' — click for the prompt">' + (sp.bootstrap === 'missing' ? 'needs bootstrap'
+              : sp.bootstrap === 'error' ? 'bootstrap error' : 'bootstrap update') + '</span>' : '') +
         '<span class="cnt">' + items.length + ' plan' + (items.length === 1 ? '' : 's') +
         '</span></div>' + (closed ? '' : (items.length ? items.map((p) => itemHtml(p)).join('')
           : filtering ? '' : '<div class="emptyproj">' + (projPlans.length ? 'All plans are archived.'

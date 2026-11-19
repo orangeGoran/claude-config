@@ -548,6 +548,8 @@ const fullState = async () => {
   const out = [];
   for (const entry of loadRegistry()) {
     const proj = resolveProject(entry);
+    const health = projectHealth(proj.root, entry);
+    const boot = health.checks.find((c) => c.id === 'bootstrap');
     out.push({
       name: proj.name, client: proj.client, root: proj.root, plansDir: proj.plansDir,
       color: proj.color, short: proj.short,
@@ -556,7 +558,8 @@ const fullState = async () => {
       launchers: proj.launchers, issuesUrl: proj.issuesUrl,
       // only a repo on GitHub can have PRs, so only there is a gh failure worth saying
       prError: proj.issuesUrl ? (prLists[proj.root] || {}).error || '' : '',
-      setupLevel: projectHealth(proj.root, entry).level,
+      setupLevel: health.level,
+      bootstrap: boot && !boot.ok ? boot.state : '',
       plans: await listPlans(proj),
       // a worktree on a branch that a plan names shows as that plan, not twice
       worktrees: proj.issuesUrl ? worktreesFor(proj)
@@ -861,6 +864,74 @@ const skillNames = (root) => {
   } catch { return []; }
 };
 
+// Bootstrap status: is the /bootstrap-project scaffolding there, and do the templates still
+// make the files it last applied? render.mjs --status takes ~70 ms, so it runs in the
+// background, one repo at a time. A result is kept until bootstrap.json or the skill changes,
+// or 10 minutes pass (an edit in the repo changes the file counts only).
+const BOOTSTRAP_SKILL = path.join(DASH_REPO, 'skills/bootstrap-project');
+const newestMtime = (dir) => {
+  let m = 0;
+  try {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      m = Math.max(m, e.isDirectory() ? newestMtime(p) : statSync(p).mtimeMs);
+    }
+  } catch {}
+  return m;
+};
+let skillStamp = { at: 0, m: 0 };
+const bootstrapSkillMtime = () => {
+  if (Date.now() - skillStamp.at > 5000) skillStamp = { at: Date.now(),
+    m: Math.max(newestMtime(path.join(BOOTSTRAP_SKILL, 'templates')), newestMtime(path.join(BOOTSTRAP_SKILL, 'scripts'))) };
+  return skillStamp.m;
+};
+const bootstrapCache = new Map();   // root -> { key, at, busy, result }
+let bootstrapQueue = Promise.resolve();
+const BOOTSTRAP_TTL = 10 * 60 * 1000;
+// { state: 'missing' | 'ok' | 'outdated' | 'error', differ, saved, error }, or null while the first check runs
+const bootstrapStatus = (root) => {
+  let mtime;
+  try { mtime = statSync(path.join(root, '.claude', 'bootstrap.json')).mtimeMs; } catch { return { state: 'missing' }; }
+  const key = mtime + ':' + bootstrapSkillMtime();
+  const c = bootstrapCache.get(root);
+  if (c && (c.busy || (c.key === key && Date.now() - c.at < BOOTSTRAP_TTL))) return c.result;
+  bootstrapCache.set(root, { key, at: Date.now(), busy: true, result: c ? c.result : null });
+  bootstrapQueue = bootstrapQueue.then(() => new Promise((resolve) => {
+    execFile(process.execPath, [path.join(BOOTSTRAP_SKILL, 'scripts/render.mjs'), root, '--status'],
+      { env: ENV, timeout: 20000 }, (err, out, errOut) => {
+        let result;
+        try {
+          if (err) throw new Error(String(errOut || err.message).trim().replace(/^render: /, '').split('\n').slice(0, 3).join(' '));
+          const s = JSON.parse(out), n = s.counts || {};
+          // config = only a hand-tuned CONFIG block differs, orphan = a turned-off module: neither needs an upgrade
+          const differ = (n.changed || 0) + (n.new || 0) + (n.merge || 0);
+          // with a saved hash, only a change in the templates or the answers counts, not the repo's own edits
+          result = { state: (s.saved ? s.saved !== s.hash : differ > 0) ? 'outdated' : 'ok', differ, saved: !!s.saved };
+        } catch (e) { result = { state: 'error', error: e.message }; }
+        bootstrapCache.set(root, { key, at: Date.now(), busy: false, result });
+        resolve();
+      });
+  }));
+  return c ? c.result : null;
+};
+const bootstrapCheck = (root) => {
+  const bs = root === DASH_REPO ? null : bootstrapStatus(root);
+  if (!bs) return null;
+  const files = (n) => n + ' file' + (n === 1 ? '' : 's');
+  const detail = bs.state === 'missing' ? 'no .claude/bootstrap.json — never set up with /bootstrap-project'
+    : bs.state === 'error' ? 'render.mjs --status failed: ' + bs.error
+    : bs.state === 'ok' ? 'up to date with the bootstrap-project templates'
+    : bs.saved ? 'the templates or the answers changed since the last apply' + (bs.differ ? ' · ' + files(bs.differ) + ' differ' : '')
+    : files(bs.differ) + ' differ from the templates';
+  return { id: 'bootstrap', label: 'Bootstrap scaffolding', required: false, ok: bs.state === 'ok', state: bs.state, detail,
+    why: 'The skills, the pipeline script and the allow list come from the bootstrap-project templates. ' +
+      'Running it brings this repo the fixes made to them since.',
+    fixPrompt: bs.state === 'missing' ? 'Run /bootstrap-project in this repository. Do not commit.'
+      : bs.state === 'error' ? 'Run /bootstrap-project --upgrade in this repository and fix what render.mjs reports ' +
+        'about .claude/bootstrap.json. Do not commit.'
+      : 'Run /bootstrap-project --upgrade in this repository. Do not commit.' };
+};
+
 // What a repo needs before its plans can be launched from here. Every failing check
 // carries its own fix: a shell command, or a prompt to paste into Claude Code there.
 const projectHealth = (root, entry) => {
@@ -950,6 +1021,8 @@ const projectHealth = (root, entry) => {
       why: 'Tells every run how this repo is built, tested and structured.',
       fixCmd: 'cd ' + tilde(root) + ' && claude "/init"' },
   );
+  const boot = bootstrapCheck(root);
+  if (boot) checks.push(boot);
   const failing = checks.filter((c) => !c.ok);
   const level = failing.some((c) => c.required) ? 'red' : failing.length ? 'amber' : 'green';
   // one prompt that fixes everything that can be fixed from inside Claude Code

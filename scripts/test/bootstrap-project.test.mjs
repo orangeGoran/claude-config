@@ -352,3 +352,27 @@ test('after the ship, follow-ups on an open PR are committed and pushed without 
     assert.match(readFileSync(path.join(repo, '.claude/skills/skill-5-ship/SKILL.md'), 'utf8'), /^## After the ship$/m);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('--apply saves renderHash; --status ignores an owner edit but reports changed answers', () => {
+  const { dir, repo } = bootstrapRepo();
+  try {
+    const status = () => { const r = node('render.mjs', ['.', '--status'], repo); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+    const answersFile = path.join(repo, '.claude/bootstrap.json');
+    const answers = JSON.parse(readFileSync(answersFile, 'utf8'));
+    assert.match(answers.renderHash, /^[0-9a-f]{16}$/);
+    let s = status();
+    assert.equal(s.saved, s.hash);
+    // the owner edits a rendered skill on purpose: the file differs, the fingerprint does not
+    const skill = path.join(repo, '.claude/skills/skill-3-test/SKILL.md');
+    writeFileSync(skill, readFileSync(skill, 'utf8') + '\nA rule only this repo has.\n');
+    s = status();
+    assert.equal(s.saved, s.hash);
+    assert.equal(s.counts.changed, 1);
+    // a changed answer is not applied yet: the fingerprint differs
+    writeFileSync(answersFile, JSON.stringify({ ...answers, project: { ...answers.project, summary: 'Another summary.' } }, null, 2));
+    s = status();
+    assert.notEqual(s.saved, s.hash);
+    // --status writes nothing
+    assert.equal(JSON.parse(readFileSync(answersFile, 'utf8')).renderHash, answers.renderHash);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

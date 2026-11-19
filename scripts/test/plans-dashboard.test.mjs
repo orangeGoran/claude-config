@@ -222,6 +222,25 @@ test('lists the registered project and parses the plan title', async () => {
   assert.equal(s[0].plans[0].title, 'Demo the dashboard');
 });
 
+test('a repo without bootstrap.json shows "needs bootstrap"; a broken one shows the render error', async () => {
+  assert.equal((await state())[0].bootstrap, 'missing');
+  const ws = path.join(tmp, 'bootstrap-ws');
+  const plain = path.join(ws, 'plain'), broken = path.join(ws, 'broken');
+  for (const d of [path.join(plain, '.git'), path.join(broken, '.git'), path.join(broken, '.claude')]) mkdirSync(d, { recursive: true });
+  writeFileSync(path.join(broken, '.claude', 'bootstrap.json'), '{"version": 1}');
+  const checks = async () => Object.fromEntries((await (await get('/api/scan?dir=' + encodeURIComponent(ws))).json())
+    .candidates.map((c) => [path.basename(c.root), c.checks.find((k) => k.id === 'bootstrap')]));
+  // render.mjs --status runs in the background: until it ends, the broken repo has no bootstrap check
+  let c = await checks();
+  for (let i = 0; i < 50 && !c.broken; i++) { await sleep(100); c = await checks(); }
+  assert.equal(c.plain.state, 'missing');
+  assert.match(c.plain.fixPrompt, /^Run \/bootstrap-project in this repository\./);
+  assert.equal(c.broken.state, 'error');
+  assert.match(c.broken.detail, /^render\.mjs --status failed: .*project\.name/);
+  assert.match(c.broken.fixPrompt, /--upgrade/);
+  rmSync(ws, { recursive: true, force: true });
+});
+
 test('the all-projects batch is refused with a fix prompt until every project has a lane checker', async () => {
   const r = await get('/api/lanes-all');
   assert.equal(r.status, 409);
@@ -714,12 +733,14 @@ test('scan suggests unregistered repos with a readiness level and a fix for each
   const scan = await (await get('/api/scan?dir=' + encodeURIComponent(ws))).json();
   const byName = Object.fromEntries(scan.candidates.map((c) => [c.name, c]));
   assert.deepEqual(Object.keys(byName).sort(), ['bare-repo', 'ready-repo']);
-  assert.equal(byName['ready-repo'].level, 'green');
+  // ready to launch; the one tip left is that it was set up by hand, not with /bootstrap-project
+  assert.equal(byName['ready-repo'].level, 'amber');
+  assert.deepEqual(byName['ready-repo'].checks.filter((c) => !c.ok).map((c) => c.id), ['bootstrap']);
   assert.equal(byName['ready-repo'].client, 'Acme');
   const b = byName['bare-repo'];
   assert.equal(b.level, 'red');
   const failing = b.checks.filter((c) => !c.ok).map((c) => c.id).sort();
-  assert.deepEqual(failing, ['allow', 'claudemd', 'launch', 'plans', 'plansDir', 'skills']);
+  assert.deepEqual(failing, ['allow', 'bootstrap', 'claudemd', 'launch', 'plans', 'plansDir', 'skills']);
   assert.ok(b.checks.filter((c) => !c.ok).every((c) => c.fixPrompt || c.fixCmd), 'every gap has a fix');
   assert.match(b.fixAll, /^Get this repository ready/);
 
@@ -741,7 +762,8 @@ test('adding a project keeps existing entries and registers the wrapper launcher
   assert.deepEqual(reg[1].launchers, [{ label: 'Implement', cmd: 'bash .claude/scripts/run-skill.sh implement {plan}' }]);
 
   const s = await state();
-  assert.equal(s.find((p) => p.name === 'ready-repo').setupLevel, 'green');
+  assert.equal(s.find((p) => p.name === 'ready-repo').setupLevel, 'amber');  // only the bootstrap tip
+  assert.equal(s.find((p) => p.name === 'ready-repo').bootstrap, 'missing');
   assert.equal(s.find((p) => p.name === 'demo').setupLevel, 'red');  // fixture has no .git, no launcher
 });
 

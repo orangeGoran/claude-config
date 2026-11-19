@@ -3,6 +3,7 @@
 //
 //   node render.mjs <repo> [--params <file>] [--stage <dir>] [--upgrade] [--json]
 //   node render.mjs <repo> --apply new|all|<path,path,...> [--params <file>] [--upgrade]
+//   node render.mjs <repo> --status   print {hash, saved, counts} as JSON; writes nothing
 //   node render.mjs --vars            list every placeholder name and exit
 //
 // <repo>        the target repo. The answers are in <repo>/.claude/bootstrap.json
@@ -22,6 +23,10 @@
 // --reset-config  also replace the CONFIG block of .claude/scripts/* files. Without it,
 //               a script that exists keeps its own CONFIG block (hand-tuned values),
 //               and each line that differs from the answers is printed.
+// --status      for the plans dashboard: "hash" is what the templates make from the answers
+//               now (renderHash), "saved" is the hash the last --apply stored in
+//               bootstrap.json, "counts" the file statuses of an upgrade. hash != saved means
+//               the templates or the answers changed since the last apply.
 //
 // Template syntax (only in templates/, never in the output). templates/partials/*.md are
 // shared blocks, rendered once and used as a value (reporting-rules.md -> REPORTING_RULES).
@@ -37,6 +42,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, chmodSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -745,6 +751,19 @@ export function plan(repo, files, { resetConfig = false } = {}) {
   });
 }
 
+/**
+ * A fingerprint of what the templates make from these answers, before the repo's own files
+ * are mixed in (no kept CONFIG blocks, no .gitignore merge), so a file the owner edited on
+ * purpose does not change it. A fixed date keeps it the same from day to day.
+ */
+export function renderHash(params, repo) {
+  const h = createHash('sha256');
+  const files = renderAll(params, { upgrade: true, now: new Date(0), repo })
+    .sort((a, b) => a.path.localeCompare(b.path));
+  for (const f of files) h.update(`${f.path}\0${f.kind}\0${f.content}\0`);
+  return h.digest('hex').slice(0, 16);
+}
+
 function writeFile(root, f) {
   const abs = path.join(root, f.path);
   mkdirSync(path.dirname(abs), { recursive: true });
@@ -768,6 +787,7 @@ function main(argv) {
     else if (a === '--reset-config') opt.resetConfig = true;
     else if (a === '--json') opt.json = true;
     else if (a === '--vars') opt.vars = true;
+    else if (a === '--status') opt.status = true;
     else if (a.startsWith('--')) die('unknown option ' + a);
     else pos.push(a);
   }
@@ -785,6 +805,12 @@ function main(argv) {
   const errs = checkParams(params);
   if (errs.length) die('the answers file has problems:\n  - ' + errs.join('\n  - '));
 
+  if (opt.status) {
+    const counts = {};
+    for (const f of plan(repo, renderAll(params, { upgrade: true, repo }))) counts[f.status] = (counts[f.status] || 0) + 1;
+    console.log(JSON.stringify({ hash: renderHash(params, repo), saved: params.renderHash || null, counts }));
+    return;
+  }
   if (!params.firstPlanTs && !opt.upgrade) {
     // record the timestamp once, so the preview and --apply name the first plan the same
     params.firstPlanTs = stamp(new Date());
@@ -814,6 +840,10 @@ function main(argv) {
       })();
     for (const f of pick) writeFile(repo, f);
     applied = pick.map((f) => f.path);
+    // the owner has decided about this render (files not taken are kept on purpose), so the
+    // dashboard stops showing "update available" until the templates or the answers change
+    params.renderHash = renderHash(params, repo);
+    writeFileSync(paramsFile, JSON.stringify(params, null, 2) + '\n');
   }
 
   if (opt.json) {
