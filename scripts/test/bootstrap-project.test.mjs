@@ -319,3 +319,36 @@ test('registry.browserTestProject names the browser-test profile in auto-pipelin
     if (!/skipped: .* is missing/.test(r.stdout)) assert.match(r.stdout, /profile\.mjs' (init|add-repo) 'acme'/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('codex on: verify runs the Codex code review, the sheet reuses it, and the code-reviews folder is ignored; codex off: none of it', () => {
+  const read = (r, f) => readFileSync(path.join(r, f), 'utf8');
+  const on = bootstrapRepo();
+  const off = bootstrapRepo((p) => { p.modules.codex = false; return p; });
+  try {
+    const v = read(on.repo, '.claude/skills/skill-4-verify/SKILL.md');
+    assert.match(v, /^## Step 1\.5 — Codex review/m);
+    assert.match(v, /validate-implementation skill .*Base: develop\./);
+    assert.match(v, /argument-hint: .*--no-codex/);
+    assert.doesNotMatch(v, /@@/);
+    assert.match(read(on.repo, '.claude/skills/skill-auto-pipeline/SKILL.md'), /--codex-report \.plans\/\.code-reviews\//);
+    assert.match(read(on.repo, '.claude/skills/decision-sheet/SKILL.md'), /Verify already ran Codex/);
+    assert.match(read(on.repo, '.gitignore'), /^\.plans\/\.code-reviews\/$/m);
+    const offV = read(off.repo, '.claude/skills/skill-4-verify/SKILL.md');
+    assert.doesNotMatch(offV, /Codex/);
+    assert.doesNotMatch(offV, /@@/);
+    assert.doesNotMatch(read(off.repo, '.claude/skills/skill-auto-pipeline/SKILL.md'), /codex-report/);
+  } finally {
+    rmSync(on.dir, { recursive: true, force: true });
+    rmSync(off.dir, { recursive: true, force: true });
+  }
+});
+
+test('after the ship, follow-ups on an open PR are committed and pushed without asking', () => {
+  const { dir, repo } = bootstrapRepo();
+  try {
+    const agents = readFileSync(path.join(repo, 'AGENTS.md'), 'utf8');
+    assert.match(agents, /\*\*Follow-ups on an open PR: commit and push without asking\.\*\*/);
+    assert.match(agents, /never `git add -A`/);
+    assert.match(readFileSync(path.join(repo, '.claude/skills/skill-5-ship/SKILL.md'), 'utf8'), /^## After the ship$/m);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

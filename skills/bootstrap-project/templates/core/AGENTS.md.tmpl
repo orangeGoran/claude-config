@@ -48,6 +48,9 @@ Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS
 - The dashboard runs `.claude/scripts/auto-pipeline.sh <mode> <plan>`. It creates a worktree `../worktrees/@@PROJECT_NAME@@/<slug>` on branch `auto/<slug>` from `origin/@@BASE_BRANCH@@` and runs `/skill-auto-pipeline` headless: @@PIPELINE_CHAIN@@. Modes: stop at verify (nothing committed), full (one local commit), to PR. The report is `.plans/auto-runs/<slug>.md`.
 - `/skill-2-implement <plan file>` alone implements one plan in the current tree, with no commits.
 - `/skill-3-test` and `/skill-4-verify` also run alone, after a manual `/skill-2-implement`.
+@@IF MOD_CODEX@@
+- `/skill-4-verify` runs Claude's `/code-review` loop, then Codex on the code (`.codex/skills/validate-implementation`, when `codex` is installed; `--no-codex` skips it), then the rule audit. A missing Codex never blocks it.
+@@END@@
 - `/skill-5-ship` merges `@@BASE_BRANCH@@`, runs the checks, pushes the branch and opens a draft PR. Only when the owner asks.
 @@IF MOD_TEST_REVIEW@@
 - `/test-review` checks the tests of a change against the plan (the `test-reviewer` agent). The pipeline runs it inside `/skill-4-verify`.
@@ -71,7 +74,8 @@ Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS
 
 - Branches: @@BRANCH_CHAIN@@. `@@BASE_BRANCH@@` is the base branch. PRs go to `@@BASE_BRANCH@@`.
 - Never wait for or watch GitHub CI runs (no `gh pr checks --watch`, no polling). After a push the step is done.
-- Push only when the owner says so. The "to PR" mode counts as that permission, for its own `auto/<slug>` branch only. Never push `@@BASE_BRANCH@@` or `@@PROD_BRANCH@@` from an automated run. Never force-push.
+- Push only when the owner says so, or as a follow-up on an open PR (next rule). The "to PR" mode counts as that permission, for its own `auto/<slug>` branch only. Never push `@@BASE_BRANCH@@` or `@@PROD_BRANCH@@` from an automated run. Never force-push.
+- **Follow-ups on an open PR: commit and push without asking.** When the current branch is not `@@BASE_BRANCH@@` or `@@PROD_BRANCH@@` and has an open PR (`gh pr view --json number,state` says `OPEN`), each change the owner asks for in the chat ships to that PR. Do not hand over `git add` or `git commit` commands. Run the scoped tests and the check-only lint for the touched files; a failure → fix it or report it, and do not push. Stage by path (never `git add -A` or `git add .`; never `.env*`, `.claude/settings.local.json` or the files of another plan), commit with a Conventional Commits message, and `git push`. When the change makes the PR body wrong (Changes, Verification, Code review, Open points), update the body with `gh pr edit <number> --body-file <file>`. This rule overrides a personal "never commit unless asked" rule for this case only.
 - Merge style: @@MERGE_STYLE@@ (@@MERGE_HINT@@).
 - Commit messages use Conventional Commits, with no AI attribution.
 

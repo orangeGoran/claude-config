@@ -2,7 +2,7 @@
 name: decision-sheet
 @@IF MOD_CODEX@@
 description: Build the PR decision sheet — at most 5 yes/no questions that only a person can answer (behavior changes, breaking changes, production impact, access changes, choices nobody planned), plus one block of what machines already checked. Optionally runs the Codex implementation review first, and skips it when Codex is missing or out of quota. The output is a checkbox block that /skill-5-ship --unattended puts in the PR body and that the "Decision Sheet" CI check reads. Use in /skill-auto-pipeline before ship, from /pr-feedback, or when the owner asks for "the decision sheet" or "what do I need to decide on this branch".
-argument-hint: "[--base <ref>] [--plan <file>] [--report <pipeline report>] [--test-review <report>] [--out <path>] [--no-codex] [--fix]"
+argument-hint: "[--base <ref>] [--plan <file>] [--report <pipeline report>] [--test-review <report>] [--out <path>] [--no-codex] [--codex-report <path>] [--fix]"
 @@END@@
 @@IFNOT MOD_CODEX@@
 description: Build the PR decision sheet — at most 5 yes/no questions that only a person can answer (behavior changes, breaking changes, production impact, access changes, choices nobody planned), plus one block of what machines already checked. The output is a checkbox block that /skill-5-ship --unattended puts in the PR body and that the "Decision Sheet" CI check reads. Use in /skill-auto-pipeline before ship, from /pr-feedback, or when the owner asks for "the decision sheet" or "what do I need to decide on this branch".
@@ -22,6 +22,7 @@ The reader opens this on a PR and has about two minutes. The reader does not rea
 - `--out` (default `.plans/.decision-sheets/<branch-with-slashes-as-dashes>.md`). Run `mkdir -p .plans/.decision-sheets` when you use the default.
 @@IF MOD_CODEX@@
 - `--no-codex`: skip Step 2. `--fix`: fix the VALID Codex findings (Step 2, item 4).
+- `--codex-report <path>`: the Codex report that `/skill-4-verify` (Step 1.5) wrote for this branch. Do not run Codex again (Step 2, item 0).
 @@END@@
 
 Run every shell command bare: one command per call, no pipes, `&&`, redirection or heredocs. Headless runs auto-deny compound commands. Run the commands in this session, never in a subagent.
@@ -54,6 +55,7 @@ Browser test: read the plan's **Browser test** section, the `## Browser test` se
 
 Skip it with `--no-codex`. Otherwise:
 
+0. **Verify already ran Codex** (`--codex-report <path>`, and the file exists and is not empty): do not run Codex again. Verify checked and fixed its findings; take their status from the verify findings (the `F<n> … (codex)` lines in the `## Code review` section of the pipeline report). A deferred one is a kind-6 item, as any deferred verify finding. The report's "Present but not planned" list feeds kind 5. Write the sheet's Codex line as `✅ Codex: ran in verify, <n> fixed, <n> open`. Then go to Step 3.
 1. Find the CLI: `command -v codex`, else `test -x ~/.local/bin/codex` (the Bash tool does not load `~/.zshrc`). Use the one you found as `<codex>`. Write the path exactly as `codex` or `~/.local/bin/codex` (with the `~`, not the expanded home folder): the allow rules match that text. Then run `<codex> login status`. Missing or not logged in → **Codex OFF** ("Codex not available"). A command that the session refuses ("requires approval") is not a missing CLI. Record it as `permission denied: <command>`, so that the allow rule is easy to fix.
 2. Run it (background Bash, 10-minute timeout) with the repo's Codex skill as it is:
    ```bash
@@ -128,6 +130,7 @@ Disagree? Untick or comment, then run `/pr-feedback <PR#>`.
 @@END@@
 @@IF MOD_CODEX@@
 ⏭ Codex: skipped (<reason>). Run `/pr-feedback <PR#> --codex` to add it later.
+(or, when Codex ran: `✅ Codex: <n> findings fixed, <n> open`, or `✅ Codex: ran in verify, <n> fixed, <n> open`)
 @@END@@
 <!-- decision-sheet:end -->
 ```

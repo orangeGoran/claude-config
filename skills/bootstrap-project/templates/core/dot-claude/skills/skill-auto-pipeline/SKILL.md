@@ -71,11 +71,14 @@ The report is the owner's window into this run. The plans dashboard reads it. Af
    - When the plan has a **Browser test** section that is not `None — <reason>`, "skipped" is not a valid result. The browser test did not run, or has no report page link → status `BLOCKED — browser test (<reason>)`, the reason under `## Diagnosis`, and end the session. Do not commit or ship without it.
 @@END@@
 3. **Verify** — invoke `/skill-4-verify <plan-file> --unattended`. It runs the `/code-review` loop (max 2 rounds) and the rule audit (hard rules, contracts, doc comments, tests, secrets, plan scope).
+@@IF MOD_CODEX@@
+   - Between the two, it runs the Codex review of the code and fixes its valid findings. Codex OFF (missing, not logged in, quota) never fails the phase: write one Timeline line with the reason.
+@@END@@
 @@IF MOD_TEST_REVIEW@@
    - It also runs `/test-review --fix`. Copy its `## Summary for the PR` under `## Test review`.
 @@END@@
    - Run every command in the plan's "How to verify" yourself, as bare commands.
-   - If its code-review loop or its test review changed a file, run the full test command once (AGENTS.md, **Commands**, "Test (full)"; skip it when that row is "not available yet") as a regression gate. The skill runs only the scoped tests. A failure counts toward the failure budget.
+   - If its code-review loop, its Codex fixes or its test review changed a file, run the full test command once (AGENTS.md, **Commands**, "Test (full)"; skip it when that row is "not available yet") as a regression gate. The skill runs only the scoped tests. A failure counts toward the failure budget.
    - Copy its review order, table, rounds, numbered findings (`F1`, `F2`, …, with file:line and state) and open items (each question exactly as written) under `## Verification` and `## Code review`.
    - Any row still Fail after its fixes → `FAILED: verify`. Open items that need the owner → **Needs decision**. Otherwise status `VERIFIED`.
 
@@ -132,7 +135,11 @@ Nothing is pushed. To open the PR, resume this run in "to PR" mode, or:
 **pr mode:**
 
 @@IF MOD_DECISION_SHEET@@
-6. **Decision sheet** — read `.claude/skills/decision-sheet/SKILL.md` and follow it with `--base <base> --plan .plans/done/<plan-file> --report <report> --out <report dir>/<slug>-decision-sheet.md`. Write one Timeline line with its status, the number of questions and its path. It never blocks: when it fails, write one Timeline line and continue.
+6. **Decision sheet** — read `.claude/skills/decision-sheet/SKILL.md` and follow it with `--base <base> --plan .plans/done/<plan-file> --report <report> --out <report dir>/<slug>-decision-sheet.md`.
+@@IF MOD_CODEX@@
+   When the Verify phase ran Codex (row 1 says `Codex ON`), add `--codex-report .plans/.code-reviews/<branch-with-slashes-as-dashes>-codex.md`, so Codex does not review the same code twice.
+@@END@@
+   Write one Timeline line with its status, the number of questions and its path. It never blocks: when it fails, write one Timeline line and continue.
 @@END@@
 7. **Ship** — `/skill-5-ship` cannot be invoked as a skill from here (`disable-model-invocation`). Read `.claude/skills/skill-5-ship/SKILL.md` and follow it end to end with `--unattended --report <report> --base <base>`. It sets the final status: `PR OPEN — <url>` (with a `PR: <url>` line) or `BLOCKED: …`.
 @@IF HAS_BROWSER_TEST@@

@@ -278,3 +278,7 @@ For each `Closes` ticket of the PR body: set its Status to "@@BOARD_STATUS@@" on
 2. The files left unstaged on purpose, each with the reason, or "none".
 3. The resolved merge conflicts (the Step 2 list), or the stop case or failed gate that stopped the run, if any.
 4. The last line is the PR link: `PR: <url>`.
+
+## After the ship
+
+The PR is open. Each later change that the owner asks for in this chat follows `AGENTS.md`, **Git**, "Follow-ups on an open PR": commit it by path and push it to this branch without asking. Never answer with `git add` or `git commit` commands for the owner to run.

@@ -121,7 +121,7 @@ Rules for the review order:
 - List only files in the verified scope: the Step 0 files plus the files Step 1 touched. Do not add other files.
 - Rank by importance, not by name or folder: the code that the hard rules protect first, then contracts, data and migrations, then services and queries, then controllers, handlers and UI, then tests, then wiring and registration edits last.
 - One line per file, with a short reason. Group closely related files on one line (for example a model and its spec) when it keeps the list short.
-- Files the Step 1 reviewer (or the Step 1.5 Codex fixes) rewrote rank above equal files that the author wrote, because nobody has read them yet. Mark them `(auto-fixed)`.
+- Files that a reviewer's fixes rewrote (Step 1 and later) rank above equal files that the author wrote, because nobody has read them yet. Mark them `(auto-fixed)`.
 - Put each file with a Fail in the table at the top.
 
 Then the table:
