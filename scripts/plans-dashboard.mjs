@@ -645,7 +645,8 @@ const runLauncher = (proj, args, slugs) => {
   const fd = dashLog(proj);
   const from = statSync(logFile).size;
   const keys = slugs.map((s) => proj.name + '/' + s);
-  for (const k of keys) { chatEnd(k); launches.set(k, { state: 'starting', at: Date.now() }); }
+  for (const s of slugs) chatEnd(proj, s);
+  for (const k of keys) { launches.set(k, { state: 'starting', at: Date.now() }); }
   const child = spawn('bash', [proj.launcherScript, ...args], {
     cwd: proj.root, env: ENV, detached: true, stdio: ['ignore', fd, fd],
   });
@@ -692,7 +693,7 @@ const launchGeneric = (proj, slug, launcherIdx) => {
   if (!l || !l.cmd) return { ok: false, output: 'No launcher configured for this project yet.' };
   const existing = genericRunInfo(proj, slug);
   if (existing.live) return { ok: false, output: 'A run for this plan is already live.' };
-  chatEnd(proj.name + '/' + slug);
+  chatEnd(proj, slug);
   const planPath = path.join(proj.plansDir, slug + '.md');
   const cmd = l.cmd
     .replaceAll('{plan}', planPath)
@@ -2502,8 +2503,17 @@ const chatStop = (proj, slug) => {
   setTimeout(() => { if (chats.get(ch.key) === ch && ch.busy && ch.turnsEnded === turns) chatKill(ch); }, 8000);
   return { ok: true };
 };
-// a run is starting in this folder: the chat gives way (its transcript stays)
-const chatEnd = (key) => { const ch = chats.get(key); if (ch) chatKill(ch); };
+// a run is starting in this folder: the chat gives way (its transcript stays) and lets go of
+// its pinned session, because a launch or resume starts a new session that reads the report.
+// Kept pinned, the panel showed the session from before the resume and never the new one.
+const chatEnd = (proj, slug) => {
+  const ch = chats.get(proj.name + '/' + slug);
+  if (ch) chatKill(ch);
+  const a = loadChat(proj, slug);
+  if (a.root || (!a.current && !a.fork)) return;   // a root chat moves on by itself in chatStart
+  a.current = null; a.fork = false;
+  saveChat(proj, slug, a);
+};
 // Fork: the next message goes on in a copy of this session. New chat: the next message
 // starts again from the run's latest session. Both close the open claude.
 const chatRestart = (proj, slug, fork) => {
