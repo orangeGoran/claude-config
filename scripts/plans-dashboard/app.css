@@ -204,7 +204,8 @@
   .mmdstage { position:absolute; inset:0; overflow:hidden; cursor:grab; touch-action:none; user-select:none; }
   .mmdstage.drag { cursor:grabbing; }
   .mmdpan { position:absolute; left:0; top:0; transform-origin:0 0; }
-  .mmdpan svg { display:block; max-width:none !important; }
+  .mmdpan svg { display:block; max-width:none !important; overflow:visible; }   /* a table moved past the edge stays visible */
+  .mmdpan .node, .mmdpan g[id^="entity-"] { cursor:move; }
   .mmdbar { position:absolute; top:10px; right:14px; z-index:1; display:flex; align-items:center; gap:6px; padding:5px; background:var(--bg); border:1px solid var(--line); border-radius:8px; }
   .mmdbar button { font-size:calc(14px * var(--fs)); line-height:1; padding:5px 10px; cursor:pointer;
                    background:var(--btn); color:var(--fg); border:1px solid var(--line); border-radius:6px; }

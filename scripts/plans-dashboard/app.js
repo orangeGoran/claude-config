@@ -2265,12 +2265,12 @@ async function drawMermaid() {
     const code = document.createElement('details');
     code.innerHTML = '<summary>Mermaid code</summary>';
     code.append(...el.childNodes);
-    el.innerHTML = '<div class="mmdsvg" role="button" tabindex="0" title="Open full screen: drag to move, scroll or pinch to zoom">' + svg + '</div>';
+    el.innerHTML = '<div class="mmdsvg" role="button" tabindex="0" title="Open full screen: drag a table to move it, drag the background to pan, scroll or pinch to zoom">' + svg + '</div>';
     el.append(code);
   }
 }
 // full screen: a copy of the drawing in its own layer, so a chat redraw under it does not close
-// it. Drag moves it; scroll pans; pinch or Ctrl/⌘ + scroll zooms at the pointer; + − 0 and the
+// it. Drag on the background moves it, drag on a table moves the table; scroll pans; pinch or Ctrl/⌘ + scroll zooms at the pointer; + − 0 and the
 // arrow keys do the same from the keyboard.
 function openMermaidFull(svgHtml) {
   const box = document.createElement('div');
@@ -2278,7 +2278,7 @@ function openMermaidFull(svgHtml) {
   box.innerHTML = '<div class="mmdstage"><div class="mmdpan">' + svgHtml + '</div></div>' +
     '<div class="mmdbar"><button data-z="out" title="Zoom out (−)">−</button><span class="mmdpct"></span>' +
     '<button data-z="in" title="Zoom in (+)">+</button><button data-z="fit" title="Fit to the screen (0)">Fit</button>' +
-    '<button data-z="close" title="Close (Esc)">✕</button></div>';
+    '<button data-z="reset" title="Put moved tables back (R)">Reset</button><button data-z="close" title="Close (Esc)">✕</button></div>';
   const stage = box.querySelector('.mmdstage'), pan = box.querySelector('.mmdpan'), svg = pan.querySelector('svg');
   // the drawing at its own size; the view scales it
   const vb = svg.viewBox && svg.viewBox.baseVal;
@@ -2310,17 +2310,80 @@ function openMermaidFull(svgHtml) {
     if (e.ctrlKey || e.metaKey) zoom(Math.exp(-Math.max(-50, Math.min(50, e.deltaY)) * 0.01), e.clientX - r.left, e.clientY - r.top);
     else { tx -= e.deltaX; ty -= e.deltaY; draw(); }
   }, { passive: false });
-  let drag = null;
+  // a table or box moves by hand: its lines bend to follow, their labels go along. Reset (R)
+  // puts everything back. Positions are in the drawing's own units, whatever the zoom.
+  const NODE = 'g.node, g[id^="entity-"]';
+  const edges = [...new Set(svg.querySelectorAll('path.relationshipLine, .edgePaths > path, path.flowchart-link, path.relation'))];
+  const labels = [...svg.querySelectorAll('g.edgeLabel, g.edgeTerminals, rect.relationshipLabelBox, text.relationshipLabel')];
+  const rel = (el) => svg.getScreenCTM().inverse().multiply(el.getScreenCTM());
+  const at = (e) => new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse());
+  const area = (el) => {
+    const b = el.getBBox(), m = rel(el);
+    const c = [[b.x, b.y], [b.x + b.width, b.y], [b.x, b.y + b.height], [b.x + b.width, b.y + b.height]]
+      .map(([x, y]) => new DOMPoint(x, y).matrixTransform(m));
+    const xs = c.map((p) => p.x), ys = c.map((p) => p.y);
+    return { x: Math.min(...xs), y: Math.min(...ys), r: Math.max(...xs), b: Math.max(...ys) };
+  };
+  const orig = new Map(); // element -> [attribute, value before the first move]
+  const keep = (el, a) => { if (!orig.has(el)) orig.set(el, [a, el.getAttribute(a)]); };
+  // move el by (dx, dy) of the drawing, on top of its transform `base`
+  const shift = (el, dx, dy, base) => {
+    const v = new DOMPoint(dx, dy, 0, 0).matrixTransform(rel(el.parentNode).inverse());
+    el.setAttribute('transform', 'translate(' + v.x + ',' + v.y + ')' + (base ? ' ' + base : ''));
+  };
+  const startMove = (node, e) => {
+    const nb = area(node), pad = 14;
+    const near = (p) => p.x > nb.x - pad && p.x < nb.r + pad && p.y > nb.y - pad && p.y < nb.b + pad;
+    // every line as points; the ones that end at this node bend, the far end stays put
+    const all = edges.map((path) => {
+      const L = path.getTotalLength(), m = rel(path), n = Math.max(12, Math.min(80, Math.round(L / 8)));
+      const pts = [];
+      for (let i = 0; i <= n; i++) pts.push(path.getPointAtLength(L * i / n).matrixTransform(m));
+      const a = near(pts[0]), b = near(pts[n]);
+      return { path, pts, inv: m.inverse(), w: a && b ? () => 1 : a ? (i) => 1 - i / n : b ? (i) => i / n : null };
+    });
+    const lines = all.filter((l) => l.w);
+    // a label belongs to the closest line and moves as much as that point of the line
+    const tags = [];
+    for (const el of labels) {
+      const lb = area(el);
+      if (lb.r - lb.x < 1) continue;
+      const cx = (lb.x + lb.r) / 2, cy = (lb.y + lb.b) / 2;
+      let best = null, bd = 40;
+      for (const l of all) l.pts.forEach((p, i) => { const d = Math.hypot(p.x - cx, p.y - cy); if (d < bd) { bd = d; best = [l, i]; } });
+      if (best && best[0].w) { keep(el, 'transform'); tags.push({ el, base: el.getAttribute('transform'), w: best[0].w(best[1]) }); }
+    }
+    keep(node, 'transform');
+    node.parentNode.append(node); // the moved table draws over the others
+    lines.forEach((l) => keep(l.path, 'd'));
+    move = { node, base: node.getAttribute('transform'), p: at(e), lines, tags };
+  };
+  const moveTo = (e) => {
+    const p = at(e), dx = p.x - move.p.x, dy = p.y - move.p.y;
+    shift(move.node, dx, dy, move.base);
+    for (const l of move.lines) l.path.setAttribute('d', 'M' + l.pts.map((q, i) => {
+      const r = new DOMPoint(q.x + dx * l.w(i), q.y + dy * l.w(i)).matrixTransform(l.inv);
+      return r.x.toFixed(2) + ',' + r.y.toFixed(2);
+    }).join('L'));
+    for (const t of move.tags) shift(t.el, dx * t.w, dy * t.w, t.base);
+  };
+  const reset = () => {
+    for (const [el, [a, v]] of orig) v == null ? el.removeAttribute(a) : el.setAttribute(a, v);
+    orig.clear();
+  };
+  let drag = null, move = null;
   stage.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
-    drag = { x: e.clientX - tx, y: e.clientY - ty };
+    const node = e.target.closest(NODE);
+    if (node && svg.contains(node)) startMove(node, e);
+    else drag = { x: e.clientX - tx, y: e.clientY - ty };
     stage.setPointerCapture(e.pointerId); stage.classList.add('drag');
   });
   stage.addEventListener('pointermove', (e) => {
-    if (!drag) return;
-    tx = e.clientX - drag.x; ty = e.clientY - drag.y; draw();
+    if (move) moveTo(e);
+    else if (drag) { tx = e.clientX - drag.x; ty = e.clientY - drag.y; draw(); }
   });
-  const endDrag = () => { drag = null; stage.classList.remove('drag'); };
+  const endDrag = () => { drag = null; move = null; stage.classList.remove('drag'); };
   stage.addEventListener('pointerup', endDrag);
   stage.addEventListener('pointercancel', endDrag);
   stage.addEventListener('dblclick', (e) => {
@@ -2338,6 +2401,7 @@ function openMermaidFull(svgHtml) {
     else if (k === '+' || k === '=') zoom(1.25);
     else if (k === '-' || k === '_') zoom(0.8);
     else if (k === '0') fit();
+    else if (k === 'r' || k === 'R') reset();
     else if (k === 'ArrowLeft') { tx += step; draw(); } else if (k === 'ArrowRight') { tx -= step; draw(); }
     else if (k === 'ArrowUp') { ty += step; draw(); } else if (k === 'ArrowDown') { ty -= step; draw(); }
     else return;
@@ -2345,7 +2409,8 @@ function openMermaidFull(svgHtml) {
   };
   box.querySelector('.mmdbar').addEventListener('click', (e) => {
     const z = e.target.closest('button')?.dataset.z;
-    if (z === 'in') zoom(1.25); else if (z === 'out') zoom(0.8); else if (z === 'fit') fit(); else if (z === 'close') close();
+    if (z === 'in') zoom(1.25); else if (z === 'out') zoom(0.8); else if (z === 'fit') fit();
+    else if (z === 'reset') reset(); else if (z === 'close') close();
   });
   // Esc in browser full screen only leaves full screen: close the layer with it
   box.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) close(); else fit(); });
