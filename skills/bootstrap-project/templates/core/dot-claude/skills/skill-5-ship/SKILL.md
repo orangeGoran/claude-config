@@ -214,7 +214,7 @@ Evidence: <the comment link from Step 4>
 <questions, known limits, backend follow-ups and findings left open; "none" if none>
 @@IF HAS_TICKETS@@
 
-<one line per ticket of the plan: `Closes #<n>` when every "Done when" line of the ticket is met, else `Refs #<n>`>
+<one line per ticket of the plan: `To be closed after staging QA: #<n>` when every "Done when" line of the ticket is met, else `Refs #<n>`. Never write a GitHub closing keyword (close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved) directly before `#<n>`: the PR base is the default branch, so GitHub would close the ticket at the merge, before QA checks it on staging. GitHub reads `To be closed #<n>` as "closed #<n>"; `To be closed after staging QA: #<n>` does not close it.>
 @@END@@
 ```
 @@IF HAS_BROWSER_TEST@@
@@ -263,13 +263,14 @@ Any row fails → do not push, and do not open or update the PR. Unattended: sta
 
 ## Step 6.5 — Board status
 
-For each `Closes` ticket of the PR body: set its Status to "@@BOARD_STATUS@@" on project @@BOARD_NUMBER@@ of `@@BOARD_OWNER@@`. Leave `Refs` tickets as they are.
+For every ticket of the PR body (both the `To be closed after staging QA: #<n>` and the `Refs #<n>` lines): set its Status to "@@BOARD_STATUS@@" on project @@BOARD_NUMBER@@ of `@@BOARD_OWNER@@`. The ticket stays open and "@@BOARD_STATUS@@" until QA checks it on staging and closes it.
 
 1. `gh project field-list @@BOARD_NUMBER@@ --owner @@BOARD_OWNER@@ --format json`: find the id of the Status field and of its "@@BOARD_STATUS@@" option. Never hard-code these ids.
-2. `gh project view @@BOARD_NUMBER@@ --owner @@BOARD_OWNER@@ --format json`: take the project id.
-3. `gh project item-list @@BOARD_NUMBER@@ --owner @@BOARD_OWNER@@ --format json --limit 500`: find the item of the ticket. No item → write it under Open points; do not add it.
-4. `gh project item-edit --id <item id> --project-id <project id> --field-id <field id> --single-select-option-id <option id>`.
-5. Read it back with the item list. A failure here does not stop the ship: write it in the report Timeline.
+2. `gh project view @@BOARD_NUMBER@@ --owner @@BOARD_OWNER@@ --format json`: take the project id and `items.totalCount`.
+3. `gh project item-list @@BOARD_NUMBER@@ --owner @@BOARD_OWNER@@ --format json --limit 5000`. Count the items read: when the count is lower than `items.totalCount`, raise `--limit` above `items.totalCount` and read again. Never look for a ticket in a partial list. Then find the item of each ticket. No item → write it under Open points; do not add it.
+4. For each ticket: `gh issue view <n> --json state`. When the state is `CLOSED` (for example an earlier PR closed it), reopen it: `gh issue reopen <n> --comment "Reopened: the work is in <PR url> and this ticket stays @@BOARD_STATUS@@ until QA checks it on staging. Close it after the staging check."`. Unattended runs do this without asking. Write each reopened ticket in the report Timeline and in Step 7.
+5. `gh project item-edit --id <item id> --project-id <project id> --field-id <field id> --single-select-option-id <option id>`.
+6. Read it back with the item list (the same full read as item 3). A failure here does not stop the ship: write it in the report Timeline.
 @@END@@
 
 ## Step 7 — Output
@@ -277,6 +278,9 @@ For each `Closes` ticket of the PR body: set its Status to "@@BOARD_STATUS@@" on
 1. The commit titles of this step and the PR title.
 2. The files left unstaged on purpose, each with the reason, or "none".
 3. The resolved merge conflicts (the Step 2 list), or the stop case or failed gate that stopped the run, if any.
+@@IF HAS_BOARD@@
+   The tickets that Step 6.5 reopened, if any.
+@@END@@
 4. The last line is the PR link: `PR: <url>`.
 
 ## After the ship
