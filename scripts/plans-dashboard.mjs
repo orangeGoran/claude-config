@@ -1697,6 +1697,67 @@ const localFile = (proj, slug, file) => {
 // message for CHAT_IDLE_MS stops; the next message resumes the same session.
 const CHAT_IDLE_MS = 15 * 60 * 1000;
 const CHAT_MODES = ['default', 'acceptEdits', 'plan', 'auto'];
+// ---- plan usage (Claude and Codex) ----
+// How much of each plan limit is used. Claude has no file for it: every claude request
+// streams a rate_limit_event, so the chats' newest one is kept in USAGE_FILE (a restart
+// keeps it). Codex writes its limits into each session file under ~/.codex/sessions.
+// A window: { name: 'five_hour' | 'seven_day' | …, pct: 0–100, resetsAt: ms }.
+const USAGE_FILE = path.join(CENTRAL, 'usage-claude.json');
+const usageClaudeSave = (info) => {
+  const wins = info?.unifiedWindows || (info?.rateLimitType && { [info.rateLimitType]: info });
+  if (!wins) return;
+  let old = {};
+  try { old = JSON.parse(readFileSync(USAGE_FILE, 'utf8')).windows || {}; } catch {}
+  const at = Date.now();
+  for (const [name, w] of Object.entries(wins))
+    if (typeof w?.utilization === 'number') old[name] = { pct: Math.round(w.utilization * 100), resetsAt: (w.resetsAt || 0) * 1000, at };
+  try { mkdirSync(CENTRAL, { recursive: true }); writeFileSync(USAGE_FILE, JSON.stringify({ windows: old })); } catch {}
+};
+const usageWindows = (wins) => Object.entries(wins).map(([name, w]) => ({ name, ...w,
+  // past its reset the number is old: the window starts again from 0
+  ...(w.resetsAt && w.resetsAt < Date.now() ? { pct: 0, reset: true } : {}) }));
+const usageClaude = () => {
+  try { return { windows: usageWindows(JSON.parse(readFileSync(USAGE_FILE, 'utf8')).windows || {}) }; }
+  catch { return { windows: [] }; }
+};
+// the newest session files first: sessions/YYYY/MM/DD/*.jsonl, newest days first
+const codexSessionFiles = (max) => {
+  const root = path.join(HOME, '.codex', 'sessions'), out = [];
+  const desc = (d) => { try { return readdirSync(d).sort().reverse(); } catch { return []; } };
+  for (const y of desc(root)) for (const m of desc(path.join(root, y))) for (const d of desc(path.join(root, y, m))) {
+    const dir = path.join(root, y, m, d);
+    out.push(...desc(dir).filter((f) => f.endsWith('.jsonl')).map((f) => path.join(dir, f))
+      .map((f) => ({ f, t: statSync(f).mtimeMs })).sort((a, b) => b.t - a.t));
+    if (out.length >= max) return out.slice(0, max);
+  }
+  return out;
+};
+const codexWinName = (min) => min === 300 ? 'five_hour' : min === 10080 ? 'seven_day' : min + '_minutes';
+const usageCodex = () => {
+  for (const { f, t } of codexSessionFiles(5)) {
+    // the limits are in the token_count events; read the end of the file only
+    let text = '';
+    try {
+      const fd = openSync(f, 'r'), size = statSync(f).size, len = Math.min(size, 512 * 1024), buf = Buffer.alloc(len);
+      readSync(fd, buf, 0, len, size - len); closeSync(fd);
+      text = buf.toString('utf8');
+    } catch { continue; }
+    const lines = text.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!lines[i].includes('"rate_limits"')) continue;
+      let r;
+      try { const j = JSON.parse(lines[i]); r = j.payload?.rate_limits || j.rate_limits; } catch { continue; }
+      if (!r || (r.limit_id && r.limit_id !== 'codex') || !(r.primary || r.secondary)) continue;
+      const wins = {};
+      for (const w of [r.primary, r.secondary]) if (w && typeof w.used_percent === 'number')
+        wins[codexWinName(w.window_minutes)] = { pct: Math.round(w.used_percent), resetsAt: (w.resets_at || 0) * 1000, at: t };
+      return { windows: usageWindows(wins), plan: r.plan_type || null };
+    }
+  }
+  return { windows: [] };
+};
+const usageState = () => ({ claude: usageClaude(), codex: usageCodex() });
+
 const chats = new Map();         // plan key -> the open claude
 const chatClients = new Map();   // plan key -> the pages listening (server-sent events)
 const chatNotes = new Map();     // plan key -> how the last claude ended, when it failed
@@ -2191,6 +2252,7 @@ const chatMetaProbe = async (wtPath) => {
 };
 const chatOnLine = (ch, j) => {
   const { proj, slug } = ch;
+  if (j.type === 'rate_limit_event') usageClaudeSave(j.rate_limit_info);
   if (j.session_id && j.session_id !== ch.session && !j.parent_tool_use_id) {
     ch.session = j.session_id;
     const a = loadChat(proj, slug);
@@ -2586,6 +2648,7 @@ const server = http.createServer(async (req, res) => {
       return res.end(PAGE);
     }
     if (url.pathname === '/api/scout' && req.method === 'GET') return json(res, 200, scoutStatus());
+    if (url.pathname === '/api/usage') return json(res, 200, usageState());
     if (url.pathname === '/api/state') {
       enqueueMissingSummaries();
       return json(res, 200, await fullState());

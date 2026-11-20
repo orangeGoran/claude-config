@@ -100,6 +100,10 @@ const handle = (j) => {
       return setTimeout(() => out({ type: 'result', subtype: 'success', is_error: false, session_id: id, total_cost_usd: 0.01 }), 2000);
     }
     out({ type: 'system', subtype: 'init', session_id: id, permissionMode: mode });
+    // like claude: every request reports the plan limit
+    const resetsAt = Math.floor(Date.now() / 1000) + 86400;
+    out({ type: 'rate_limit_event', session_id: id, rate_limit_info: { status: 'allowed', rateLimitType: 'seven_day', utilization: 0.42, resetsAt,
+      unifiedWindows: { seven_day: { utilization: 0.42, resetsAt, status: 'allowed' } } } });
     if (q === '/compact') {
       contextUsed = 30000;
       log({ type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted', compactMetadata: { trigger: 'manual', preTokens: 150000, postTokens: 8000 } });
@@ -626,6 +630,39 @@ test('Stop ends the running turn only: the turn its queued messages start stays 
   assert.deepEqual(await post('/api/chat/stop', who), { ok: true });
   await until(async () => !(await chat()).live, 'the process to be closed');
   assert.deepEqual(await post('/api/chat/new', who), { ok: true });
+});
+
+test('the header usage shows the Claude limit from a chat and the Codex limit from its newest session file', async () => {
+  const who = { project: 'demo', slug: 'demo-plan' };
+  const day = path.join(home, '.codex', 'sessions', '2026', '11', '20');
+  mkdirSync(day, { recursive: true });
+  const resets = Math.floor(Date.now() / 1000) + 3600;
+  const tc = (primary, limitId = 'codex') => JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', rate_limits: {
+    limit_id: limitId, primary, secondary: { used_percent: 9, window_minutes: 10080, resets_at: resets }, plan_type: 'prolite' } } });
+  writeFileSync(path.join(day, 'rollout-a.jsonl'), [
+    tc({ used_percent: 10, window_minutes: 300, resets_at: resets }),
+    tc({ used_percent: 31.6, window_minutes: 300, resets_at: resets }),
+    tc({ used_percent: 99, window_minutes: 300, resets_at: resets }, 'other-model'),   // another limit: skipped
+    '{"type":"event_msg","payload":{"type":"agent_message"}}',
+  ].join('\n') + '\n');
+  try {
+    let u = await (await get('/api/usage')).json();
+    assert.deepEqual(u.codex.windows.map((w) => [w.name, w.pct]), [['five_hour', 32], ['seven_day', 9]]);
+    assert.equal(u.codex.plan, 'prolite');
+
+    assert.deepEqual(await post('/api/chat/send', { ...who, text: 'usage check' }), { ok: true });
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline && !(u = await (await get('/api/usage')).json()).claude.windows.length) await sleep(100);
+    assert.deepEqual(u.claude.windows.map((w) => [w.name, w.pct]), [['seven_day', 42]]);
+    assert.ok(u.claude.windows[0].resetsAt > Date.now());
+  } finally {
+    rmSync(path.join(home, '.codex'), { recursive: true, force: true });
+    // let the turn end before the next test, like the other chat tests
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline && (await (await get('/api/chat?project=demo&slug=demo-plan')).json()).busy) await sleep(100);
+    await sleep(1500);
+    await post('/api/chat/new', who);
+  }
 });
 
 test('a chat outlives a server restart: the new server shows its question and the same claude answers', async () => {

@@ -4225,8 +4225,19 @@ async function renderScout() {
     summary: p.lastRun.findings + ' finding(s), ' + p.lastRun.proposed + ' new proposal(s)' }] : [])).sort((x, y) => y.at.localeCompare(x.at));
   const last = runs[0];
 
+  // 0. what the scout is: two lines always, how it works on demand (open until the first run)
+  let h = '<div class="setup sc"><div class="sc-card sc-about"><div class="sc-sub">' +
+    '<b>The scout looks for work in your projects once a day</b> (07:00): red or flaky CI, stuck PRs, security alerts, production errors and slow endpoints. ' +
+    'Each new finding becomes a proposal in the <a href="#" data-stag="scout">Board\u2019s Proposed column</a>. Nothing is planned or built until you confirm it.</div>' +
+    '<details class="sc-howto" id="scoutAbout"' + (scoutAboutOpen ?? !runs.length ? ' open' : '') + '><summary>How it works</summary><ul>' +
+    '<li><b>✓ Confirm</b> on a proposal opens a new chat that runs <code>/skill-1-plan</code> on it; then your usual flow: validation, Ready, ▶ Launch.</li>' +
+    '<li><b>✕ Dismiss</b> archives it. The scout proposes it again only when it gets 2× worse.</li>' +
+    '<li>A finding is proposed once. A proposal whose problem goes away before you confirm it (PR merged, alert closed, CI green) is archived as <i>resolved</i>. At most 15 wait per project.</li>' +
+    '<li>It learns: a check is muted after you dismiss its last 5 proposals, a finding after 3 proposals you never confirmed (see <b>Checks</b> below).</li>' +
+    '<li>Below: the last run step by step (click a step to see its proposals on the Board), earlier runs, setup on this Mac and the raw log.</li>' +
+    '</ul><p class="hint">Guide: <code>' + esc(s.docs) + '</code></p></details></div>';
+
   // 1. status
-  let h = '<div class="setup sc">';
   if (s.running) {
     const took = s.startedAt ? Math.max(0, Math.round((Date.now() - Date.parse(s.startedAt)) / 1000)) : null;
     const cur = ((s.current && s.current.projects) || []).flatMap((p) => p.steps || []).filter((x) => !x.secs).pop();
@@ -4316,6 +4327,7 @@ async function renderScout() {
   body.scrollTop = top;
   const lg = byId('scoutLog'); lg.scrollTop = lg.scrollHeight;
   byId('scoutRaw').addEventListener('toggle', (e) => { scoutRawOpen = e.target.open; });
+  byId('scoutAbout').addEventListener('toggle', (e) => { scoutAboutOpen = e.target.open; });
   body.querySelectorAll('[data-scopy]').forEach((b) => b.addEventListener('click', async () => {
     const ok = await copyText(b.dataset.scopy);
     b.textContent = ok ? 'Copied' : 'Copy failed';
@@ -4344,9 +4356,38 @@ async function renderScout() {
   scoutWasRunning = s.running;
 }
 let scoutRawOpen = false;
+let scoutAboutOpen = null;   // null: open until the first run, then folded; after a click, what you chose
 byId('scoutBtn').addEventListener('click', () => (byId('logpane').classList.contains('open') && byId('logtitle').textContent === SCOUT_TITLE ? closeLog() : openScout()));
 scoutPeek();
 setInterval(scoutPeek, 60000);
+// plan usage in the header: one pill per tool, its logo and the used percent, e.g. "✳ 88%".
+// With two windows each gets its label: "✳ 5h 12% · week 88%". The logos are the ones the
+// Claude Code and Codex VS Code extensions ship.
+const USAGE_SHORT = { five_hour: '5h', seven_day: 'week' };
+const USAGE_LONG = { five_hour: '5-hour', seven_day: 'Weekly' };
+const USAGE_ICON = {
+  Claude: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#D97757" d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"/></svg>',
+  Codex: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M13.795 23.856q-1.188 0-2.256-.448a6.1 6.1 0 0 1-1.9-1.247 5.8 5.8 0 0 1-1.875.306 5.8 5.8 0 0 1-2.944-.777 6.1 6.1 0 0 1-2.184-2.12q-.807-1.34-.808-2.99 0-.682.19-1.482a6.3 6.3 0 0 1-1.472-2.002 5.76 5.76 0 0 1 .024-4.85q.546-1.177 1.52-2.024a5.5 5.5 0 0 1 2.303-1.2A5.55 5.55 0 0 1 5.485 2.62 6.06 6.06 0 0 1 7.575.925 5.85 5.85 0 0 1 10.21.313q1.187 0 2.255.447a6.1 6.1 0 0 1 1.9 1.248 5.8 5.8 0 0 1 1.875-.306q1.59 0 2.944.776a5.9 5.9 0 0 1 2.16 2.12q.832 1.34.832 2.99 0 .682-.19 1.483a6.2 6.2 0 0 1 1.472 2.024q.522 1.13.522 2.378 0 1.272-.546 2.449a6.1 6.1 0 0 1-1.543 2.048 5.45 5.45 0 0 1-2.28 1.177 5.4 5.4 0 0 1-1.115 2.402 5.8 5.8 0 0 1-2.066 1.695 5.85 5.85 0 0 1-2.635.612M7.93 20.913q1.188 0 2.066-.495l4.463-2.542a.52.52 0 0 0 .238-.448v-2.024L8.95 18.676a.97.97 0 0 1-1.044 0L3.419 16.11a.7.7 0 0 1-.024.165v.282q0 1.201.57 2.213.594.99 1.639 1.554 1.044.59 2.326.589m.238-3.838q.143.07.26.07a.46.46 0 0 0 .238-.07l1.781-1.012-5.722-3.296q-.522-.306-.522-.918v-5.11a4.27 4.27 0 0 0-1.9 1.602 4.13 4.13 0 0 0-.712 2.354q0 1.155.594 2.213.593 1.06 1.543 1.601zm5.627 5.227q1.258 0 2.279-.565a4.25 4.25 0 0 0 1.614-1.554q.594-.99.594-2.213v-5.085q0-.283-.237-.424l-1.805-1.036v6.568q0 .613-.522.919l-4.487 2.566q1.163.825 2.564.824m.902-8.617v-3.202l-2.683-1.507-2.707 1.507v3.202l2.707 1.507zm-6.933-7.51q0-.612.522-.918l4.488-2.567a4.34 4.34 0 0 0-2.564-.824q-1.26 0-2.28.565a4.25 4.25 0 0 0-1.614 1.554q-.57.99-.57 2.213v5.062q0 .283.237.447l1.781 1.036zm12.061 11.253a4.13 4.13 0 0 0 1.876-1.6 4.2 4.2 0 0 0 .712-2.355q0-1.154-.593-2.213-.594-1.06-1.544-1.6l-4.44-2.543q-.142-.095-.26-.071a.46.46 0 0 0-.238.07l-1.78.99 5.745 3.319q.26.141.38.377a.9.9 0 0 1 .142.518zm-4.772-11.96q.522-.33 1.045 0l4.51 2.614v-.424q0-1.13-.57-2.142a4.1 4.1 0 0 0-1.59-1.648q-1.02-.613-2.374-.613-1.187 0-2.066.495L9.545 6.292a.52.52 0 0 0-.238.448v2.025z"/></svg>',
+};
+const usageWhen = (ms) => new Date(ms).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+const usagePill = (label, u, none) => {
+  const ws = (u && u.windows || []).slice().sort((a, b) => (a.name === 'five_hour' ? -1 : 0) - (b.name === 'five_hour' ? -1 : 0));
+  if (!ws.length) return '<span title="' + escA(label + ': ' + none) + '">' + USAGE_ICON[label] + '–</span>';
+  const top = Math.max(...ws.map((w) => w.pct));
+  const tip = label + '\n' + ws.map((w) => (USAGE_LONG[w.name] || w.name) + ' limit: ' + w.pct + '% used'
+    + (w.reset ? ' (reset since the last reading)' : w.resetsAt ? ', resets ' + usageWhen(w.resetsAt) : '')
+    + (w.at ? ' · read ' + ago(w.at) : '')).join('\n') + (u.plan ? '\nPlan: ' + u.plan : '');
+  return '<span class="' + (top >= 90 ? 'bad' : top >= 75 ? 'warn' : '') + '" title="' + escA(tip) + '" aria-label="' + escA(tip) + '">'
+    + USAGE_ICON[label] + ws.map((w) => (ws.length > 1 ? (USAGE_SHORT[w.name] || w.name) + ' ' : '') + w.pct + '%').join(' · ') + '</span>';
+};
+const usagePeek = async () => {
+  let u;
+  try { u = await (await fetch('/api/usage')).json(); } catch { return; }
+  byId('hdusage').innerHTML = usagePill('Claude', u.claude, 'No reading yet: it shows after the next chat turn on this dashboard')
+    + usagePill('Codex', u.codex, 'No Codex session found in ~/.codex/sessions');
+};
+usagePeek();
+setInterval(usagePeek, 60000);
 byId('boardBtn').addEventListener('click', () => boardOn ? leaveBoard() : openBoard());
 byId('bpClose').addEventListener('click', () => goHome());
 readUrl();
