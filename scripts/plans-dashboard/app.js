@@ -1592,7 +1592,7 @@ async function chatAddImgs(files) {
 function paintImgs() {
   const S = byId('cimgs');
   if (!S || !ch) return;
-  S.innerHTML = (chatImgs[ch.key] || []).map((x, n) => '<span class="cimg"><img src="' + escA(x.url) + '" alt="Pasted image ' + (n + 1) + '" title="Goes with the next message">' +
+  S.innerHTML = (chatImgs[ch.key] || []).map((x, n) => '<span class="cimg"><img src="' + escA(x.url) + '" alt="Pasted image ' + (n + 1) + '" title="Goes with the next message. Click to see it full size.">' +
     '<button data-imgx="' + n + '" aria-label="Do not send image ' + (n + 1) + '" title="Do not send this image">✕</button></span>').join('');
   S.querySelectorAll('[data-imgx]').forEach((b) => b.addEventListener('click', () => {
     chatImgs[ch.key].splice(+b.dataset.imgx, 1);
@@ -3431,9 +3431,9 @@ document.addEventListener('keydown', (e) => {
   // nothing else is open: Esc closes the open plan (not while typing in a box)
   if (selected && !(e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"]'))) goHome();
 });
-// a click on a picture in a chat message shows it full size; a click or Esc closes it
+// a click on a picture in a chat message, or on one waiting to be sent, shows it full size; a click or Esc closes it
 document.addEventListener('click', (e) => {
-  const im = e.target.closest && e.target.closest('.amsg .cimg img');
+  const im = e.target.closest && e.target.closest('.amsg .cimg img, #cimgs .cimg img');
   if (!im) return;
   e.preventDefault(); e.stopPropagation();
   const v = document.createElement('div');

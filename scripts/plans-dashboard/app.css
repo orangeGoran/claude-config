@@ -680,6 +680,7 @@
   .cimg { position:relative; display:inline-block; }
   .cimg img { display:block; max-height:72px; max-width:140px; border:1px solid var(--line); border-radius:6px; background:var(--card); }
   .amsg .cimg img { max-height:160px; max-width:240px; cursor:zoom-in; }
+  #cimgs .cimg img { cursor:zoom-in; }
   .imgview { position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; padding:24px;
              background:rgba(0,0,0,.78); cursor:zoom-out; }
   .imgview img { max-width:100%; max-height:100%; border-radius:6px; box-shadow:0 8px 40px rgba(0,0,0,.5); }
