@@ -1104,6 +1104,24 @@ test('merge runs gh pr merge on the reviewed commit, deletes the remote branch, 
   assert.equal(refused.ok, false, JSON.stringify(refused));
   assert.match(refused.output, /Pull by hand\.$/);
   assert.equal(git(repo, 'rev-parse', 'HEAD'), localHead, 'a refused pull leaves the checkout alone');
+
+  // Files changed reads the PR from the local repo when its commits are here: no GitHub call
+  const listFile = path.join(ghDir, 'list.json'), list = readFileSync(listFile, 'utf8');
+  const baseSha = git(repo, 'rev-parse', 'HEAD~1').trim(), prHead = localHead.trim();
+  writeFileSync(listFile, JSON.stringify([{ number: 7, headRefName: 'auto/demo-plan', headRefOid: prHead, baseRefName: 'main',
+    baseRefOid: baseSha, isDraft: false, state: 'OPEN', title: 'Demo', url: 'https://github.com/o/r/pull/7' }]));
+  await act({ action: 'ready' });   // re-reads the PR list
+  const before = calls().length;
+  const d = await (await get('/api/pr-diff?project=demo&number=7')).json();
+  assert.equal(d.local, true, JSON.stringify(d));
+  assert.match(d.diff, /^diff --git a\/local\.txt b\/local\.txt$/m);
+  assert.doesNotMatch(d.diff, /remote\.txt|later\.txt/, 'only the PR\'s own changes, not the base\'s');
+  const f = await (await get('/api/pr-file?project=demo&sha=' + prHead + '&path=local.txt')).json();
+  assert.deepEqual(f, { ok: true, text: 'l', local: true });
+  assert.equal(calls().length, before, 'gh was not called for the diff or the file');
+  writeFileSync(listFile, list);
+  await act({ action: 'ready' });
+
   git(repo, 'fetch', '-q'); git(repo, 'reset', '-q', '--hard', 'origin/main');
 });
 

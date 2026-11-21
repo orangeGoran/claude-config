@@ -1314,7 +1314,7 @@ const ghProblem = (out) => /ENOENT/.test(out) ? 'gh is not installed'
 // GraphQL for the account (other tools and agents share it) the PR tabs went blank.
 // The newest 200 PRs, newest first, in the shape `gh pr list --json` gave.
 const PR_JQ = '[.[] | {number, title, url: .html_url, isDraft: .draft, headRefName: .head.ref, headRefOid: .head.sha,' +
-  ' baseRefName: .base.ref, mergedAt: .merged_at, state: (if .merged_at then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end)}]';
+  ' baseRefName: .base.ref, baseRefOid: .base.sha, mergedAt: .merged_at, state: (if .merged_at then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end)}]';
 const listPrs = async (proj) => {
   const all = [];
   for (const page of [1, 2]) {
@@ -1335,7 +1335,7 @@ const refreshPrList = (proj) => {
     if (r.ok) for (const p of r.prs) {   // newest first: keep the first PR per branch
       if (allByBranch[p.headRefName]) continue;
       const pr = allByBranch[p.headRefName] = { number: p.number, state: p.state, isDraft: p.isDraft, title: p.title,
-        url: p.url, head: p.headRefOid, base: p.baseRefName, mergedAt: p.mergedAt || null };
+        url: p.url, head: p.headRefOid, base: p.baseRefName, baseSha: p.baseRefOid, mergedAt: p.mergedAt || null };
       if (p.headRefName.startsWith('auto/')) byBranch[p.headRefName] = pr;
     }
     Object.assign(c, { at: Date.now(), byBranch: r.ok ? byBranch : c.byBranch,
@@ -1581,6 +1581,37 @@ const gitRaw = (wt, args, timeout = 60000) =>
     { env: { ...ENV, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }, timeout, maxBuffer: 64 * 1024 * 1024 },
     (err, stdout, stderr) => resolve({ ok: !err, code: err ? err.code : 0, out: String(stdout || ''),
       err: String(stderr || (err && err.message) || '').trim() })));
+// Files changed from the local repo: the PR's commits are usually here already (the pipeline
+// made them), and git answers in milliseconds where the GitHub diff took seconds. null when a
+// commit is missing here: the caller asks GitHub. The base is the newer of GitHub's base commit
+// and origin/<base> (merge-base of all three), so a base merged into the branch since adds nothing.
+const SHA = /^[0-9a-f]{40}$/;
+const hasCommit = async (root, sha) => SHA.test(sha || '') && (await gitRaw(root, ['cat-file', '-e', sha + '^{commit}'])).ok;
+// a PR made elsewhere is not here yet: fetch it in the background (GitHub answers this time,
+// git every time after), at most once a minute per PR head so an offline Mac does not retry each poll
+const prFetchAt = new Map();
+const fetchPr = (proj, pr) => {
+  const k = proj.root + ' ' + pr.head;
+  if (Date.now() - (prFetchAt.get(k) || 0) < 60000) return;
+  prFetchAt.set(k, Date.now());
+  gitRaw(proj.root, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', 'origin',
+    'refs/pull/' + pr.number + '/head', pr.base]);
+};
+const localPrDiff = async (proj, n) => {
+  const pr = Object.values((prLists[proj.root] || {}).allByBranch || {}).find((x) => String(x.number) === n);
+  if (!pr) return null;
+  if (!(await hasCommit(proj.root, pr.head)) || !(await hasCommit(proj.root, pr.baseSha))) { fetchPr(proj, pr); return null; }
+  const tip = await gitRaw(proj.root, ['rev-parse', '--verify', '--quiet', 'origin/' + pr.base + '^{commit}']);
+  const mb = await gitRaw(proj.root, ['merge-base', pr.head, pr.baseSha, ...(tip.ok ? [tip.out.trim()] : [])]);
+  if (!mb.ok) return null;
+  const d = await gitRaw(proj.root, ['diff', '--no-color', '--no-ext-diff', '-M', mb.out.trim(), pr.head]);
+  return d.ok ? { ok: true, diff: d.out, local: true } : null;
+};
+const localPrFile = async (proj, sha, file) => {
+  if (!(await hasCommit(proj.root, sha))) return null;
+  const r = await gitRaw(proj.root, ['show', sha + ':' + file]);
+  return r.ok ? { ok: true, text: r.out, local: true } : null;
+};
 const UNTRACKED_MAX = 100, UNTRACKED_AT_ONCE = 8;
 const localFetchAt = new Map();   // worktree -> when it last fetched the PR's head
 // a plan whose Push or Discard runs now: the chat does not start a turn meanwhile
@@ -2744,6 +2775,8 @@ const server = http.createServer(async (req, res) => {
       const n = url.searchParams.get('number') || '';
       if (!proj || !/^\d{1,7}$/.test(n)) return json(res, 400, { error: 'bad request' });
       if (url.pathname === '/api/pr') return json(res, 200, await prDetail(proj, n));
+      const local = await localPrDiff(proj, n);
+      if (local) return json(res, 200, local);
       const r = await gh(proj, ['api', '-H', 'Accept: application/vnd.github.diff', 'repos/{owner}/{repo}/pulls/' + n]);
       if (r.ok || !/HTTP 406|maximum number of files|too_large/i.test(r.output)) return json(res, 200, r.ok ? { ok: true, diff: r.out } : r);
       return json(res, 200, await prDiffFromFiles(proj, n));
@@ -2761,6 +2794,8 @@ const server = http.createServer(async (req, res) => {
       const sha = url.searchParams.get('sha') || '', file = url.searchParams.get('path') || '';
       if (!proj || !/^[0-9a-f]{40}$/.test(sha) || !file || file.split('/').some((s) => !s || s === '..' || s === '.'))
         return json(res, 400, { error: 'bad request' });
+      const local = await localPrFile(proj, sha, file);
+      if (local) return json(res, 200, local);
       const r = await gh(proj, ['api', '-H', 'Accept: application/vnd.github.raw',
         'repos/{owner}/{repo}/contents/' + file.split('/').map(encodeURIComponent).join('/') + '?ref=' + sha]);
       return json(res, 200, r.ok ? { ok: true, text: r.out } : r);
