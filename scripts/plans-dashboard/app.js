@@ -1838,13 +1838,20 @@ function drawPr(p) {
     else if (d.mergeable === 'MERGEABLE') line('ok', '✓', 'No conflicts with <code>' + esc(d.baseRefName) + '</code>');
     else line('dim', '…', 'GitHub is still checking for conflicts', null, 'checking conflicts');
   }
-  // GitHub's own verdict: BLOCKED means a branch rule is not met (usually a required approval)
+  // GitHub's own verdict: BLOCKED means a branch rule is not met (usually a required approval);
+  // BEHIND means the rules want the branch up to date with the base, and the base has moved on
+  // (no admin way past BEHIND: merging the base in is the fix)
+  const behind = open && !d.isDraft && d.mergeable !== 'CONFLICTING' && d.mergeStateStatus === 'BEHIND';
   const rules = open && !d.isDraft && d.mergeable !== 'CONFLICTING' && d.mergeStateStatus === 'BLOCKED';
   const admin = !!(d.merge && d.merge.admin);
-  if (rules) line('bad', '✕', '<b>GitHub blocks the merge</b> · ' + (d.reviewDecision === 'REVIEW_REQUIRED'
+  if (behind) line('bad', '✕', '<b>Not up to date with <code>' + esc(d.baseRefName) + '</code></b> · ' +
+    (d.behindBy > 0 ? esc(d.baseRefName) + ' has ' + d.behindBy + ' commit' + (d.behindBy > 1 ? 's' : '') + ' this branch does not have, and ' : '') +
+    'the branch rules need them merged in first. Click <b>Fix conflicts</b> in the chat to merge ' + esc(d.baseRefName) + ' in.',
+    null, 'behind ' + d.baseRefName);
+  else if (rules) line('bad', '✕', '<b>GitHub blocks the merge</b> · ' + (d.reviewDecision === 'REVIEW_REQUIRED'
     ? 'the branch rules need an approving review' : c.failed.length || c.running ? 'the branch rules need the checks to pass'
     : 'a branch rule is not met yet') + (admin ? '' : '. Ask someone to approve it on GitHub.'), null, 'blocked by branch rules');
-  const blocked = d.isDraft || d.mergeable === 'CONFLICTING';
+  const blocked = d.isDraft || d.mergeable === 'CONFLICTING' || behind;
   const canMerge = open && !blocked && !(rules && !admin);
   const methods = (d.merge && d.merge.methods.length) ? d.merge.methods : ['merge'];
   const pick = methods.includes(mergeMethod) ? mergeMethod : methods.includes(d.merge && d.merge.default) ? d.merge.default : methods[0];
