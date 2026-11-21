@@ -3,7 +3,12 @@
 Rules for `changelog.d/`. Read this file before you change files here. The entry format is in `changelog.d/README.md`.
 
 - Each PR to `@@BASE_BRANCH@@` adds one new YAML file here. The "Changelog Gate" check (`.github/workflows/changelog-gate.yml`) fails the PR otherwise.
+@@IF CHANGELOG_SUMMARY@@
 - Every entry has `summary` (one plain paragraph for the team) and `internal` (the developer note). An entry that customers see also has `customer` in @@CHANGELOG_LOCALES@@.
+@@END@@
+@@IFNOT CHANGELOG_SUMMARY@@
+- Every entry has `internal` (the developer note). An entry that customers see also has `customer` in @@CHANGELOG_LOCALES@@.
+@@END@@
 @@IF HAS_VERSION_BUMP@@
 - Each PR with an entry raises `version` in `@@CHANGELOG_VERSION_FILE@@` by one step.
 @@END@@

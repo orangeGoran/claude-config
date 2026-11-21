@@ -496,6 +496,9 @@ export function buildVars(p, now = new Date()) {
     CONTRACT_IN_RULES: contractInRules,
     MOD_CODEX: moduleOn(p, 'codex'),
     MOD_CHANGELOG: moduleOn(p, 'changelog'),
+    // the `summary` field exists only in the rendered validator; a project validator
+    // (changelog.validateCmd) has its own field list and can reject unknown fields
+    CHANGELOG_SUMMARY: !clValidateCmd,
     MOD_DECISION_SHEET: moduleOn(p, 'decision-sheet'),
     MOD_TEST_REVIEW: moduleOn(p, 'test-review'),
     MOD_STEP_GATE: moduleOn(p, 'step-gate'),

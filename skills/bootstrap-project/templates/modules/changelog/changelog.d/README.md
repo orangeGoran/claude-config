@@ -13,9 +13,11 @@ kind: added # added | changed | fixed | removed | security | performance
 audience: both # internal | customer | both
 scope: orders # kebab-case area of the change
 pr: 12 # leave this line out when the PR number is not known yet
+@@IF CHANGELOG_SUMMARY@@
 summary: |
   A user can now add a note to an order. The note shows on the order page and
   in the order email.
+@@END@@
 internal: |
   `PATCH /v1/orders/{id}` takes an optional `note` (max 500 characters).
   New column `orders.note`. A longer note gives 422 `note_too_long`.
@@ -29,7 +31,9 @@ customer:
 | `audience` | yes | `internal`, `customer` or `both` (see below). |
 | `scope` | yes | The area of the change, in kebab-case. |
 | `pr` | no | The PR number, a positive number. |
+@@IF CHANGELOG_SUMMARY@@
 | `summary` | yes | One short paragraph in plain words for the team: what changed and why it matters. Read this one first; it replaces reading the `internal` note. |
+@@END@@
 | `internal` | yes | The developer note: endpoints, fields, error codes, migrations, anything surprising. |
 | `customer` | with `customer` or `both` | The text customers see, in each language: @@CHANGELOG_LOCALES@@. Left out for `internal`. |
 

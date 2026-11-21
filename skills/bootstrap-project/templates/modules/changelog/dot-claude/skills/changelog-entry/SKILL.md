@@ -1,6 +1,11 @@
 ---
 name: changelog-entry
+@@IF CHANGELOG_SUMMARY@@
 description: Write the changelog.d/ entry that the Changelog Gate check needs on each PR to @@BASE_BRANCH@@ — one YAML file with a plain summary for the team, a developer note and, when customers see the change, a customer note in @@CHANGELOG_LOCALES@@ — and check it with the changelog validator, or say that the PR needs the no-changelog label instead. Use when a PR is opened, when the Changelog Gate check failed, or when the owner asks for a changelog entry or a release note.
+@@END@@
+@@IFNOT CHANGELOG_SUMMARY@@
+description: Write the changelog.d/ entry that the Changelog Gate check needs on each PR to @@BASE_BRANCH@@ — one YAML file with a developer note and, when customers see the change, a customer note in @@CHANGELOG_LOCALES@@ — and check it with the changelog validator, or say that the PR needs the no-changelog label instead. Use when a PR is opened, when the Changelog Gate check failed, or when the owner asks for a changelog entry or a release note.
+@@END@@
 argument-hint: "[short-slug]"
 ---
 
@@ -28,8 +33,14 @@ Ask: **can a user, or a customer's agent or app, do or see something new or diff
 
 | Answer | `audience` | What you write |
 | --- | --- | --- |
+@@IF CHANGELOG_SUMMARY@@
 | No | `internal` | `summary` and `internal` |
 | Yes | `both` | `summary`, `internal` and `customer` in @@CHANGELOG_LOCALES@@ |
+@@END@@
+@@IFNOT CHANGELOG_SUMMARY@@
+| No | `internal` | `internal` |
+| Yes | `both` | `internal` and `customer` in @@CHANGELOG_LOCALES@@ |
+@@END@@
 
 `customer` alone is rare: use it only when there is nothing for a developer to note. When unsure, use `both`.
 
@@ -42,9 +53,11 @@ kind: added # added | changed | fixed | removed | security | performance
 audience: both # internal | customer | both
 scope: orders # kebab-case area of the change
 pr: 12 # leave this line out when the PR number is not known yet
+@@IF CHANGELOG_SUMMARY@@
 summary: |
   A user can now add a note to an order. The note shows on the order page and
   in the order email.
+@@END@@
 internal: |
   `PATCH /v1/orders/{id}` takes an optional `note` (max 500 characters).
   New column `orders.note`. A longer note gives 422 `note_too_long`.
@@ -54,7 +67,9 @@ customer:
 
 Rules:
 
+@@IF CHANGELOG_SUMMARY@@
 - `summary`: always. One short paragraph (2–4 sentences) in plain words, written in ASD-STE100. The owner reads it in place of the `internal` note: what changed, for whom, and any limit or catch. No code names unless the reader needs one.
+@@END@@
 - `internal`: always. The developer details: endpoints, fields, error codes, migrations, settings, and anything surprising.
 - `customer`: only for `customer` and `both`, with every language (@@CHANGELOG_LOCALES@@) filled. Translate it yourself; never leave a placeholder. Write for a person who uses the product: what they can now do, not which endpoint changed. No field names, no status codes.
 - Use made-up values when an example helps. Never put real customer data, credentials or unshipped security details in the entry.
@@ -77,5 +92,10 @@ Run `@@CHANGELOG_VALIDATE@@`. It must print `PASS`. Fix each problem it names an
 
 ## Step 5 — Output
 
+@@IF CHANGELOG_SUMMARY@@
 - The path of the new file, on its own line, and the `summary` text, so the owner can check the tone.
+@@END@@
+@@IFNOT CHANGELOG_SUMMARY@@
+- The path of the new file, on its own line, and the English `customer` text (or "internal only"), so the owner can check the tone.
+@@END@@
 - Do not run `git add` or `git commit`. `/skill-auto-pipeline` commits it in a run. In an interactive session, give the owner a copy-paste `git add -- <path>` command for the new file and every other file this skill changed.
