@@ -1491,11 +1491,43 @@ const pullRoot = async (proj, base) => {
   }
   return 'Pulled ' + base + ' in ' + where + (/Already up to date/i.test(r.out) ? ' (it was already up to date).' : '.');
 };
+// The same fields as `gh pr view --json`, read with the REST API. Used when GitHub refuses
+// GraphQL (its rate limit is shared with other tools and agents), so the PR tab still opens.
+// REST has no "review required": reviewDecision is only APPROVED, CHANGES_REQUESTED or null.
+const prViewRest = async (proj, n) => {
+  const p = await gh(proj, ['api', 'repos/{owner}/{repo}/pulls/' + n]);
+  if (!p.ok) return p;
+  const d = JSON.parse(p.out), sha = d.head.sha;
+  const [runs, status, reviews] = await Promise.all([
+    gh(proj, ['api', '--paginate', 'repos/{owner}/{repo}/commits/' + sha + '/check-runs?per_page=100',
+      '--jq', '.check_runs[] | {__typename: "CheckRun", name, status: (.status | ascii_upcase), conclusion: ((.conclusion // "") | ascii_upcase)}']),
+    gh(proj, ['api', 'repos/{owner}/{repo}/commits/' + sha + '/status',
+      '--jq', '.statuses[] | {__typename: "StatusContext", context, state: (.state | ascii_upcase)}']),
+    gh(proj, ['api', '--paginate', 'repos/{owner}/{repo}/pulls/' + n + '/reviews?per_page=100', '--jq', '.[] | {user: .user.login, state}'])]);
+  const rows = (r) => r.ok ? r.out.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l)) : [];
+  const last = {};   // each reviewer's newest approve or change request counts, as on GitHub
+  for (const v of rows(reviews)) if (v.state === 'APPROVED' || v.state === 'CHANGES_REQUESTED') last[v.user] = v.state;
+  const votes = Object.values(last);
+  return { ok: true, pr: {
+    number: d.number, title: d.title, body: d.body || '', url: d.html_url, isDraft: d.draft,
+    state: d.merged_at ? 'MERGED' : d.state === 'open' ? 'OPEN' : 'CLOSED',
+    baseRefName: d.base.ref, headRefName: d.head.ref, headRefOid: sha,
+    mergeable: d.mergeable === true ? 'MERGEABLE' : d.mergeable === false ? 'CONFLICTING' : 'UNKNOWN',
+    mergeStateStatus: String(d.mergeable_state || 'unknown').toUpperCase(),
+    additions: d.additions, deletions: d.deletions, changedFiles: d.changed_files, commits: d.commits,
+    reviewDecision: votes.includes('CHANGES_REQUESTED') ? 'CHANGES_REQUESTED' : votes.includes('APPROVED') ? 'APPROVED' : null,
+    statusCheckRollup: [...rows(runs), ...rows(status)] } };
+};
 const prDetail = async (proj, number) => {
   const r = await gh(proj, ['pr', 'view', String(number), '--json',
     'number,title,body,state,isDraft,url,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus,additions,deletions,changedFiles,commits,reviewDecision,statusCheckRollup']);
-  if (!r.ok) return r;
-  const pr = JSON.parse(r.out);
+  let pr;
+  if (r.ok) pr = JSON.parse(r.out);
+  else {
+    const rest = await prViewRest(proj, String(number));
+    if (!rest.ok) return r;
+    pr = rest.pr;
+  }
   const checks = { passed: 0, failed: [], running: 0 };
   for (const c of pr.statusCheckRollup || []) {
     const st = c.__typename === 'StatusContext'
@@ -1509,7 +1541,7 @@ const prDetail = async (proj, number) => {
   const [merge, behind] = await Promise.all([mergeSettings(proj), pr.state !== 'OPEN' ? null
     : gh(proj, ['api', 'repos/{owner}/{repo}/compare/' + pr.headRefOid + '...' + pr.baseRefName, '--jq', '.ahead_by'])]);
   const behindBy = behind && behind.ok ? (parseInt(behind.out, 10) || 0) : null;
-  return { ok: true, pr: { ...rest, commits: (commits || []).length, checks, merge, behindBy } };
+  return { ok: true, pr: { ...rest, commits: typeof commits === 'number' ? commits : (commits || []).length, checks, merge, behindBy } };
 };
 // task-list boxes ("- [ ] …") in order, skipping fenced code — the same ones the page draws
 const taskLines = (body) => {
@@ -1543,7 +1575,7 @@ const runPrAction = async (proj, b) => {
     // GitHub refuses when someone pushed after the page loaded, so what you reviewed is what merges
     const m = await gh(proj, ['pr', 'merge', n, '--' + b.method, '--match-head-commit', b.head, ...(b.admin ? ['--admin'] : [])]);
     if (!m.ok) return m;
-    const v = await gh(proj, ['pr', 'view', n, '--json', 'baseRefName,headRefName']);
+    const v = await gh(proj, ['api', 'repos/{owner}/{repo}/pulls/' + n, '--jq', '{baseRefName: .base.ref, headRefName: .head.ref}']);
     const { baseRefName: base, headRefName: head } = v.ok ? JSON.parse(v.out) : {};
     const notes = [];
     // not `gh pr merge --delete-branch`: it also deletes the local branch, which the run's worktree has checked out
@@ -1557,7 +1589,7 @@ const runPrAction = async (proj, b) => {
   }
   if (b.action === 'task') {
     // read the body fresh, so a tick never overwrites an edit made on GitHub since the page loaded
-    const r = await gh(proj, ['pr', 'view', n, '--json', 'body']);
+    const r = await gh(proj, ['api', 'repos/{owner}/{repo}/pulls/' + n, '--jq', '{body: (.body // "")}']);
     if (!r.ok) return r;
     const lines = JSON.parse(r.out).body.split('\n');
     const tasks = taskLines(lines.join('\n'));

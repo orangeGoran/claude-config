@@ -32,7 +32,7 @@ const dir = process.env.FAKE_GH_DIR, a = process.argv.slice(2);
 fs.appendFileSync(path.join(dir, 'calls.log'), a.join(' ') + '\\n');
 const body = path.join(dir, 'body.md');
 if (a[0] === 'api' && /^repos\\/\\{owner\\}\\/\\{repo\\}\\/pulls\\?/.test(a[1])) process.stdout.write(fs.existsSync(path.join(dir, 'list.json')) ? fs.readFileSync(path.join(dir, 'list.json')) : '[]');
-else if (a[1] === 'view') process.stdout.write(JSON.stringify({ body: fs.existsSync(body) ? fs.readFileSync(body, 'utf8') : '',
+else if (a[1] === 'view' || (a[0] === 'api' && /^repos\\/\\{owner\\}\\/\\{repo\\}\\/pulls\\/\\d+$/.test(a[1]))) process.stdout.write(JSON.stringify({ body: fs.existsSync(body) ? fs.readFileSync(body, 'utf8') : '',
   baseRefName: 'main', headRefName: 'auto/demo-plan' }));
 else if (a[1] === 'edit') fs.writeFileSync(body, fs.readFileSync(0));
 else if (a[0] === 'api') process.stdout.write('whole file\\n');

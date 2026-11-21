@@ -1651,7 +1651,7 @@ byId('csplit').addEventListener('keydown', (e) => {
   setChatWidth(byId('chat').offsetWidth + (e.key === 'ArrowLeft' ? 40 : -40), true);
 });
 async function loadPr(p) {
-  const r = await (await fetch('/api/pr?project=' + p.project + '&number=' + p.pr.number)).json();
+  const r = await answer(await fetch('/api/pr?project=' + p.project + '&number=' + p.pr.number));
   prData[p.key] = r.ok ? { ...r.pr, from: JSON.stringify(p.pr) } : { error: r.output || r.error, from: JSON.stringify(p.pr) };
   paintSync();
 }
@@ -1765,8 +1765,8 @@ async function prAct(p, data) {
   document.querySelectorAll('#ract button:not(.rfbtn)').forEach((b) => { b.disabled = true; if (label) b.textContent = label; });
   let r;
   try {
-    r = await (await fetch('/api/pr-action', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project: p.project, slug: p.slug, number: p.pr.number, ...data }) })).json();
+    r = await answer(await fetch('/api/pr-action', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: p.project, slug: p.slug, number: p.pr.number, ...data }) }));
   } catch (e) { r = { output: String((e && e.message) || e) }; }
   prErr[p.key] = r.ok ? null : { action: data.action, text: r.output || r.error || 'no message from gh' };
   if (!r.ok && !byId('prbody')) alert('⚠️ GitHub refused: ' + prErr[p.key].text);
@@ -2194,8 +2194,8 @@ async function localAct(p, what, btn, label) {
   btn.textContent = label;
   let r;
   try {
-    r = await (await fetch('/api/local-' + what, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project: p.project, slug: p.slug, head: d.head, prHead: d.prHead, sig: prLocal[p.key].sig }) })).json();
+    r = await answer(await fetch('/api/local-' + what, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: p.project, slug: p.slug, head: d.head, prHead: d.prHead, sig: prLocal[p.key].sig }) }));
   } catch (e) { r = { output: String((e && e.message) || e) }; }
   if (!r.ok) alert('⚠️ ' + (r.output || r.error || 'failed'));
   prLocal[p.key].sig = '';
@@ -2897,9 +2897,19 @@ function renderBar() {
     return (p ? p.slug.slice(0, 18) : k.slice(0, 18)) + '…(' + (p ? modeLabel(p) : '?') + ')';
   }).join('  ');
 }
+// An action's answer. Caddy answers with an empty page when the server is down (during `npm run restart`),
+// and reading that as JSON gave only "Unexpected end of JSON input": say what happened instead.
+async function answer(res) {
+  const text = await res.text();
+  try { return JSON.parse(text); } catch {
+    return { ok: false, output: res.ok
+      ? 'The dashboard sent an answer that is not JSON: ' + text.slice(0, 160)
+      : 'The dashboard server did not answer (HTTP ' + res.status + '). It may be restarting: wait a few seconds, reload the page and try again.' };
+  }
+}
 async function post(url, data, thenRefresh) {
-  const r = await (await fetch(url, { method: 'POST',
-    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })).json();
+  const r = await answer(await fetch(url, { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }));
   if (r.output) alert((r.ok ? '✅ ' : '⚠️ ') + r.output);
   if (thenRefresh) setTimeout(refresh, 1200);
   return r;
@@ -3699,10 +3709,10 @@ function renderGuide() {
       return inp ? inp.value.trim() : dflt;
     };
     el.disabled = true; el.textContent = 'Adding…';
-    const r = await (await fetch('/api/add-project', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const r = await answer(await fetch('/api/add-project', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ root, name: val('data-nm', cand.name), client: val('data-cl', cand.client),
         plansDir: cand.plansDir, short: val('data-gs', ''),
-        color: B.querySelector('[data-gc="' + CSS.escape(root) + '"][data-touched]')?.value || '' }) })).json();
+        color: B.querySelector('[data-gc="' + CSS.escape(root) + '"][data-touched]')?.value || '' }) }));
     if (!r.ok) { alert(r.output); el.disabled = false; el.textContent = 'Add'; return; }
     onbScan.candidates = onbScan.candidates.filter((c) => c.root !== root);
     await loadGuide(false);
