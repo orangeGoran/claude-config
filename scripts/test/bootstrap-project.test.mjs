@@ -393,3 +393,41 @@ test('--unused lists the modules, registrations, commands and settings the answe
     assert.match(text, /to turn on: modules\["codex"\] = true/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a root CLAUDE.md with another job stays: .claude/CLAUDE.md loads AGENTS.md, and verify accepts it', () => {
+  const { dir, repo, stage } = bootstrapRepo();
+  try {
+    const globalRules = '# Global instructions (all projects)\n\n- TLDR first.\n';
+    writeFileSync(path.join(repo, 'CLAUDE.md'), globalRules);
+    // without the .claude/ shim the root file is a change, and verify fails
+    let r = node('render.mjs', ['.', '--upgrade', '--stage', stage, '--json'], repo);
+    assert.equal(JSON.parse(r.stdout).files.find((f) => f.path === 'CLAUDE.md').status, 'changed');
+    let v = JSON.parse(node('verify.mjs', ['.', '--registry', path.join(dir, 'none.json'), '--json'], repo).stdout);
+    assert.ok(v.failed.some((f) => /instructions/.test(JSON.stringify(f))), JSON.stringify(v.failed));
+    // with it, the render leaves the root file out, and verify passes
+    writeFileSync(path.join(repo, '.claude/CLAUDE.md'), '@../AGENTS.md\n');
+    r = node('render.mjs', ['.', '--upgrade', '--stage', stage, '--json'], repo);
+    assert.ok(!JSON.parse(r.stdout).files.some((f) => f.path === 'CLAUDE.md'));
+    v = JSON.parse(node('verify.mjs', ['.', '--registry', path.join(dir, 'none.json'), '--json'], repo).stdout);
+    assert.deepEqual(v.failed, []);
+    assert.equal(readFileSync(path.join(repo, 'CLAUDE.md'), 'utf8'), globalRules);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('one branch for base and production is named once, and a repo with no install asks before adding a package', () => {
+  const { dir, repo } = bootstrapRepo((p) => ({ ...p, git: { ...p.git, base: 'main', prod: 'main' }, stack: { ...p.stack, installCmd: '' } }));
+  try {
+    const agents = readFileSync(path.join(repo, 'AGENTS.md'), 'utf8');
+    assert.match(agents, /^- Branches: main only\./m);
+    assert.doesNotMatch(agents, /`main` or `main`/);
+    assert.doesNotMatch(readFileSync(path.join(repo, '.claude/skills/skill-5-ship/SKILL.md'), 'utf8'), /`main` or `main`/);
+    assert.match(agents, /^- Add a package only with the owner's yes\./m);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+  const two = bootstrapRepo();
+  try {
+    const agents = readFileSync(path.join(two.repo, 'AGENTS.md'), 'utf8');
+    assert.match(agents, /^- Branches: develop → main\./m);
+    assert.match(agents, /Never push `develop` or `main`/);
+    assert.match(agents, /^- Use the latest package versions/m);
+  } finally { rmSync(two.dir, { recursive: true, force: true }); }
+});

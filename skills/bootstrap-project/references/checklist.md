@@ -8,7 +8,7 @@ After the bootstrap, the repo has these files. "Module" files exist only when th
 
 | Path | Source | Notes |
 | --- | --- | --- |
-| `AGENTS.md`, `CLAUDE.md` (`@AGENTS.md`) | core | Hard rules, Layout, Code rules, Plans, Workflow, Git, Commands. No Status or change history |
+| `AGENTS.md`, `CLAUDE.md` (`@AGENTS.md`) | core | Hard rules, Layout, Code rules, Plans, Workflow, Git, Commands. No Status or change history. When the root `CLAUDE.md` has another job (for example global rules linked into `~/.claude/`), the shim is `.claude/CLAUDE.md` with `@../AGENTS.md`, and the render leaves the root file alone |
 | `README.md` | core | Lean, ASD-STE100 |
 | `.editorconfig` | core | Kept when the repo has one. The `[Makefile]` block only when the repo has a Makefile |
 | `.gitignore` | core + modules | Merged: missing lines are appended, nothing is removed |

@@ -16,7 +16,7 @@ import { readFileSync, existsSync, readdirSync, statSync, lstatSync } from 'node
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { checkParams, moduleOn, renderAll, configDiff } from './render.mjs';
+import { checkParams, moduleOn, renderAll, configDiff, hasShim } from './render.mjs';
 
 const argv = process.argv.slice(2);
 const opt = { json: false };
@@ -195,11 +195,14 @@ check('claudemd', 'dash-tip', 'CLAUDE.md', existsSync(R('CLAUDE.md')));
   const miss = skills.filter((f) => !/\bbare\b/i.test(read(f) || '')).map((f) => path.relative(root, f));
   check('bare-commands', 'required', 'Every skill says "run bare commands, one per call"', !miss.length, miss.join(', ') || `${skills.length} skill(s)`);
 }
-// instruction files: CLAUDE.md is only @AGENTS.md, next to every AGENTS.md
+// instruction files: next to every AGENTS.md, a CLAUDE.md that is only @AGENTS.md, or a
+// .claude/CLAUDE.md that is only @../AGENTS.md (Claude Code loads both locations as project
+// instructions; the second keeps a root CLAUDE.md that has another job, such as global rules)
 {
   const agents = walk(root).filter((f) => path.basename(f) === 'AGENTS.md');
-  const bad = agents.filter((a) => (read(path.join(path.dirname(a), 'CLAUDE.md')) || '').trim() !== '@AGENTS.md').map((f) => path.relative(root, f));
-  check('instructions', 'required', 'Each AGENTS.md has a CLAUDE.md shim (@AGENTS.md)', agents.length && !bad.length, bad.length ? 'no shim: ' + bad.join(', ') : `${agents.length} AGENTS.md`);
+  const shimmed = (a) => hasShim(path.dirname(a), read);
+  const bad = agents.filter((a) => !shimmed(a)).map((f) => path.relative(root, f));
+  check('instructions', 'required', 'Each AGENTS.md has a CLAUDE.md shim (@AGENTS.md, or @../AGENTS.md in .claude/CLAUDE.md)', agents.length && !bad.length, bad.length ? 'no shim: ' + bad.join(', ') : `${agents.length} AGENTS.md`);
 }
 // the answers file
 {

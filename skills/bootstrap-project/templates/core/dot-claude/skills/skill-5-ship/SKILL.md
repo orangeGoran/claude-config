@@ -12,7 +12,7 @@ Ship: $ARGUMENTS
 ## Rules
 
 - **Push only when allowed.** Interactive: the owner asked for `/skill-5-ship` or said "push" in the current message. Unattended: the owner chose the "to PR" mode.
-- Push only the current branch, never `@@BASE_BRANCH@@` or `@@PROD_BRANCH@@`, never with `--force` or `-f`.
+- Push only the current branch, never @@PROTECTED_BRANCHES@@, never with `--force` or `-f`.
 - The PR is always a **draft**. The owner marks it ready and merges it.
 - No AI attribution in commits or the PR body.
 - Run shell commands bare: one command per call, no pipes, `&&`, `$(...)`, redirection or heredocs.
@@ -23,7 +23,7 @@ Ship: $ARGUMENTS
 
 ## Step 1 — Preflight
 
-1. `git branch --show-current`. Stop if it is `@@BASE_BRANCH@@` or `@@PROD_BRANCH@@`.
+1. `git branch --show-current`. Stop if it is @@PROTECTED_BRANCHES@@.
 2. **A merge in progress.** `git status`. When it says "You have unmerged paths" or "All conflicts fixed but you are still merging", an earlier run stopped during a merge, or the owner merged by hand. Do not start a new merge. Resolve the files of `git diff --name-only --diff-filter=U` as **Resolve the conflicts** says (Step 2), and keep the files the owner already staged as they are. Then continue at its "commit the merge" item.
 3. `git status --porcelain`. Stop if it shows a change that belongs to this work and is not committed, and name the files. (Interactive: ask the owner whether to commit them first.) A file that never ships (`.env*`, `.claude/settings.local.json`, the files of another plan) does not stop the ship: leave it unstaged and note it for Step 7.
 4. `git log --oneline origin/<base>..HEAD`. Stop if there are no commits to ship.

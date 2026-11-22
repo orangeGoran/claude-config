@@ -441,7 +441,10 @@ export function buildVars(p, now = new Date()) {
   const clLocales = arr(p.changelog?.locales).length ? arr(p.changelog.locales) : ['en'];
   const clVersionFile = str(p.changelog?.versionFile);
 
-  const branchChain = [base, staging, prod].filter(Boolean).join(' → ');
+  // base and prod can be one branch (PRs go straight to main): name it once
+  const branchList = [...new Set([base, staging, prod].filter(Boolean))];
+  const branchChain = branchList.length > 1 ? branchList.join(' → ') : `${base} only`;
+  const protectedBranches = base === prod ? `\`${base}\`` : `\`${base}\` or \`${prod}\``;
   const merge = str(g.mergeStyle, 'squash');
   const pel = st.postEditLint || {};
   const exts = arr(pel.extensions).map((e) => String(e).replace(/^\*?\.?/, ''));
@@ -483,6 +486,9 @@ export function buildVars(p, now = new Date()) {
     BASE_BRANCH: base,
     PROD_BRANCH: prod,
     BRANCH_CHAIN: branchChain,
+    PROTECTED_BRANCHES: protectedBranches,
+    PACKAGE_RULE: str(st.installCmd) ? 'Use the latest package versions: install them with the package manager, never type a version by hand.'
+      : 'Add a package only with the owner\'s yes. Then install its latest version with the package manager, never type a version by hand.',
     MERGE_STYLE: merge,
     MERGE_HINT: merge === 'squash' ? `a squash merge keeps ${base} to one commit per PR` : 'use a merge commit, so the branch history stays as it was',
     PARENT_PLAN: parent,
@@ -789,6 +795,16 @@ export function keepConfig(current, rendered) {
   return [...r.slice(0, rb[0]), ...c.slice(cb[0], cb[1]), ...added, c[cb[1]], ...r.slice(rb[1] + 1)].join('\n');
 }
 
+/**
+ * Returns true when the folder `dir` loads its AGENTS.md: a CLAUDE.md that is only `@AGENTS.md`,
+ * or a `.claude/CLAUDE.md` that is only `@../AGENTS.md`. Claude Code reads both locations as
+ * project instructions (code.claude.com/docs/en/memory).
+ */
+export function hasShim(dir, read = (f) => (existsSync(f) ? readFileSync(f, 'utf8') : null)) {
+  return (read(path.join(dir, 'CLAUDE.md')) || '').trim() === '@AGENTS.md'
+    || (read(path.join(dir, '.claude', 'CLAUDE.md')) || '').trim() === '@../AGENTS.md';
+}
+
 export function plan(repo, files, { resetConfig = false } = {}) {
   // only open plans count: an adopted repo with finished plans in .plans/done/ still
   // gets the end-to-end check plan for its first pipeline run
@@ -801,6 +817,10 @@ export function plan(repo, files, { resetConfig = false } = {}) {
     if (f.kind === 'first-plan' && planHasPlans) return [];
     if (f.kind === 'once' && existsSync(abs)) return [];
     if (f.kind === 'orphan') return existsSync(abs) ? [{ ...f, status: 'orphan', note: f.note || `module "${f.module}" is off; delete by hand if unused` }] : [];
+    // the root CLAUDE.md has another job (for example global rules linked into ~/.claude/), and
+    // .claude/CLAUDE.md loads AGENTS.md instead: leave the root file alone
+    if (f.path === 'CLAUDE.md' && existsSync(abs) && readFileSync(abs, 'utf8').trim() !== '@AGENTS.md'
+      && (existsSync(path.join(repo, '.claude', 'CLAUDE.md')) ? readFileSync(path.join(repo, '.claude', 'CLAUDE.md'), 'utf8') : '').trim() === '@../AGENTS.md') return [];
     const ensureNl = (s) => (s === '' || s.endsWith('\n') ? s : s + '\n');
     if (f.kind === 'merge') {
       const cur = existsSync(abs) ? readFileSync(abs, 'utf8') : '';

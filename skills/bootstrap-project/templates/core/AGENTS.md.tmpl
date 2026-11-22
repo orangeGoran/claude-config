@@ -22,7 +22,7 @@ Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS
 - Never hardcode a value that a contract, an enum, a config or an API response gives. Import it.
 - After you fix a defect, search sibling code for the same defect, and fix it or report it.
 - Doc comments on public functions, in ASD-STE100.
-- Use the latest package versions: install them with the package manager, never type a version by hand.
+- @@PACKAGE_RULE@@
 - No secrets in code, config fallbacks or fixtures.
 
 ## Plans
@@ -74,8 +74,8 @@ Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS
 
 - Branches: @@BRANCH_CHAIN@@. `@@BASE_BRANCH@@` is the base branch. PRs go to `@@BASE_BRANCH@@`.
 - Never wait for or watch GitHub CI runs (no `gh pr checks --watch`, no polling). After a push the step is done.
-- Push only when the owner says so, or as a follow-up on an open PR (next rule). The "to PR" mode counts as that permission, for its own `auto/<slug>` branch only. Never push `@@BASE_BRANCH@@` or `@@PROD_BRANCH@@` from an automated run. Never force-push.
-- **Follow-ups on an open PR: commit and push without asking.** When the current branch is not `@@BASE_BRANCH@@` or `@@PROD_BRANCH@@` and has an open PR (`gh pr view --json number,state` says `OPEN`), each change the owner asks for in the chat ships to that PR. Do not hand over `git add` or `git commit` commands. Run the scoped tests and the check-only lint for the touched files; a failure → fix it or report it, and do not push. Stage by path (never `git add -A` or `git add .`; never `.env*`, `.claude/settings.local.json` or the files of another plan), commit with a Conventional Commits message, and `git push`. When the change makes the PR body wrong (Changes, Verification, Code review, Open points), update the body with `gh pr edit <number> --body-file <file>`. This rule overrides a personal "never commit unless asked" rule for this case only.
+- Push only when the owner says so, or as a follow-up on an open PR (next rule). The "to PR" mode counts as that permission, for its own `auto/<slug>` branch only. Never push @@PROTECTED_BRANCHES@@ from an automated run. Never force-push.
+- **Follow-ups on an open PR: commit and push without asking.** When the current branch is not @@PROTECTED_BRANCHES@@ and has an open PR (`gh pr view --json number,state` says `OPEN`), each change the owner asks for in the chat ships to that PR. Do not hand over `git add` or `git commit` commands. Run the scoped tests and the check-only lint for the touched files; a failure → fix it or report it, and do not push. Stage by path (never `git add -A` or `git add .`; never `.env*`, `.claude/settings.local.json` or the files of another plan), commit with a Conventional Commits message, and `git push`. When the change makes the PR body wrong (Changes, Verification, Code review, Open points), update the body with `gh pr edit <number> --body-file <file>`. This rule overrides a personal "never commit unless asked" rule for this case only.
 - Merge style: @@MERGE_STYLE@@ (@@MERGE_HINT@@).
 - Commit messages use Conventional Commits, with no AI attribution.
 
