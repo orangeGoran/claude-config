@@ -37,12 +37,12 @@ In your final reply, list each command that touched a service or the database (o
 ## What to hunt for
 
 - **Discrepancies:** the plan says X; the file says otherwise. Wrong line numbers or quotes.
-- **Restart after dashboard changes:** the plan breaks or skips the rule "After a change to scripts/plans-dashboard.mjs, the page files in scripts/plans-dashboard/ or anything they import lands in the main checkout (a merge and git pull, or an edit there), run pgrep -fl chat-relay.mjs, then npm run restart, but only when it shows that the live chats run under the relay. A pipeline run in a worktree does not restart: the service runs the main checkout, so its report lists the restart under Open items."
+- **Restart after dashboard changes:** the plan breaks or skips the rule "After a change to apps/dashboard/server.mjs, the page files in apps/dashboard/page/ or anything they import lands in the main checkout (a merge and git pull, or an edit there), run pgrep -fl chat-relay.mjs, then npm run restart, but only when it shows that the live chats run under the relay. A pipeline run in a worktree does not restart: the service runs the main checkout, so its report lists the restart under Open items."
 - **No npm dependencies:** the plan breaks or skips the rule "The scripts use only Node built-ins; package.json has no dependencies, and the page loads browser libraries (Monaco, Mermaid) from a CDN."
 - **Public repo: no private data:** the plan breaks or skips the rule "The repo is public: files hold no client names, private paths or secrets, and the templates in skills/bootstrap-project/templates/ stay generic (project values come from the interview)."
 - **Global rules affect every project:** the plan breaks or skips the rule "The root CLAUDE.md and the skills/ folders are symlinked into ~/.claude/, so a change there changes every project; keep them short and generic."
 - **Never stop processes by name:** the plan breaks or skips the rule "Stop a test dashboard or server by its port or PID, never with pkill or killall by name: that once stopped the real dashboard and a live chat."
-- **Tests for logic changes:** the plan breaks or skips the rule "A change to server or script logic gets a test in scripts/test/, run with npm test."
+- **Tests for logic changes:** the plan breaks or skips the rule "A change to server or script logic gets a test in the app's test/ folder (apps/<app>/test/) or in the root test/, run with npm test."
 - **Docs: current state only:** the plan breaks or skips the rule "READMEs and docs describe the current state in simple English (ASD-STE100), one line per paragraph, no change history."
 - **Contracts:** The project has no shared contract source yet. When one exists, add it here and take types and enum values only from it. Flag types or enum values that the plan writes by hand.
 - **Scope:** the plan does more than its goal, or more than one step of the parent plan, or skips an explicit "go".

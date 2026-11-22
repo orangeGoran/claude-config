@@ -90,12 +90,12 @@ Steps 1, 1.5 and 2 all raise questions, and so do the open decisions this plan n
 
 For everything the plan adds, answer these and put the answers in the plan (section **Hard rules**):
 
-- **Restart after dashboard changes.** After a change to scripts/plans-dashboard.mjs, the page files in scripts/plans-dashboard/ or anything they import lands in the main checkout (a merge and git pull, or an edit there), run pgrep -fl chat-relay.mjs, then npm run restart, but only when it shows that the live chats run under the relay. A pipeline run in a worktree does not restart: the service runs the main checkout, so its report lists the restart under Open items. How does the plan keep this rule?
+- **Restart after dashboard changes.** After a change to apps/dashboard/server.mjs, the page files in apps/dashboard/page/ or anything they import lands in the main checkout (a merge and git pull, or an edit there), run pgrep -fl chat-relay.mjs, then npm run restart, but only when it shows that the live chats run under the relay. A pipeline run in a worktree does not restart: the service runs the main checkout, so its report lists the restart under Open items. How does the plan keep this rule?
 - **No npm dependencies.** The scripts use only Node built-ins; package.json has no dependencies, and the page loads browser libraries (Monaco, Mermaid) from a CDN. How does the plan keep this rule?
 - **Public repo: no private data.** The repo is public: files hold no client names, private paths or secrets, and the templates in skills/bootstrap-project/templates/ stay generic (project values come from the interview). How does the plan keep this rule?
 - **Global rules affect every project.** The root CLAUDE.md and the skills/ folders are symlinked into ~/.claude/, so a change there changes every project; keep them short and generic. How does the plan keep this rule?
 - **Never stop processes by name.** Stop a test dashboard or server by its port or PID, never with pkill or killall by name: that once stopped the real dashboard and a live chat. How does the plan keep this rule?
-- **Tests for logic changes.** A change to server or script logic gets a test in scripts/test/, run with npm test. How does the plan keep this rule?
+- **Tests for logic changes.** A change to server or script logic gets a test in the app's test/ folder (apps/<app>/test/) or in the root test/, run with npm test. How does the plan keep this rule?
 - **Docs: current state only.** READMEs and docs describe the current state in simple English (ASD-STE100), one line per paragraph, no change history. How does the plan keep this rule?
 
 If an answer is not clear from the parent plan or the code, it is a question for the queue.

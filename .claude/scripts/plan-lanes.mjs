@@ -35,7 +35,7 @@ const BASE = process.env.PLAN_LANES_BASE || 'main';
 
 // A full path under one of these roots is a repo file even when it does not exist
 // yet (the plan creates it). Anything else must resolve to a tracked file.
-const FOOTPRINT_ROOTS = ['scripts/', 'scripts/plans-dashboard/', 'scripts/test/', 'skills/', 'docs/', '.github/'];
+const FOOTPRINT_ROOTS = ['apps/dashboard/', 'apps/dashboard/page/', 'apps/scout/', 'test/', 'scripts/', 'skills/', 'docs/', '.github/'];
 const ROOT_FILES = new Set(['package.json', 'CLAUDE.md', 'README.md', 'AGENTS.md', '.gitignore']);
 // Docs that plans rewrite like code (the parent plan). Two plans that both edit one
 // are a minor overlap (one shared file), not a lane.

@@ -13,8 +13,8 @@
     "hard": [
       {
         "title": "Restart after dashboard changes",
-        "rule": "After a change to scripts/plans-dashboard.mjs, the page files in scripts/plans-dashboard/ or anything they import lands in the main checkout (a merge and git pull, or an edit there), run pgrep -fl chat-relay.mjs, then npm run restart, but only when it shows that the live chats run under the relay. A pipeline run in a worktree does not restart: the service runs the main checkout, so its report lists the restart under Open items.",
-        "check": "A run that touches scripts/plans-dashboard.mjs or scripts/plans-dashboard/ lists \"after merge: pgrep -fl chat-relay.mjs, then npm run restart\" under Open items; a session in the main checkout shows the pgrep check and the restart, or says why the restart was left to the owner."
+        "rule": "After a change to apps/dashboard/server.mjs, the page files in apps/dashboard/page/ or anything they import lands in the main checkout (a merge and git pull, or an edit there), run pgrep -fl chat-relay.mjs, then npm run restart, but only when it shows that the live chats run under the relay. A pipeline run in a worktree does not restart: the service runs the main checkout, so its report lists the restart under Open items.",
+        "check": "A run that touches apps/dashboard/server.mjs or apps/dashboard/page/ lists \"after merge: pgrep -fl chat-relay.mjs, then npm run restart\" under Open items; a session in the main checkout shows the pgrep check and the restart, or says why the restart was left to the owner."
       },
       {
         "title": "No npm dependencies",
@@ -38,10 +38,10 @@
       },
       {
         "title": "Tests for logic changes",
-        "rule": "A change to server or script logic gets a test in scripts/test/, run with npm test.",
-        "check": "A diff that changes logic in scripts/ or skills/*/scripts/ also changes a file in scripts/test/.",
+        "rule": "A change to server or script logic gets a test in the app's test/ folder (apps/<app>/test/) or in the root test/, run with npm test.",
+        "check": "A diff that changes logic in apps/, scripts/ or skills/*/scripts/ also changes a file in apps/<app>/test/ or test/.",
         "tests": [
-          "node --test on the matching scripts/test/*.test.mjs file passes."
+          "node --test on the matching apps/<app>/test/*.test.mjs or test/*.test.mjs file passes."
         ]
       },
       {
@@ -114,7 +114,7 @@
       },
       {
         "label": "Run a test dashboard by hand",
-        "cmd": "DASH_PORT=4911 DASH_NO_OPEN=1 node scripts/plans-dashboard.mjs",
+        "cmd": "DASH_PORT=4911 DASH_NO_OPEN=1 node apps/dashboard/server.mjs",
         "note": "(stop it by its PID)"
       }
     ],
@@ -123,16 +123,24 @@
   "layout": {
     "folders": [
       {
-        "path": "scripts/",
-        "what": "The dashboard server, the scout, setup and helper scripts"
+        "path": "apps/dashboard/",
+        "what": "The dashboard server (server.mjs), the chat relay and the restart command"
       },
       {
-        "path": "scripts/plans-dashboard/",
+        "path": "apps/dashboard/page/",
         "what": "The dashboard page (page.html, app.js, app.css)"
       },
       {
-        "path": "scripts/test/",
-        "what": "node --test tests"
+        "path": "apps/scout/",
+        "what": "The scout: finds problems in the projects and writes plan proposals"
+      },
+      {
+        "path": "test/",
+        "what": "node --test tests of the skills (each app has its own test/ folder)"
+      },
+      {
+        "path": "scripts/",
+        "what": "Setup, service templates and helper scripts"
       },
       {
         "path": "skills/",
@@ -178,5 +186,5 @@
     "appUrl": "http://127.0.0.1:4899"
   },
   "firstPlanTs": "20261122-110845",
-  "renderHash": "4d17e7b6656e3a2c"
+  "renderHash": "c5675c580af24da7"
 }

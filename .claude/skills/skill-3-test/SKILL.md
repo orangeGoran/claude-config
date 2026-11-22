@@ -42,7 +42,7 @@ These rules apply to every summary, report section, PR body, comment and status 
 - **Hard rules need a negative test.** When the change touches a hard rule in `AGENTS.md` (restart after dashboard changes, no npm dependencies, public repo: no private data, global rules affect every project, never stop processes by name, tests for logic changes, docs: current state only), add a test that fails when the rule breaks. A test that only checks the happy path is not enough.
 - **The tests this project needs for its rules** (when the change touches the rule):
 - **Tests for logic changes:**
-  - node --test on the matching scripts/test/*.test.mjs file passes.
+  - node --test on the matching apps/<app>/test/*.test.mjs or test/*.test.mjs file passes.
 - **Contracts:** a contract change needs a test that accepts a valid sample and rejects an invalid one.
 - Do not change an existing test to make it pass unless the plan changes that behavior. Say which tests you changed and why.
 - For each new test, ask: would it still pass if the feature were not built? If yes, rewrite it.

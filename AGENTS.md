@@ -6,12 +6,12 @@ Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS
 
 ## Hard rules
 
-- **Restart after dashboard changes.** After a change to scripts/plans-dashboard.mjs, the page files in scripts/plans-dashboard/ or anything they import lands in the main checkout (a merge and git pull, or an edit there), run pgrep -fl chat-relay.mjs, then npm run restart, but only when it shows that the live chats run under the relay. A pipeline run in a worktree does not restart: the service runs the main checkout, so its report lists the restart under Open items.
+- **Restart after dashboard changes.** After a change to apps/dashboard/server.mjs, the page files in apps/dashboard/page/ or anything they import lands in the main checkout (a merge and git pull, or an edit there), run pgrep -fl chat-relay.mjs, then npm run restart, but only when it shows that the live chats run under the relay. A pipeline run in a worktree does not restart: the service runs the main checkout, so its report lists the restart under Open items.
 - **No npm dependencies.** The scripts use only Node built-ins; package.json has no dependencies, and the page loads browser libraries (Monaco, Mermaid) from a CDN.
 - **Public repo: no private data.** The repo is public: files hold no client names, private paths or secrets, and the templates in skills/bootstrap-project/templates/ stay generic (project values come from the interview).
 - **Global rules affect every project.** The root CLAUDE.md and the skills/ folders are symlinked into ~/.claude/, so a change there changes every project; keep them short and generic.
 - **Never stop processes by name.** Stop a test dashboard or server by its port or PID, never with pkill or killall by name: that once stopped the real dashboard and a live chat.
-- **Tests for logic changes.** A change to server or script logic gets a test in scripts/test/, run with npm test.
+- **Tests for logic changes.** A change to server or script logic gets a test in the app's test/ folder (apps/<app>/test/) or in the root test/, run with npm test.
 - **Docs: current state only.** READMEs and docs describe the current state in simple English (ASD-STE100), one line per paragraph, no change history.
 - **Contracts.** The project has no shared contract source yet. When one exists, add it here and take types and enum values only from it.
 - **Test data.** Use made-up test data only. Never put real customer data, real names, real addresses or real secrets in a test or a fixture. Example: `"Ana Example"`, `ana@example.test`, a fake key `sk-test-0000`.
@@ -20,9 +20,11 @@ Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS
 
 | Path | What |
 | --- | --- |
-| `scripts/` | The dashboard server, the scout, setup and helper scripts |
-| `scripts/plans-dashboard/` | The dashboard page (page.html, app.js, app.css) |
-| `scripts/test/` | node --test tests |
+| `apps/dashboard/` | The dashboard server (server.mjs), the chat relay and the restart command |
+| `apps/dashboard/page/` | The dashboard page (page.html, app.js, app.css) |
+| `apps/scout/` | The scout: finds problems in the projects and writes plan proposals |
+| `test/` | node --test tests of the skills (each app has its own test/ folder) |
+| `scripts/` | Setup, service templates and helper scripts |
 | `skills/` | Global skills, symlinked into ~/.claude/skills/ |
 | `docs/` | User docs and screenshots |
 
@@ -88,6 +90,6 @@ The stack: Node.js 18+ ES-module scripts with no dependencies, Bash, and a plain
 | Type check | not available yet |
 | Build | not available yet |
 | Restart the dashboard service | `npm run restart` (check pgrep -fl chat-relay.mjs first) |
-| Run a test dashboard by hand | `DASH_PORT=4911 DASH_NO_OPEN=1 node scripts/plans-dashboard.mjs` (stop it by its PID) |
+| Run a test dashboard by hand | `DASH_PORT=4911 DASH_NO_OPEN=1 node apps/dashboard/server.mjs` (stop it by its PID) |
 
 Skills take commands from this table and from `package.json`. A command that is "not available yet" does not exist: never invent one. Add it here (and to `.claude/settings.json` `permissions.allow`) in the same change that adds it.
