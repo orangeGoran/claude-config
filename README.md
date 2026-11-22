@@ -69,7 +69,7 @@ To install a skill that was added after your setup, run `scripts/setup-claude.sh
 
 ## Working on this repo
 
-This repo uses its own plan pipeline. The rules for each change are in [AGENTS.md](AGENTS.md), and the parent plan is [docs/PLAN.md](docs/PLAN.md).
+This repo uses its own plan pipeline. The rules for each change are in [AGENTS.md](AGENTS.md), and the parent plan is [docs/parent-plan.md](docs/parent-plan.md).
 
 1. `/skill-1-plan <what>` writes the plan in `.plans/` and validates it.
 2. Push the plan to `main` and launch it in the plans dashboard.

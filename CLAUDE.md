@@ -18,7 +18,7 @@ These rules apply in every repository unless the project's own CLAUDE.md says ot
 
 ## Planning
 
-- **Split big work into several plans without asking.** When one piece of work clearly needs more than one PR (more than one layer or language, parts I can try on their own, about 10+ files), split it into ordered plans (phases) and do not ask "one plan or several?". Put first the plan that I can try soonest and that the later plans build on. Name all the plans in one short list, write that list into the project's parent plan (for example `docs/PLAN.md`), then write only the first one. The later plans must not live only in the chat. Ask only when the split itself is a real tradeoff (for example, two different orders with different risks).
+- **Split big work into several plans without asking.** When one piece of work clearly needs more than one PR (more than one layer or language, parts I can try on their own, about 10+ files), split it into ordered plans (phases) and do not ask "one plan or several?". Put first the plan that I can try soonest and that the later plans build on. Name all the plans in one short list, write that list into the project's parent plan (the file its AGENTS.md names as the parent plan), then write only the first one. The later plans must not live only in the chat. Ask only when the split itself is a real tradeoff (for example, two different orders with different risks).
 
 ## Git
 

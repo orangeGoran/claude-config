@@ -437,7 +437,20 @@ test('skill-1-plan writes a split into the parent plan before the first plan', (
   try {
     const skill = readFileSync(path.join(repo, '.claude/skills/skill-1-plan/SKILL.md'), 'utf8');
     assert.match(skill, /split it into ordered plans without asking/);
-    assert.match(skill, /Before that plan, write the split into `docs\/PLAN\.md` \(Phases\)/);
+    assert.match(skill, /Before that plan, write the split into a new parent plan/);
     assert.match(skill, /later plans start from the parent plan and not from the chat/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a split gets its own dated parent plan in .plans/, and child plans name it', () => {
+  const { dir, repo } = bootstrapRepo();
+  try {
+    const read = (f) => readFileSync(path.join(repo, f), 'utf8');
+    assert.match(read('AGENTS.md'), /`\.plans\/YYYYMMDD-HHMMSS-<slug>-parent\.md`, which starts with `> \*\*Master plan\.\*\*`/);
+    const plan = read('.claude/skills/skill-1-plan/SKILL.md');
+    assert.match(plan, /write the split into a new parent plan `\.plans\/<YYYYMMDD-HHMMSS>-<slug>-parent\.md`/);
+    assert.match(plan, /^- \*\*Parent\*\*: /m);
+    assert.match(read('.claude/agents/plan-validator.md'), /`- \*\*Parent\*\*: <file>`, read that parent plan too/);
+    assert.match(read('.claude/skills/skill-2-implement/SKILL.md'), /the parent plan named in its `- \*\*Parent\*\*:` line/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

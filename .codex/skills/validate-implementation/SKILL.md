@@ -33,7 +33,7 @@ Say which base and which plan you use before you continue.
 ## How to work
 
 1. **Read the plan first** (if there is one). Note each promised endpoint, type, migration, test, edge case and registration step.
-2. **Read the rules.** Read `AGENTS.md`, `docs/PLAN.md`, `docs/plans-dashboard.md` in full, plus every `AGENTS.md` in the folders the diff touches and in their parent folders (`git ls-files --cached --others --exclude-standard AGENTS.md '*/AGENTS.md'`).
+2. **Read the rules.** Read `AGENTS.md`, `docs/parent-plan.md`, `docs/plans-dashboard.md` in full, plus every `AGENTS.md` in the folders the diff touches and in their parent folders (`git ls-files --cached --others --exclude-standard AGENTS.md '*/AGENTS.md'`).
 3. **Read the diff hunk by hunk, then read each touched file in full.** A hunk can look correct and still break a rule that is only visible in the code around it (a guard above it, a transaction boundary, a null check).
 4. **Follow callers and consumers.** For each changed public symbol, `rg` for its call sites and confirm they still work (signatures, return shapes, errors).
 5. **Compare the plan and the code in both directions.** Promised but missing: the plan says it, the code does not do it. Present but not planned: the code does something the plan does not mention (flag it as scope drift and judge it on its merit).

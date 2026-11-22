@@ -39,7 +39,7 @@ const FOOTPRINT_ROOTS = ['scripts/', 'scripts/plans-dashboard/', 'scripts/test/'
 const ROOT_FILES = new Set(['package.json', 'CLAUDE.md', 'README.md', 'AGENTS.md', '.gitignore']);
 // Docs that plans rewrite like code (the parent plan). Two plans that both edit one
 // are a minor overlap (one shared file), not a lane.
-const HARD_DOCS = new Set(['docs/PLAN.md']);
+const HARD_DOCS = new Set(['docs/parent-plan.md']);
 
 // Files many plans touch only to append or regenerate. Counting them as hard
 // conflicts would collapse every plan into one lane; the merge is a few lines.

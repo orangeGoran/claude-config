@@ -2,7 +2,7 @@
 
 @@PROJECT_SUMMARY@@
 
-This is the parent plan. Each change gets its own child plan in `.plans/`. Fill the sections below before the first feature plan; `/skill-1-plan` and the `plan-validator` agent read this file.
+This is the parent plan. Each change gets its own child plan in `.plans/`. A big piece of work gets its own parent plan, `.plans/<YYYYMMDD-HHMMSS>-<slug>-parent.md`, linked under Phases. Fill the sections below before the first feature plan; `/skill-1-plan` and the `plan-validator` agent read this file.
 
 ## Goals
 

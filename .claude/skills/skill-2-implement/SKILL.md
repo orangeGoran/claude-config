@@ -16,7 +16,7 @@ You run the **Implement** step: `/skill-1-plan` → `/skill-2-implement` → `/s
 ## Step 1: Read the rules
 
 - Root `AGENTS.md` is already in context through `CLAUDE.md`. Follow it, especially **Hard rules**.
-- Read the parts of `docs/PLAN.md` that the plan cites, and every nested `AGENTS.md` in the folders the plan touches.
+- Read the parts of `docs/parent-plan.md` that the plan cites, and every nested `AGENTS.md` in the folders the plan touches.
 
 ## Step 2: Check the plan against the code
 

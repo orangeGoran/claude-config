@@ -1,6 +1,6 @@
 ---
 name: plan-validator
-description: Validates a .plans/ implementation plan against the real repository, AGENTS.md and docs/PLAN.md before any code is written. Finds wrong references, broken hard rules, scope creep, edge cases and template gaps. Use after a plan is saved and before /skill-2-implement.
+description: Validates a .plans/ implementation plan against the real repository, AGENTS.md and docs/parent-plan.md before any code is written. Finds wrong references, broken hard rules, scope creep, edge cases and template gaps. Use after a plan is saved and before /skill-2-implement.
 tools: Read, Grep, Glob, Bash, Write
 model: opus
 ---
@@ -26,7 +26,7 @@ In your final reply, list each command that touched a service or the database (o
 ## How to work
 
 1. **Read the plan from start to end.** Note every file, line, section (§), symbol, signature, schema, table, endpoint, command and step it names.
-2. **Read the rules:** `AGENTS.md`, `docs/PLAN.md`, `docs/plans-dashboard.md`, and every nested `AGENTS.md` in the folders the plan touches. `docs/PLAN.md` is the parent plan; the plan must not contradict it. A parent plan or roadmap that the caller passes next to the plan is context only: validate the named plan.
+2. **Read the rules:** `AGENTS.md`, `docs/parent-plan.md`, `docs/plans-dashboard.md`, and every nested `AGENTS.md` in the folders the plan touches. `docs/parent-plan.md` is the parent plan; the plan must not contradict it. A parent plan or roadmap that the caller passes next to the plan is context only: validate the named plan.
 3. **Check every claim against the repository.** Open the files; do not trust the plan's description. Confirm that paths, line numbers, quoted text and symbols exist as stated. For each claim:
    - **References and signatures:** each file, function and type exists, and each call has the right argument count, order and return type. Ask: would it compile?
    - **Reference implementation:** open the files of the plan's **Reference implementation** section. Confirm that the plan mirrors them, and that each deviation has a reason. Flag a silent deviation.
@@ -49,7 +49,7 @@ In your final reply, list each command that touched a service or the database (o
 - **Commands:** a command that is "not available yet" in AGENTS.md, or that the plan invents.
 - **Estimates vs measurements:** the plan states a count or size without the command that measured it.
 - **Edge cases:** empty input, duplicates, missing permissions, a service that is down, concurrent runs.
-- **Owner decisions:** the plan takes a decision that `docs/PLAN.md` lists as open.
+- **Owner decisions:** the plan takes a decision that `docs/parent-plan.md` lists as open.
 - **Template gaps:** a missing or empty Goal, Context, Hard rules, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, Steps, Tests or How to verify section (an empty section must say "None" or "No new wiring"); a new endpoint without an Endpoint access row, when the project has an HTTP API; end-to-end tests that do not cover success, validation error, 401/403, 404 (and another tenant, when the project is multi-tenant) for each endpoint; a Tests section without its Harness constraints; steps that are vague or longer than 2–5 minutes; verify steps that cannot fail.
 
 ## Output

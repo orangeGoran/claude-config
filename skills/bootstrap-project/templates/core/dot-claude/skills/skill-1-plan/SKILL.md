@@ -13,13 +13,13 @@ Run shell commands bare: one command per call, no pipes, `&&`, redirection or he
 ## Step 0 — Quick presentation
 
 - Root `AGENTS.md` is already in context through `CLAUDE.md`. Do not read it again.
-- Read the parts of `@@PARENT_PLAN@@` that `$ARGUMENTS` touches, and its open decisions. Read every nested `AGENTS.md` in the folders the work touches.
+- Read the parts of `@@PARENT_PLAN@@` that `$ARGUMENTS` touches, and its open decisions. When the work belongs to a parent plan in `.plans/` (`*-parent.md`, linked from `@@PARENT_PLAN@@`), read that parent plan too. Read every nested `AGENTS.md` in the folders the work touches.
 - Give the owner a short overview: what exists in the repo today, what the parent plan already decides, and which open decisions this work touches. A few bullets.
 
 ## Step 1 — Explore and understand the problem
 
 - Explore the real repo: files, `git log`, existing patterns, the scripts in @@MANIFESTS@@. Never describe the repo from memory.
-- **Scope.** One plan is one change that one PR can carry. If `$ARGUMENTS` is bigger, split it into ordered plans without asking: list them, put first the part the owner can try soonest and that the others build on, and write only that plan now. Before that plan, write the split into `@@PARENT_PLAN@@` (Phases): one entry per plan, in order, with its scope, the owner's decisions for it and its open decisions, so the later plans start from the parent plan and not from the chat. The first plan does not fill the parent plan in a later step. Ask only when the order itself is a real tradeoff.
+- **Scope.** One plan is one change that one PR can carry. If `$ARGUMENTS` is bigger, split it into ordered plans without asking: list them, put first the part the owner can try soonest and that the others build on, and write only that plan now. Before that plan, write the split into a new parent plan `.plans/<YYYYMMDD-HHMMSS>-<slug>-parent.md` (local time now): it starts with `> **Master plan.** This file holds no implementation steps.`, then one entry per plan, in order, with its scope, the owner's decisions for it and its open decisions. Add one line that links it to `@@PARENT_PLAN@@`. So the later plans start from the parent plan and not from the chat. The first plan does not fill the parent plan in a later step. Ask only when the order itself is a real tradeoff.
 - If the requirement is unclear, ask. Do not guess. Use the **Question queue** below.
 
 ## Question queue — one question at a time
@@ -129,6 +129,7 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 # Plan: <title>
 
 - **Base**: @@BASE_BRANCH@@
+- **Parent**: <`.plans/<file>-parent.md` when the plan belongs to one; else leave this line out>
 @@IF HAS_TICKETS@@
 - **Tickets**: <#n, #m — the issues this plan works on; "none" for work without a ticket>
 @@END@@

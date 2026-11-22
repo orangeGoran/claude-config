@@ -30,6 +30,7 @@ Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS
 - Plans live in `.plans/`, named `YYYYMMDD-HHMMSS-<kebab-slug>.md`. Finished plans move to `.plans/done/`.
 - Validation reports live in `.plans/.validations/`. Run reports live in `.plans/auto-runs/` (gitignored).
 - `@@PARENT_PLAN@@` is the parent plan. Child plans are written one step ahead.
+- A big piece of work that needs several plans has its own parent plan: `.plans/YYYYMMDD-HHMMSS-<slug>-parent.md`, which starts with `> **Master plan.**` (no steps, never launched) and holds the ordered child plans, the owner's decisions and the open decisions. `@@PARENT_PLAN@@` links each parent plan. A child plan names its parent plan in its header (`- **Parent**:`).
 - Every plan starts only after an explicit "go" from the owner. One plan per run.
 - When a plan needs an owner decision, do not guess. Write the question down and continue with the steps that do not depend on it.
 

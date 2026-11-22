@@ -30,7 +30,7 @@ Extract every distinct finding with its severity as given (Blocking / Should fix
 ### 3. Check each finding against the repo
 
 - Read the exact files, lines and sections the finding names. If it names a symbol, search for it.
-- Check the rules in `AGENTS.md`, `docs/PLAN.md`, `docs/plans-dashboard.md` (root and nested `AGENTS.md`). Reviewers often flag a deliberate, documented choice.
+- Check the rules in `AGENTS.md`, `docs/parent-plan.md`, `docs/plans-dashboard.md` (root and nested `AGENTS.md`). Reviewers often flag a deliberate, documented choice.
 - Classify each finding:
   - **VALID:** a real problem. Fix it.
   - **PARTIALLY VALID:** part of it is true, but the proposed fix or scope is wrong. Say what the correct fix is.
@@ -96,6 +96,6 @@ State the file path on its own line in your reply.
 
 ## Rules
 
-- Never weaken or delete a rule in `AGENTS.md` or `docs/PLAN.md` because a reviewer disliked it. Reject the finding with the reference.
+- Never weaken or delete a rule in `AGENTS.md` or `docs/parent-plan.md` because a reviewer disliked it. Reject the finding with the reference.
 - Never run `git add` or `git commit`. The owner commits.
 - If a finding needs a scope or design decision, or takes an open decision of the parent plan, do not expand the scope silently. List it under "Needs owner decision" in both the table and the copyable reply.

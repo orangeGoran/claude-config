@@ -31,7 +31,7 @@ In your final reply, list each command that touched a service or the database (o
 ## How to work
 
 1. **Read the plan from start to end.** Note every file, line, section (§), symbol, signature, schema, table, endpoint, command and step it names.
-2. **Read the rules:** @@RULES_DOCS@@, and every nested `AGENTS.md` in the folders the plan touches. `@@PARENT_PLAN@@` is the parent plan; the plan must not contradict it. A parent plan or roadmap that the caller passes next to the plan is context only: validate the named plan.
+2. **Read the rules:** @@RULES_DOCS@@, and every nested `AGENTS.md` in the folders the plan touches. `@@PARENT_PLAN@@` is the parent plan; the plan must not contradict it. When the plan's header has `- **Parent**: <file>`, read that parent plan too: the plan must not contradict it either, and must not take its open decisions. A parent plan or roadmap that the caller passes next to the plan is context only: validate the named plan.
 3. **Check every claim against the repository.** Open the files; do not trust the plan's description. Confirm that paths, line numbers, quoted text and symbols exist as stated. For each claim:
    - **References and signatures:** each file, function and type exists, and each call has the right argument count, order and return type. Ask: would it compile?
    - **Reference implementation:** open the files of the plan's **Reference implementation** section. Confirm that the plan mirrors them, and that each deviation has a reason. Flag a silent deviation.

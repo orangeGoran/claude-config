@@ -1,6 +1,6 @@
 ---
 name: skill-auto-validate-plan
-description: Automated validation loop for a .plans/ file — runs the Claude plan-validator agent and the repo's Codex validate-plan skill (through codex exec) in parallel, checks all findings against the repo and docs/PLAN.md, applies the valid fixes to the plan, and validates again. When one validator is not available, it continues with the other and says so. Each round leaves the raw reports and one decision log. Max 4 rounds. Ends with READY + a commit message, or a list of open items. /skill-1-plan runs it after saving a plan.
+description: Automated validation loop for a .plans/ file — runs the Claude plan-validator agent and the repo's Codex validate-plan skill (through codex exec) in parallel, checks all findings against the repo and docs/parent-plan.md, applies the valid fixes to the plan, and validates again. When one validator is not available, it continues with the other and says so. Each round leaves the raw reports and one decision log. Max 4 rounds. Ends with READY + a commit message, or a list of open items. /skill-1-plan runs it after saving a plan.
 argument-hint: "[plan file]"
 ---
 
@@ -71,13 +71,13 @@ Wait for both. When one fails, apply "Validator availability" and continue with 
 
 ### c. Reconcile the findings
 
-Read the raw reports you have (`-codex-raw-<n>.md` and `-validation-<n>.md`). Process each finding from each report as `/apply-validation` says: number it, check it against the repo, `AGENTS.md` and `docs/PLAN.md`, classify it VALID / PARTIALLY VALID / INVALID with evidence, and apply the valid fixes **to the plan file**.
+Read the raw reports you have (`-codex-raw-<n>.md` and `-validation-<n>.md`). Process each finding from each report as `/apply-validation` says: number it, check it against the repo, `AGENTS.md` and `docs/parent-plan.md`, classify it VALID / PARTIALLY VALID / INVALID with evidence, and apply the valid fixes **to the plan file**.
 
 Write one decision log with the Write tool at `.plans/.validations/<plan-base>-round-<n>.md`: the round header (each validator `ON` or `OFF (<reason>)`), the findings table with the validator that raised each finding, and the regressions from step a. Record the findings that only one validator found: that difference is the reason to run two.
 
 Never put one validator's findings into a file named after the other validator (for example Codex findings in `-validation-<n>.md`). The raw reports stay as they were written: without them, nobody can check that the decision log is faithful.
 
-**Owner decisions:** never apply a finding that needs a scope or design decision, or that takes an open decision of `docs/PLAN.md`. Collect them, then ask the owner in chat with the "Question queue" and "Decision question format" from `/skill-1-plan`: show the numbered list of questions first, then one question per message with the heading `## Question N of M: <title>`. Never use AskUserQuestion for these questions. Accept a plain-text reply. List a decision under Open items if the owner defers it.
+**Owner decisions:** never apply a finding that needs a scope or design decision, or that takes an open decision of `docs/parent-plan.md`. Collect them, then ask the owner in chat with the "Question queue" and "Decision question format" from `/skill-1-plan`: show the numbered list of questions first, then one question per message with the heading `## Question N of M: <title>`. Never use AskUserQuestion for these questions. Accept a plain-text reply. List a decision under Open items if the owner defers it.
 
 ### d. Converge or continue
 
@@ -101,7 +101,7 @@ Never put one validator's findings into a file named after the other validator (
 
 ## Rules
 
-- Never weaken or delete a rule in `AGENTS.md` or `docs/PLAN.md` because a validator disliked it. Reject the finding with the reference.
+- Never weaken or delete a rule in `AGENTS.md` or `docs/parent-plan.md` because a validator disliked it. Reject the finding with the reference.
 - Never edit anything except the plan file and `.plans/.validations/` files.
 - Never invent fields or shapes to satisfy a finding. That is an owner decision.
 - Never run `git add`, `git commit` or `git push` in this skill. Rollback uses the snapshots, not git.
