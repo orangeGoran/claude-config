@@ -16,6 +16,10 @@ These rules apply in every repository unless the project's own CLAUDE.md says ot
   5. **Why I recommend A:** 2–3 short bullets.
   Use one example for all options so I can compare them. Put the technical term in parentheses after the plain description. End with "Please reply with one letter for each question, for example 1A, 2A." Accept a plain-text reply. If I ask for more explanation, explain again in this format and do not open a popup. If you cannot explain the tradeoff without jargon, you do not understand it well enough to ask yet.
 
+## Planning
+
+- **Split big work into several plans without asking.** When one piece of work clearly needs more than one PR (more than one layer or language, parts I can try on their own, about 10+ files), split it into ordered plans (phases) and do not ask "one plan or several?". Put first the plan that I can try soonest and that the later plans build on. Name all the plans in one short list, then write only the first one. Ask only when the split itself is a real tradeoff (for example, two different orders with different risks).
+
 ## Git
 
 - **Never run `git add`, `git commit`, `git stash`, or `git reset`** unless explicitly asked in the current message. Default deliverable is a copy-paste-ready `git add` command for exactly the files the message covers, followed by a copy-paste-ready Conventional Commits message.

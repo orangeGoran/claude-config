@@ -19,7 +19,7 @@ Run shell commands bare: one command per call, no pipes, `&&`, redirection or he
 ## Step 1 — Explore and understand the problem
 
 - Explore the real repo: files, `git log`, existing patterns, the scripts in `package.json`. Never describe the repo from memory.
-- **Scope.** One plan is one change that one PR can carry. If `$ARGUMENTS` is bigger, say so and ask which part to plan first.
+- **Scope.** One plan is one change that one PR can carry. If `$ARGUMENTS` is bigger, split it into ordered plans without asking: list them, put first the part the owner can try soonest and that the others build on, and write only that plan now. Ask only when the order itself is a real tradeoff.
 - If the requirement is unclear, ask. Do not guess. Use the **Question queue** below.
 
 ## Question queue — one question at a time
