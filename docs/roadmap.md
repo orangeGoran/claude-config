@@ -25,6 +25,8 @@ This is the roadmap: the goals and the architecture of the repo, and the list of
 
 - **Plans Mac app** — [.plans/20261122-151056-plans-mac-app-parent.md](../.plans/20261122-151056-plans-mac-app-parent.md): a native Mac app around the dashboard, with keyboard shortcuts for sessions. Phase 1 (session tabs and ⌘K) is planned; phases 2 and 3 are not written yet.
 
+- **Move the apps out of `scripts/`** — plan not written yet. Move the dashboard (`plans-dashboard.mjs`, `plans-dashboard/`, `chat-relay.mjs`, `restart-dashboard.mjs`) to `apps/dashboard/` and the scout (`scout.mjs`) to `apps/scout/`, so `scripts/` keeps only setup and helper scripts. About 25 files point at the old paths, and the installed login service has the old script path in its plist, so the plan also updates `setup-macos.sh` and says to run it again on each Mac. Runs first, before Mac app phase 1, whose paths it changes (owner decision 2026-11-22).
+
 ## Open decisions
 
 - None at the repo level. Each parent plan lists its own open decisions.
