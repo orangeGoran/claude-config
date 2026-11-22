@@ -431,3 +431,13 @@ test('one branch for base and production is named once, and a repo with no insta
     assert.match(agents, /^- Use the latest package versions/m);
   } finally { rmSync(two.dir, { recursive: true, force: true }); }
 });
+
+test('skill-1-plan writes a split into the parent plan before the first plan', () => {
+  const { dir, repo } = bootstrapRepo();
+  try {
+    const skill = readFileSync(path.join(repo, '.claude/skills/skill-1-plan/SKILL.md'), 'utf8');
+    assert.match(skill, /split it into ordered plans without asking/);
+    assert.match(skill, /Before that plan, write the split into `docs\/PLAN\.md` \(Phases\)/);
+    assert.match(skill, /later plans start from the parent plan and not from the chat/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
