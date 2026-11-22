@@ -67,6 +67,15 @@ To change your choices later, run `scripts/setup.sh` again. Every question it as
 
 To install a skill that was added after your setup, run `scripts/setup-claude.sh` again, or link it by hand: `ln -s ~/Workspace/claude-config/skills/<name> ~/.claude/skills/<name>`. Start a new Claude Code session after that.
 
+## Working on this repo
+
+This repo uses its own plan pipeline. The rules for each change are in [AGENTS.md](AGENTS.md), and the parent plan is [docs/PLAN.md](docs/PLAN.md).
+
+1. `/skill-1-plan <what>` writes the plan in `.plans/` and validates it.
+2. Push the plan to `main` and launch it in the plans dashboard.
+3. The run implements, tests and verifies the plan in its own worktree, then opens a draft PR.
+4. Review and merge the PR, then run `bash .claude/scripts/auto-pipeline.sh --cleanup <slug>`.
+
 ## Author
 
 Goran Tubic ([@orangeGoran](https://github.com/orangeGoran))

@@ -1,0 +1,36 @@
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS and editors
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Pipeline run reports, logs and per-run settings (local only)
+.plans/auto-runs/
+
+# Plan snapshots that /skill-auto-validate-plan uses for rollback
+.plans/.validations/*-pre-round-*.md
+
+# Local Claude Code settings (per machine, never committed)
+.claude/settings.local.json
+
+# Codex code reviews of /skill-4-verify
+.plans/.code-reviews/
+
+# Decision sheets that /decision-sheet writes before they go into the PR body
+.plans/.decision-sheets/
+
+# Test-review reports of interactive runs (pipeline runs write to .plans/auto-runs/)
+.plans/.test-review/
+
+# Workflow step flags of open plans (local to each checkout)
+.plans/.workflow-state/

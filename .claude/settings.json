@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Read(./**)",
+      "Edit(./**)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git branch --show-current)",
+      "Bash(git ls-files*)",
+      "Bash(git merge-base*)",
+      "Bash(git check-ignore*)",
+      "Bash(git hash-object*)",
+      "Bash(grep *)",
+      "Bash(ls *)",
+      "Bash(diff *)",
+      "Bash(cp .plans/*)",
+      "Bash(mkdir -p .plans/*)",
+      "Bash(gh issue view*)",
+      "Bash(gh run view*)",
+      "Bash(npm test*)",
+      "Bash(node --test*)",
+      "Bash(command -v codex)",
+      "Bash(test -x ~/.local/bin/codex)",
+      "Bash(codex exec*)",
+      "Bash(codex login status*)",
+      "Bash(~/.local/bin/codex exec*)",
+      "Bash(~/.local/bin/codex login status*)",
+      "Bash(bash .claude/scripts/workflow-complete-step.sh*)",
+      "Bash(node .claude/scripts/changelog-validate.mjs*)"
+    ],
+    "deny": [
+      "Bash(git reset --hard*)",
+      "Bash(git clean*)",
+      "Bash(rm -rf*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(gh repo create*)",
+      "Bash(gh repo delete*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/scripts/workflow-guard.sh\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/scripts/post-edit-lint.sh\""
+          }
+        ]
+      }
+    ]
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  }
+}

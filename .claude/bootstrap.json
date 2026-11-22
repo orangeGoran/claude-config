@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "project": {
+    "name": "claude-config",
+    "title": "claude-config",
+    "summary": "A Claude Code setup in one repo: a local dashboard that runs plan files in the background, plus global rules and skills linked into ~/.claude/.",
+    "client": "Personal",
+    "short": "config",
+    "remote": "orangeGoran/claude-config",
+    "visibility": "public"
+  },
+  "rules": {
+    "hard": [
+      {
+        "title": "Restart after dashboard changes",
+        "rule": "After a change to scripts/plans-dashboard.mjs, the page files in scripts/plans-dashboard/ or anything they import, run npm run restart, but only after pgrep -fl chat-relay.mjs shows that the live chats run under the relay.",
+        "check": "When the diff touches scripts/plans-dashboard.mjs or scripts/plans-dashboard/, the run report shows the pgrep check and the restart, or says why the restart was left to the owner."
+      },
+      {
+        "title": "No npm dependencies",
+        "rule": "The scripts use only Node built-ins; package.json has no dependencies, and the page loads browser libraries (Monaco, Mermaid) from a CDN.",
+        "check": "The diff adds no dependencies or devDependencies to package.json and no lock file."
+      },
+      {
+        "title": "Public repo: no private data",
+        "rule": "The repo is public: files hold no client names, private paths or secrets, and the templates in skills/bootstrap-project/templates/ stay generic (project values come from the interview).",
+        "check": "Grep the diff, and every plan in .plans/, for client and project names, absolute home paths and tokens: plans are pushed to the public repo before they run."
+      },
+      {
+        "title": "Global rules affect every project",
+        "rule": "The root CLAUDE.md and the skills/ folders are symlinked into ~/.claude/, so a change there changes every project; keep them short and generic.",
+        "check": "A change to the root CLAUDE.md or to skills/ says in the plan which projects it affects; the root CLAUDE.md is never replaced by a template."
+      },
+      {
+        "title": "Never stop processes by name",
+        "rule": "Stop a test dashboard or server by its port or PID, never with pkill or killall by name: that once stopped the real dashboard and a live chat.",
+        "check": "Grep the diff and the run commands for pkill and killall."
+      },
+      {
+        "title": "Tests for logic changes",
+        "rule": "A change to server or script logic gets a test in scripts/test/, run with npm test.",
+        "check": "A diff that changes logic in scripts/ or skills/*/scripts/ also changes a file in scripts/test/.",
+        "tests": [
+          "node --test on the matching scripts/test/*.test.mjs file passes."
+        ]
+      },
+      {
+        "title": "Docs: current state only",
+        "rule": "READMEs and docs describe the current state in simple English (ASD-STE100), one line per paragraph, no change history.",
+        "check": "The changed Markdown has no hard-wrapped paragraphs and no history or session notes."
+      }
+    ],
+    "parentPlan": "docs/PLAN.md",
+    "rulesDocs": [
+      "docs/plans-dashboard.md"
+    ],
+    "contracts": {
+      "source": "",
+      "direction": ""
+    },
+    "testData": "",
+    "exampleActor": "the owner on the plans dashboard",
+    "protectedPaths": [],
+    "extraAllow": [],
+    "validatorLimits": [
+      "restart or stop the real dashboard service (com.plans-dashboard) or a chat-relay process"
+    ]
+  },
+  "modules": {
+    "codex": true,
+    "changelog": true,
+    "decision-sheet": true,
+    "test-review": true,
+    "step-gate": true,
+    "post-edit-lint": true,
+    "plans-parallel": true,
+    "pr-feedback": true,
+    "run-skill": true
+  },
+  "git": {
+    "base": "main",
+    "prod": "main",
+    "staging": "",
+    "mergeStyle": "squash"
+  },
+  "stack": {
+    "summary": "Node.js 18+ ES-module scripts with no dependencies, Bash, and a plain JS/CSS browser page. Package manager: npm.",
+    "httpApi": true,
+    "migrations": false,
+    "packageManager": "npm",
+    "manifest": "package.json",
+    "lockfiles": [],
+    "installCmd": "",
+    "commands": {
+      "test": "npm test",
+      "testScoped": "node --test <file>",
+      "testE2e": "",
+      "lint": "",
+      "lintCheck": "",
+      "format": "",
+      "typecheck": "",
+      "build": ""
+    },
+    "postEditLint": {
+      "fix": "",
+      "format": "",
+      "extensions": []
+    },
+    "extraCommands": [
+      {
+        "label": "Restart the dashboard service",
+        "cmd": "npm run restart",
+        "note": "(check pgrep -fl chat-relay.mjs first)"
+      },
+      {
+        "label": "Run a test dashboard by hand",
+        "cmd": "DASH_PORT=4911 DASH_NO_OPEN=1 node scripts/plans-dashboard.mjs",
+        "note": "(stop it by its PID)"
+      }
+    ],
+    "nodeVersionFile": ""
+  },
+  "layout": {
+    "folders": [
+      {
+        "path": "scripts/",
+        "what": "The dashboard server, the scout, setup and helper scripts"
+      },
+      {
+        "path": "scripts/plans-dashboard/",
+        "what": "The dashboard page (page.html, app.js, app.css)"
+      },
+      {
+        "path": "scripts/test/",
+        "what": "node --test tests"
+      },
+      {
+        "path": "skills/",
+        "what": "Global skills, symlinked into ~/.claude/skills/"
+      },
+      {
+        "path": "docs/",
+        "what": "User docs and screenshots"
+      }
+    ],
+    "rootFiles": [
+      "package.json",
+      "CLAUDE.md",
+      "README.md"
+    ],
+    "softFiles": [
+      "README.md",
+      "docs/plans-dashboard.md"
+    ],
+    "envFiles": [],
+    "testHarnessDoc": "",
+    "migrationHints": []
+  },
+  "changelog": {
+    "locales": [
+      "en"
+    ],
+    "versionFile": "",
+    "validateCmd": ""
+  },
+  "pipeline": {
+    "defaultMode": "pr",
+    "runAllow": [],
+    "preflight": [],
+    "services": []
+  },
+  "registry": {
+    "dashboard": true,
+    "color": "",
+    "browserTest": true,
+    "browserTestProject": "plans-dashboard",
+    "role": "frontend",
+    "appUrl": "http://127.0.0.1:4899"
+  },
+  "firstPlanTs": "20261122-110845",
+  "renderHash": "5e0b1ca2136d2009"
+}
