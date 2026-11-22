@@ -136,6 +136,7 @@ export function checkParams(p) {
       }
       if (cl.versionFile !== undefined && cl.versionFile !== '' && !/^[\w./-]+$/.test(cl.versionFile)) errs.push('changelog.versionFile must be a repo path, for example "package.json", or empty');
       if (cl.validateCmd !== undefined && typeof cl.validateCmd !== 'string') errs.push('changelog.validateCmd must be one bare command, for example "pnpm changelog:validate", or empty');
+      if (cl.summary !== undefined && typeof cl.summary !== 'boolean') errs.push('changelog.summary must be true or false');
     }
   }
   const extra = p.stack?.extraCommands;
@@ -565,9 +566,9 @@ export function buildVars(p, now = new Date()) {
     CONTRACT_IN_RULES: contractInRules,
     MOD_CODEX: moduleOn(p, 'codex'),
     MOD_CHANGELOG: moduleOn(p, 'changelog'),
-    // the `summary` field exists only in the rendered validator; a project validator
-    // (changelog.validateCmd) has its own field list and can reject unknown fields
-    CHANGELOG_SUMMARY: !clValidateCmd,
+    // the rendered validator always accepts `summary`; a project validator
+    // (changelog.validateCmd) has its own field list, so it says so with changelog.summary
+    CHANGELOG_SUMMARY: typeof p.changelog?.summary === 'boolean' ? p.changelog.summary : !clValidateCmd,
     MOD_DECISION_SHEET: moduleOn(p, 'decision-sheet'),
     MOD_TEST_REVIEW: moduleOn(p, 'test-review'),
     MOD_STEP_GATE: moduleOn(p, 'step-gate'),
