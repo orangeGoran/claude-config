@@ -376,3 +376,20 @@ test('--apply saves renderHash; --status ignores an owner edit but reports chang
     assert.equal(JSON.parse(readFileSync(answersFile, 'utf8')).renderHash, answers.renderHash);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('--unused lists the modules, registrations, commands and settings the answers leave out, and skips what the repo has', () => {
+  const { dir, repo } = bootstrapRepo((p) => ({ ...p, modules: { ...p.modules, codex: false }, registry: { ...p.registry, browserTest: false }, git: { ...p.git, tickets: {} } }));
+  try {
+    mkdirSync(path.join(repo, '.github/workflows'), { recursive: true });
+    writeFileSync(path.join(repo, '.github/workflows/ci.yml'), 'on: push\n');
+    writeFileSync(path.join(repo, '.nvmrc'), '24\n');
+    const r = node('render.mjs', ['.', '--unused', '--json'], repo);
+    assert.equal(r.status, 0, r.stderr);
+    const keys = JSON.parse(r.stdout).map((i) => `${i.group}:${i.key}`);
+    for (const k of ['module:codex', 'registration:browserTest', 'command:testE2e', 'command:format', 'setting:tickets.evidence', 'setting:tickets.board', 'plan:dependabot']) assert.ok(keys.includes(k), `${k} missing in ${keys}`);
+    for (const k of ['module:changelog', 'registration:dashboard', 'command:test', 'setting:services', 'plan:ci', 'plan:node-version']) assert.ok(!keys.includes(k), `${k} should not be listed`);
+    const text = node('render.mjs', ['.', '--unused'], repo).stdout;
+    assert.match(text, /^Modules that are off:\n {2}1\. codex: /);
+    assert.match(text, /to turn on: modules\["codex"\] = true/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

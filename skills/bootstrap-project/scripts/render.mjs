@@ -27,6 +27,10 @@
 //               now (renderHash), "saved" is the hash the last --apply stored in
 //               bootstrap.json, "counts" the file statuses of an upgrade. hash != saved means
 //               the templates or the answers changed since the last apply.
+// --unused      print the parts these answers leave out (modules off, registrations off,
+//               missing commands, empty settings, things the skill never makes), numbered,
+//               each with the bootstrap.json change that turns it on. Writes nothing.
+//               With --json: the list as JSON.
 //
 // Template syntax (only in templates/, never in the output). templates/partials/*.md are
 // shared blocks, rendered once and used as a value (reporting-rules.md -> REPORTING_RULES).
@@ -151,6 +155,71 @@ export function checkParams(p) {
 
 /** Returns true when a module is on. Every module is on unless the answers turn it off. */
 export const moduleOn = (p, m) => p.modules?.[m] !== false;
+
+// What each module does for the owner, in plain words (the "not used" list of the hand-off)
+const MODULE_INFO = {
+  codex: 'Codex checks the plan and the finished code a second time, with another AI (.codex/skills/validate-plan, validate-implementation)',
+  changelog: 'a changelog entry for each PR, the changelog-entry skill and a GitHub check that blocks a PR without an entry (changelog.d/)',
+  'decision-sheet': 'a PR decision sheet: at most 5 yes/no questions only a person can answer, plus what the machines already checked',
+  'test-review': 'an independent review of the tests of a change, with revert checks (test-review skill, test-reviewer agent)',
+  'step-gate': 'a hook that blocks "git commit" until the plan steps (implement, test, verify, document) are done',
+  'post-edit-lint': 'a hook that runs the lint fixer and the formatter on each file Claude edits',
+  'plans-parallel': 'a report of which plans can run at the same time and which must wait (plans-parallel skill)',
+  'pr-feedback': 'applies your review comments on an open PR, tests again, pushes and replies to each comment (pr-feedback skill)',
+  'run-skill': 'a manual launcher that runs one plan skill headless in the current checkout (run-skill.sh)',
+};
+const COMMAND_INFO = {
+  test: 'run all tests', testScoped: 'run the tests of one file', testE2e: 'run the end-to-end tests',
+  lint: 'lint and fix', lintCheck: 'lint without changing files', format: 'format the code',
+  typecheck: 'type check', build: 'build',
+};
+
+/**
+ * Lists the parts the skill can set up but that these answers leave out, so the hand-off can
+ * offer them. Each item: {group, key, what, turnOn}. "turnOn" is the bootstrap.json change.
+ */
+export function unusedParts(p, repo = null) {
+  const out = [];
+  for (const m of MODULES) {
+    if (!moduleOn(p, m)) out.push({ group: 'module', key: m, what: MODULE_INFO[m], turnOn: `modules["${m}"] = true` });
+  }
+  const reg = p.registry || {};
+  if (reg.dashboard === false) out.push({ group: 'registration', key: 'dashboard', what: 'the project on the plans dashboard (launch plans, see runs and PRs)', turnOn: 'registry.dashboard = true' });
+  if (reg.browserTest !== true) {
+    out.push({ group: 'registration', key: 'browserTest', what: 'a browser-usability-test profile, so runs can click through the app', turnOn: 'registry.browserTest = true (and registry.appUrl for a web UI)' });
+  } else if (reg.role !== 'backend' && !str(reg.appUrl)) {
+    out.push({ group: 'registration', key: 'appUrl', what: 'the browser-test step and ship gate of each run (needs the dev server link)', turnOn: 'registry.appUrl = "<dev server URL>"' });
+  }
+  const cmds = p.stack?.commands || {};
+  for (const [k, what] of Object.entries(COMMAND_INFO)) {
+    if (!str(cmds[k])) out.push({ group: 'command', key: k, what: `the command to ${what} (the skills say "not available yet")`, turnOn: `stack.commands.${k} = "<command>"` });
+  }
+  const pel = p.stack?.postEditLint || {};
+  if (moduleOn(p, 'post-edit-lint') && !str(pel.fix) && !str(pel.format)) {
+    out.push({ group: 'setting', key: 'postEditLint', what: 'the lint and format commands for the post-edit hook (the hook does nothing without them)', turnOn: 'stack.postEditLint.fix / .format / .extensions' });
+  }
+  const t = p.git?.tickets || {};
+  if (t.evidence !== true) out.push({ group: 'setting', key: 'tickets.evidence', what: 'a comment with the run evidence on the GitHub issue of each PR', turnOn: 'git.tickets.evidence = true' });
+  if (!t.board) out.push({ group: 'setting', key: 'tickets.board', what: 'move the issue to a status on a GitHub project board when the PR opens', turnOn: 'git.tickets.board = {owner, number, status}' });
+  if (!arr(p.pipeline?.services).length) out.push({ group: 'setting', key: 'services', what: 'check that the services a run needs (API, database container) are up before it starts', turnOn: 'pipeline.services = [{name, url | container}]' });
+  if (!arr(p.pipeline?.preflight).length) out.push({ group: 'setting', key: 'preflight', what: 'commands every run needs first (for example a generator whose output is gitignored)', turnOn: 'pipeline.preflight = ["<command>"]' });
+  if (!str(p.git?.staging)) out.push({ group: 'setting', key: 'staging', what: 'a staging branch between the base branch and production', turnOn: 'git.staging = "<branch>"' });
+  // never made by the skill: the owner adds them in a plan. Left out when the repo has them.
+  const has = (rel) => Boolean(repo) && existsSync(path.join(repo, rel));
+  const ours = new Set(['changelog-gate.yml', 'decision-sheet.yml']);
+  const ci = has('.github/workflows') && readdirSync(path.join(repo, '.github/workflows')).some((f) => /\.ya?ml$/.test(f) && !ours.has(f));
+  const nested = Boolean(repo) && readdirSync(repo, { withFileTypes: true })
+    .some((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'changelog.d' && d.name !== 'node_modules' && existsSync(path.join(repo, d.name, 'AGENTS.md')));
+  const node = str(p.stack?.manifest) === 'package.json';
+  for (const [key, what, present] of [
+    ['ci', 'a CI workflow that runs the tests and lint on each PR', ci],
+    ['dependabot', 'dependabot updates for the dependencies', has('.github/dependabot.yml') || has('.github/dependabot.yaml')],
+    ['git-hooks', 'git hooks (husky or similar)', has('.husky') || has('lefthook.yml') || has('.pre-commit-config.yaml')],
+    ['node-version', 'a .nvmrc file that pins the Node version', !node || has('.nvmrc') || has('.node-version')],
+    ['nested-agents', 'an AGENTS.md per big folder with the rules of that folder', nested],
+  ]) if (!present) out.push({ group: 'plan', key, what, turnOn: 'write a plan: /skill-1-plan' });
+  return out;
+}
 
 // Codex is found on PATH or in ~/.local/bin (installer default). The skills call it as
 // `codex` or as `~/.local/bin/codex` (with the tilde), so these rules match both.
@@ -791,6 +860,7 @@ function main(argv) {
     else if (a === '--json') opt.json = true;
     else if (a === '--vars') opt.vars = true;
     else if (a === '--status') opt.status = true;
+    else if (a === '--unused') opt.unused = true;
     else if (a.startsWith('--')) die('unknown option ' + a);
     else pos.push(a);
   }
@@ -808,6 +878,20 @@ function main(argv) {
   const errs = checkParams(params);
   if (errs.length) die('the answers file has problems:\n  - ' + errs.join('\n  - '));
 
+  if (opt.unused) {
+    const items = unusedParts(params, repo);
+    if (opt.json) { console.log(JSON.stringify(items, null, 2)); return; }
+    const titles = { module: 'Modules that are off', registration: 'Registrations that are off', command: 'Commands not found', setting: 'Settings left empty', plan: 'Not made by this skill (add them in a plan)' };
+    let n = 0;
+    for (const [g, title] of Object.entries(titles)) {
+      const rows = items.filter((i) => i.group === g);
+      if (!rows.length) continue;
+      console.log(`${title}:`);
+      for (const i of rows) console.log(`  ${++n}. ${i.key}: ${i.what}\n       to turn on: ${i.turnOn}`);
+    }
+    if (!n) console.log('Everything the skill can set up is in use.');
+    return;
+  }
   if (opt.status) {
     const counts = {};
     for (const f of plan(repo, renderAll(params, { upgrade: true, repo }))) counts[f.status] = (counts[f.status] || 0) + 1;

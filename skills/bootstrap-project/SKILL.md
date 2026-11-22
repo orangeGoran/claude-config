@@ -56,3 +56,15 @@ Follow `references/checklist.md`, section "Interview". Ask only what the owner a
 ## Step 5 — Hand-off
 
 Use the template in `references/checklist.md`, section "Hand-off". It has: the file tree (new / changed / kept), the verify result, one copy-paste block with the git and GitHub commands in order, the Conventional Commits message, the reload note (new skills and agents load only after a session reload), and the next steps: push the tooling to `origin/<base>`, launch the first plan ("Check the pipeline end to end") in "to PR" mode from the dashboard, then `/skill-1-plan <first small task>`.
+
+The hand-off ends with **Not used**: run `node $SKILL_DIR/scripts/render.mjs <repo> --unused` and show its numbered list in plain words (modules that are off, registrations that are off, commands not found, settings left empty, things this skill never makes). Add the template features that a **Keep** decision left out in Step 2. End with "Reply with the numbers you want to add, or 'none'."
+
+## Step 6 — Add what the owner picks
+
+When the owner replies with numbers from **Not used**, for each pick:
+
+- A module, registration, command or setting: ask only for the value the skill cannot find (a command, a board number, a dev server link), save it to `bootstrap.json`, then run Step 2 (`--upgrade`), Step 3 when a registration changed, and Step 4. Show only the files that changed.
+- A "not made by this skill" item: suggest the `/skill-1-plan` line for it. Do not write it now.
+- A template feature left out by **Keep**: merge it into the file as in Step 2.
+
+Then give the updated `git add` line and a commit message for the added files only (for example `chore(claude): add the Codex checks`).

@@ -143,3 +143,16 @@ Write the hand-off in this order. Use real paths and values.
    1. Push (step 4). The pipeline refuses to start until `.claude/skills/skill-auto-pipeline/SKILL.md` and the plan are on `origin/<base>`.
    2. Open the plans dashboard, find the project, launch "Check the pipeline end to end" in "to PR" mode. Review and merge the draft PR, then run `bash .claude/scripts/auto-pipeline.sh --cleanup <slug>`.
    3. Run `/skill-1-plan <first small task>` (suggest one from the parent plan).
+8. **Not used**: the numbered list from `render.mjs <repo> --unused`, grouped as it prints, one line per item in plain words (what it does for the owner, not the field name). Under it, the template features that a **Keep** decision left out (file and feature), numbered after the script's list. Leave out a group with no items. When nothing is unused, write one line: "Everything the skill can set up is in use." End with: "Reply with the numbers you want to add, or 'none'." Example:
+
+   ```text
+   Not used (reply with the numbers you want to add, or "none"):
+   Modules that are off
+     1. Codex: a second check of the plan and the code with another AI
+   Commands not found
+     2. End-to-end tests: the skills say "not available yet"
+   Settings left empty
+     3. Issue comment: a comment with the run evidence on the GitHub issue of each PR
+   Not made by this skill (I suggest a plan)
+     4. CI workflow that runs the tests and lint on each PR
+   ```
