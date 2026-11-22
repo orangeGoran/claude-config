@@ -723,7 +723,8 @@ async function renderDetail(loadPlan) {
     btn('🖥 Open in VS Code', vsc, null, moreWrap);
   } else if (p.hasPipeline) {
     if (stt === 'live') {
-      btn('📋 Report', rep); btn('📄 Log', log);
+      // the worktree exists while the run works: its files are open to read in VS Code
+      btn('📋 Report', rep); btn('📄 Log', log); btn('🖥 Open in VS Code', vsc);
     } else if (stt === 'review') {
       btn('📋 Report', rep); btn('🖥 Open in VS Code', vsc);
       btn('📄 Log', log, null, moreWrap);
@@ -745,7 +746,7 @@ async function renderDetail(loadPlan) {
     }
   } else {
     if (stt === 'live') {
-      btn('📄 Log', log);
+      btn('📄 Log', log); btn('🖥 Open in VS Code', vsc, null, moreWrap);
     } else if (stt === 'review') {
       btn('📄 Log', log); btn('🖥 Open in VS Code', vsc);
       btn('🗑 Clear run record', clean, 'danger', moreWrap);
