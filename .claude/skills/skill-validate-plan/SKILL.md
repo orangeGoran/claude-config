@@ -1,6 +1,6 @@
 ---
 name: skill-validate-plan
-description: Plan-validation gate between writing a plan and /skill-2-implement. Dispatches the plan-validator subagent to check a .plans/ file against the real repository and docs/parent-plan.md, and reports APPROVE / APPROVE WITH CHANGES / NEEDS REWORK. One round, no edits. Use right after a plan is saved.
+description: Plan-validation gate between writing a plan and /skill-2-implement. Dispatches the plan-validator subagent to check a .plans/ file against the real repository and docs/roadmap.md, and reports APPROVE / APPROVE WITH CHANGES / NEEDS REWORK. One round, no edits. Use right after a plan is saved.
 argument-hint: "[plan file]"
 ---
 
@@ -20,7 +20,7 @@ Do not validate the plan yourself. The gate exists to get a review from an agent
 
 - `subagent_type: "plan-validator"`
 - `description: "Validate plan"`
-- `prompt`: the plan path, and the instruction to follow its full process: read the plan, `AGENTS.md`, `docs/parent-plan.md`, `docs/plans-dashboard.md`, then check every claim against the repository (paths, symbols, signatures, the reference implementation, wiring, consumers of changed symbols, migrations, "How to verify" commands).
+- `prompt`: the plan path, and the instruction to follow its full process: read the plan, `AGENTS.md`, `docs/roadmap.md`, `docs/plans-dashboard.md`, then check every claim against the repository (paths, symbols, signatures, the reference implementation, wiring, consumers of changed symbols, migrations, "How to verify" commands).
 
 If a parent plan, a roadmap or a related spec belongs with the plan, pass its path too, and tell the agent that it is **context only**: the named plan is the one to validate.
 

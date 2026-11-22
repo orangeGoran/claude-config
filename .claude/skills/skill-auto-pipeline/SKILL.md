@@ -32,7 +32,7 @@ You run **unattended** (headless `claude -p`, nobody watching) inside a dedicate
 - If a helper finished without doing its job, start a new one with corrected instructions, or do the work yourself. Never send a `SendMessage` correction to a helper that has finished, and do not wait for it to "resume".
 - Before you end a turn to wait for helpers, name each helper you wait for. Wait only for a helper whose "finished" notice has not arrived.
 
-**Owner decisions.** (1) Do what the plan says. (2) If the plan is silent and the choice is minor and conventional, follow the codebase and record the choice in the Timeline. (3) If the choice is significant (behavior, schema, an open decision in `docs/parent-plan.md`, anything an external spec should define), do not guess: `/skill-2-implement` writes the question down and skips the dependent steps. See "Needs decision" below.
+**Owner decisions.** (1) Do what the plan says. (2) If the plan is silent and the choice is minor and conventional, follow the codebase and record the choice in the Timeline. (3) If the choice is significant (behavior, schema, an open decision in `docs/roadmap.md`, anything an external spec should define), do not guess: `/skill-2-implement` writes the question down and skips the dependent steps. See "Needs decision" below.
 
 ## Step 0 — Parse arguments and preflight
 

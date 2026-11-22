@@ -1,16 +1,17 @@
 # Plan: Session tabs and the ⌘K command palette in the dashboard page
 
 - **Base**: main
+- **Parent**: .plans/20261122-151056-plans-mac-app-parent.md
 
 ## Goal
 
 Each plan you open in the dashboard becomes a tab (a session) in a strip under the header, so you can work on several plans at once and switch between them from the keyboard. ⌘K opens a command palette that finds plans and runs the header actions. The page exposes these actions as `window.dashboard`, so the Mac app (the next plan) can call them from its menu shortcuts (⌘1–9, ⌘W, ⌘⇧T).
 
-This is phase 1 of "Plans Mac app" in `docs/parent-plan.md`.
+This is phase 1 of the parent plan "Plans Mac app" (`.plans/20261122-151056-plans-mac-app-parent.md`).
 
 ## Context
 
-- Parent plan sections: `docs/parent-plan.md` → Phases → "Plans Mac app" (item 1, and the decisions above the list), Architecture (Server, Page).
+- Parent plan sections: `.plans/20261122-151056-plans-mac-app-parent.md` → Phases item 1 and "Decisions taken by the owner"; `docs/roadmap.md` → Architecture (Server, Page)..
 - Decisions taken for this plan (owner, this session):
   - Release 1 of the Mac app is three plans: 1) page tabs + ⌘K palette + hooks (this plan), 2) the Mac app (Swift + WKWebView shell, menus, notifications with Allow / Deny, Dock badge, keep-awake, auto reload, "App update ready" bar), 3) the ⌘N "new session" sheet with its server work.
   - Tabs live inside the page (one page, one `/api/state` poll), the same in the browser and the app; not native window tabs.
@@ -27,7 +28,7 @@ This is phase 1 of "Plans Mac app" in `docs/parent-plan.md`.
 - **Global rules affect every project.** Not touched: no change to the root `CLAUDE.md` or `skills/`.
 - **Never stop processes by name.** The tests start and stop their own server as today (`before`/`after` in `scripts/test/plans-dashboard.test.mjs`). No `pkill`/`killall`.
 - **Tests for logic changes.** The tab list logic and the palette match are pure functions in `app.js`, tested in `scripts/test/plans-dashboard.test.mjs` by slicing them out of the served page, as the test "an answer still arriving shows as Markdown, with no raw marks" does for `mdLive`. The `scripts/docs-media.mjs` fix gets its own test: step 17 moves the copy into an exported `copyDashboard(dest)`, and a new test copies the dashboard with it, starts the copy on its own port and checks that `/` answers with the page.
-- **Docs: current state only.** `docs/plans-dashboard.md` gets a "Tabs and keyboard shortcuts" section in the present tense; `docs/parent-plan.md` only marks phase 1 as built.
+- **Docs: current state only.** `docs/plans-dashboard.md` gets a "Tabs and keyboard shortcuts" section in the present tense; the parent plan only marks phase 1 as built.
 
 ## Contracts
 
@@ -59,7 +60,7 @@ None. No server change, no new endpoint, no `/api/state` field. The page uses ex
 - `scripts/plans-dashboard/app.css` — modified: `#stabs` / `.stab` and `.palette` / `.pali` styles, in both themes through the existing variables.
 - `scripts/test/plans-dashboard.test.mjs` — modified: the tests for the pure functions, one test that the page has `window.dashboard` and the two new elements, and the `copyDashboard` test.
 - `docs/plans-dashboard.md` — modified: a "Tabs and keyboard shortcuts" section after "Board".
-- `docs/parent-plan.md` — modified: phase 1 of "Plans Mac app" marked as built (step 1).
+- `.plans/20261122-151056-plans-mac-app-parent.md` — modified: phase 1 marked as built (step 1).
 - `scripts/docs-media.mjs` — modified: `copyDashboard(dest)` copies the whole `scripts/` folder (without `scripts/test/`), so the throwaway dashboard can start; the run code is behind a main-module check (step 17).
 - `changelog.d/<entry>.yml` — new: the release note, written by `/changelog-entry`.
 
@@ -80,7 +81,7 @@ Known limits, written in the docs: ⌘K inside the Monaco diff editor opens the 
 
 ## Steps
 
-1. `docs/parent-plan.md`, Phases → Plans Mac app → item 1: change "**Session tabs and the ⌘K palette (page)**" to "**Session tabs and the ⌘K palette (page)**, built", so the parent plan shows the phase as done. Nothing else in the parent plan changes.
+1. `.plans/20261122-151056-plans-mac-app-parent.md`, Phases → item 1: change "**Session tabs and the ⌘K palette (page)**" to "**Session tabs and the ⌘K palette (page)**, built", so the parent plan shows the phase as done. Nothing else in the parent plan changes.
 2. `page.html`: add `<nav id="stabs" aria-label="Open plans" hidden></nav>` right after the closing `</header>` of `header.mainhd` (the first `</header>` in the file; the second one belongs to `#logpane`), and `<div id="palette" class="palette" role="dialog" aria-modal="true" aria-label="Command palette" hidden><input id="palq" type="search" autocomplete="off" spellcheck="false" aria-label="Search plans and actions" placeholder="Search plans and actions…"><div id="pall" role="listbox"></div></div>` right before `<div id="toasts"`.
 3. `app.js`, new block that starts with the line `// --- session tabs ---` (before the board code, `let boardOn = false;`); its pure functions come first and end with the line `// --- end session tabs ---`, so the test can cut them out. The pure functions:
    - `tabsOpen(tabs, key)` → the list with `key` added at the end when it is missing (same list when present).

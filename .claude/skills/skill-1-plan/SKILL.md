@@ -1,6 +1,6 @@
 ---
 name: skill-1-plan
-description: Plan step of the workflow (step 1 of plan → validate → implement → test → verify → ship). Explores the repo and docs/parent-plan.md, asks the owner one decision at a time, proposes approaches, saves a structured plan to .plans/, then validates it. Use when starting a feature, a fix, a phase or any significant change.
+description: Plan step of the workflow (step 1 of plan → validate → implement → test → verify → ship). Explores the repo and docs/roadmap.md, asks the owner one decision at a time, proposes approaches, saves a structured plan to .plans/, then validates it. Use when starting a feature, a fix, a phase or any significant change.
 argument-hint: "<what to plan>"
 ---
 
@@ -13,13 +13,13 @@ Run shell commands bare: one command per call, no pipes, `&&`, redirection or he
 ## Step 0 — Quick presentation
 
 - Root `AGENTS.md` is already in context through `CLAUDE.md`. Do not read it again.
-- Read the parts of `docs/parent-plan.md` that `$ARGUMENTS` touches, and its open decisions. Read every nested `AGENTS.md` in the folders the work touches.
+- Read the parts of `docs/roadmap.md` that `$ARGUMENTS` touches, and its open decisions. When the work belongs to a parent plan in `.plans/` (`*-parent.md`, linked from `docs/roadmap.md`), read that parent plan too. Read every nested `AGENTS.md` in the folders the work touches.
 - Give the owner a short overview: what exists in the repo today, what the parent plan already decides, and which open decisions this work touches. A few bullets.
 
 ## Step 1 — Explore and understand the problem
 
 - Explore the real repo: files, `git log`, existing patterns, the scripts in `package.json`. Never describe the repo from memory.
-- **Scope.** One plan is one change that one PR can carry. If `$ARGUMENTS` is bigger, split it into ordered plans without asking: list them, put first the part the owner can try soonest and that the others build on, and write only that plan now. Before that plan, write the split into `docs/parent-plan.md` (Phases): one entry per plan, in order, with its scope, the owner's decisions for it and its open decisions, so the later plans start from the parent plan and not from the chat. The first plan does not fill the parent plan in a later step. Ask only when the order itself is a real tradeoff.
+- **Scope.** One plan is one change that one PR can carry. If `$ARGUMENTS` is bigger, split it into ordered plans without asking: list them, put first the part the owner can try soonest and that the others build on, and write only that plan now. Before that plan, write the split into a new parent plan `.plans/<YYYYMMDD-HHMMSS>-<slug>-parent.md` (local time now): it starts with `> **Master plan.** This file holds no implementation steps.`, then one entry per plan, in order, with its scope, the owner's decisions for it and its open decisions. Add one line that links it to `docs/roadmap.md`. So the later plans start from the parent plan and not from the chat. The first plan does not fill the parent plan in a later step. Ask only when the order itself is a real tradeoff.
 - If the requirement is unclear, ask. Do not guess. Use the **Question queue** below.
 
 ## Question queue — one question at a time
@@ -71,7 +71,7 @@ Steps 1, 1.5 and 2 all raise questions, and so do the open decisions this plan n
 - Use one example for all options. Put the technical term in parentheses after the plain words.
 - End with: Please reply with **A** or **B**. Next: question N+1 of M, <title>. (For the last question: "This is the last question.")
 - Accept a plain-text reply. When the owner asks for more explanation, explain again in this format. Do not open a popup.
-- When the owner answers an open decision of the parent plan, the plan records it, and one plan step moves it into the right section of `docs/parent-plan.md`.
+- When the owner answers an open decision of the parent plan, the plan records it, and one plan step moves it into the right section of `docs/roadmap.md`.
 
 ## Step 1.25 — Anchor to a reference implementation
 
@@ -128,6 +128,7 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 # Plan: <title>
 
 - **Base**: main
+- **Parent**: <`.plans/<file>-parent.md` when the plan belongs to one; else leave this line out>
 
 ## Goal
 
@@ -168,7 +169,7 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 
 - `path/to/file` — <new | modified | deleted>: <what changes>
 
-> Every file a step or test edits is listed here: specs, test helpers, lock files, release notes, `AGENTS.md` (Commands section), `docs/parent-plan.md` and every doc the plan promises to update. A step that says "document X" with no file here for that edit does not happen.
+> Every file a step or test edits is listed here: specs, test helpers, lock files, release notes, `AGENTS.md` (Commands section), `docs/roadmap.md` and every doc the plan promises to update. A step that says "document X" with no file here for that edit does not happen.
 
 ## Wiring & registration
 

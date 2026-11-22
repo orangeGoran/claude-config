@@ -50,7 +50,7 @@
         "check": "The changed Markdown has no hard-wrapped paragraphs and no history or session notes."
       }
     ],
-    "parentPlan": "docs/parent-plan.md",
+    "parentPlan": "docs/roadmap.md",
     "rulesDocs": [
       "docs/plans-dashboard.md"
     ],
@@ -178,5 +178,5 @@
     "appUrl": "http://127.0.0.1:4899"
   },
   "firstPlanTs": "20261122-110845",
-  "renderHash": "068335c802e68e55"
+  "renderHash": "4d17e7b6656e3a2c"
 }

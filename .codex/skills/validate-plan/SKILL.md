@@ -26,7 +26,7 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 ## How to work
 
 1. **Read the plan from start to end.** Note every file path, function, type, table, column, enum, endpoint, command and section reference it names.
-2. **Read the rules.** Read `AGENTS.md`, `docs/parent-plan.md`, `docs/plans-dashboard.md` in full, plus every `AGENTS.md` in the folders the plan touches and in their parent folders. List them with `git ls-files --cached --others --exclude-standard AGENTS.md '*/AGENTS.md'` (this also lists a new, uncommitted file). The plan must obey these rules.
+2. **Read the rules.** Read `AGENTS.md`, `docs/roadmap.md`, `docs/plans-dashboard.md` in full, plus every `AGENTS.md` in the folders the plan touches and in their parent folders. List them with `git ls-files --cached --others --exclude-standard AGENTS.md '*/AGENTS.md'` (this also lists a new, uncommitted file). The plan must obey these rules.
 3. **Check every claim against the real repository.** Do not trust the plan's description of existing code. Open it.
    - **References:** confirm that each file, function and type exists (read the file, `rg` for the symbol). Flag each path that does not exist and each signature the plan gets wrong.
    - **Reference implementation:** open the files of the plan's **Reference implementation** section. Confirm the plan mirrors them. Flag deviations the plan does not explain.

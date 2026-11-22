@@ -1,6 +1,6 @@
 # claude-config
 
-A Claude Code setup in one repo: a local dashboard that runs plan files in the background, plus global rules and skills linked into ~/.claude/. Required reading: `docs/parent-plan.md` (the parent plan: goals, architecture, open decisions).
+A Claude Code setup in one repo: a local dashboard that runs plan files in the background, plus global rules and skills linked into ~/.claude/. Required reading: `docs/roadmap.md` (the parent plan: goals, architecture, open decisions).
 
 Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS.md`) next to it. Never write rules into a `CLAUDE.md`. When a folder gets its own rules, add an `AGENTS.md` + `CLAUDE.md` pair in that folder: a new folder `AGENTS.md` needs both files and a line in this root file that names it.
 
@@ -39,7 +39,8 @@ Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS
 
 - Plans live in `.plans/`, named `YYYYMMDD-HHMMSS-<kebab-slug>.md`. Finished plans move to `.plans/done/`.
 - Validation reports live in `.plans/.validations/`. Run reports live in `.plans/auto-runs/` (gitignored).
-- `docs/parent-plan.md` is the parent plan. Child plans are written one step ahead.
+- `docs/roadmap.md` is the parent plan. Child plans are written one step ahead.
+- A big piece of work that needs several plans has its own parent plan: `.plans/YYYYMMDD-HHMMSS-<slug>-parent.md`, which starts with `> **Master plan.**` (no steps, never launched) and holds the ordered child plans, the owner's decisions and the open decisions. `docs/roadmap.md` links each parent plan. A child plan names its parent plan in its header (`- **Parent**:`).
 - Every plan starts only after an explicit "go" from the owner. One plan per run.
 - When a plan needs an owner decision, do not guess. Write the question down and continue with the steps that do not depend on it.
 

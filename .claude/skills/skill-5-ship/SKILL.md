@@ -81,7 +81,7 @@ A file without a conflict marker can still be wrong after a merge. List the file
 Before the merge commit, check the result: no conflict markers (`git diff --check`), no reference to a name that one side removed, and the build passes (AGENTS.md, **Commands**, "Build"; when it is "not available yet", the type check or the scoped tests of the conflicted files). Then commit the merge: `git commit --no-edit`.
 
 Stop (unattended: `BLOCKED: merge conflict in <file>`, each side's change and your proposal under `## Diagnosis`) only for these cases. Resolve and stage every other file first, leave the hard files unresolved and the merge in progress, so a later run continues it (Step 1, item 2):
-- The conflict is in `docs/parent-plan.md`, an `AGENTS.md`, a rule or decision document, or a contract file. Exception: both sides only added rows or lines to the same list or table (for example two new rows in the **Layout** table of `AGENTS.md`): keep both and go on.
+- The conflict is in `docs/roadmap.md`, an `AGENTS.md`, a rule or decision document, or a contract file. Exception: both sides only added rows or lines to the same list or table (for example two new rows in the **Layout** table of `AGENTS.md`): keep both and go on.
 - Both sides changed the same behavior in ways that do not fit together: a different status code, error, validation limit, access check or scope check for one case (for example, the base made a field required and this branch removed it).
 - The conflict is in a database migration, or both sides changed the same model column, enum or index: the migration can be wrong after the merge.
 - One side deleted or renamed a file or symbol that the other side changed (a modify/delete conflict), and the change is not only unchanged context.
