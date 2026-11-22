@@ -37,7 +37,7 @@ In your final reply, list each command that touched a service or the database (o
 ## What to hunt for
 
 - **Discrepancies:** the plan says X; the file says otherwise. Wrong line numbers or quotes.
-- **Restart after dashboard changes:** the plan breaks or skips the rule "After a change to scripts/plans-dashboard.mjs, the page files in scripts/plans-dashboard/ or anything they import, run npm run restart, but only after pgrep -fl chat-relay.mjs shows that the live chats run under the relay."
+- **Restart after dashboard changes:** the plan breaks or skips the rule "After a change to scripts/plans-dashboard.mjs, the page files in scripts/plans-dashboard/ or anything they import lands in the main checkout (a merge and git pull, or an edit there), run pgrep -fl chat-relay.mjs, then npm run restart, but only when it shows that the live chats run under the relay. A pipeline run in a worktree does not restart: the service runs the main checkout, so its report lists the restart under Open items."
 - **No npm dependencies:** the plan breaks or skips the rule "The scripts use only Node built-ins; package.json has no dependencies, and the page loads browser libraries (Monaco, Mermaid) from a CDN."
 - **Public repo: no private data:** the plan breaks or skips the rule "The repo is public: files hold no client names, private paths or secrets, and the templates in skills/bootstrap-project/templates/ stay generic (project values come from the interview)."
 - **Global rules affect every project:** the plan breaks or skips the rule "The root CLAUDE.md and the skills/ folders are symlinked into ~/.claude/, so a change there changes every project; keep them short and generic."

@@ -49,7 +49,7 @@ Say which base and which plan you use before you continue.
 
 ### Project rules (`AGENTS.md`, Hard rules)
 A finding is each place where the code breaks or skips one of these rules:
-- **Restart after dashboard changes.** After a change to scripts/plans-dashboard.mjs, the page files in scripts/plans-dashboard/ or anything they import, run npm run restart, but only after pgrep -fl chat-relay.mjs shows that the live chats run under the relay.
+- **Restart after dashboard changes.** After a change to scripts/plans-dashboard.mjs, the page files in scripts/plans-dashboard/ or anything they import lands in the main checkout (a merge and git pull, or an edit there), run pgrep -fl chat-relay.mjs, then npm run restart, but only when it shows that the live chats run under the relay. A pipeline run in a worktree does not restart: the service runs the main checkout, so its report lists the restart under Open items.
 - **No npm dependencies.** The scripts use only Node built-ins; package.json has no dependencies, and the page loads browser libraries (Monaco, Mermaid) from a CDN.
 - **Public repo: no private data.** The repo is public: files hold no client names, private paths or secrets, and the templates in skills/bootstrap-project/templates/ stay generic (project values come from the interview).
 - **Global rules affect every project.** The root CLAUDE.md and the skills/ folders are symlinked into ~/.claude/, so a change there changes every project; keep them short and generic.
