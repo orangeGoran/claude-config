@@ -1,5 +1,7 @@
 // the VS Code logo (its official blue mark) on every button that opens a folder in VS Code
 const VSCODE_SVG = '<svg class="vsc-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="#007ACC" d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z"/></svg>';
+// the GitHub mark (its octicon) on every link that opens a PR on GitHub; it takes the text colour
+const GITHUB_SVG = '<svg class="vsc-ico" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>';
 const VSC_OPEN = { html: VSCODE_SVG + ' Open in VS Code' };
 
 // theme: remembered per browser, defaults to system preference
@@ -666,7 +668,7 @@ async function renderDetail(loadPlan) {
     </div>
     ${p.pr && p.pr.state === 'MERGED' ? '<div class="mergedline"><span>✓ PR #' + p.pr.number +
       ' was merged into <code>' + esc(p.pr.base || '?') + '</code>' + (p.pr.mergedAt ? ' on ' + esc(new Date(p.pr.mergedAt).toLocaleString()) : '') +
-      '</span><a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener">↗ GitHub</a></div>' : ''}
+      '</span><a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener" title="Open the PR on GitHub">' + GITHUB_SVG + ' GitHub</a></div>' : ''}
     ${p.summary ? '<div class="summary">💡 ' + esc(p.summary) + '</div>'
       : p.summarizing ? '<div class="summary dim">💭 plain-language summary is being generated…</div>' : ''}
     ${withPr ? '' : lastStep}
@@ -712,7 +714,7 @@ async function renderDetail(loadPlan) {
     { project: p.project, slug: p.slug, launcher: +modeOf(p) }, true);
   if (notStarted(p)) btn('⚠ Why it didn’t start', () => showLaunchError(p), 'danger');
   for (const l of (p.run && p.run.links) || []) {
-    // the run's link to its own PR would open this tab: ↗ GitHub in the bar is the PR on the web
+    // the run's link to its own PR would open this tab: the GitHub button in the bar is the PR on the web
     if (p.pr && l.url.replace(/[/]+$/, '') === p.pr.url.replace(/[/]+$/, '')) continue;
     btn(l.label.replace(/^Ticket\s+(?=#)/i, ''), () => openRunLink(p, l.url), 'primary');
   }
@@ -859,7 +861,7 @@ function renderWtDetail(p, loadPr0) {
     ${!withPr && p.prError ? '<div class="ghhint">PRs are not shown: ' + esc(p.prError) + '.</div>' : ''}
     ${withPr && p.pr.state === 'MERGED' ? '<div class="mergedline"><span>✓ PR #' + p.pr.number +
       ' was merged into <code>' + esc(p.pr.base || '?') + '</code>' + (p.pr.mergedAt ? ' on ' + esc(new Date(p.pr.mergedAt).toLocaleString()) : '') +
-      '</span><a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener">↗ GitHub</a></div>' : ''}
+      '</span><a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener" title="Open the PR on GitHub">' + GITHUB_SVG + ' GitHub</a></div>' : ''}
     ${withPr ? '<div id="prview" class="pvpr"></div>'
       : '<div class="summary dim">No PR for <code>' + esc(p.branch || p.name) + '</code> yet.</div>'}`;
   document.body.classList.remove('review');
@@ -1714,7 +1716,7 @@ function drawBarAction(p, tab) {
   if (!R || !d || d.error) return;
   // the PR's state when it is not simply open, then GitHub, then the one next step
   R.innerHTML = (d.state === 'OPEN' && !d.isDraft ? '' : prChip(d)) + '<a class="ghbtn" href="' + escA(d.url) + '" target="_blank" rel="noopener" ' +
-    'title="Open the PR on GitHub">↗ GitHub</a>';
+    'title="Open PR #' + d.number + ' on GitHub">' + GITHUB_SVG + '&nbsp;#' + d.number + '</a>';
   // Files changed has no header with the plan's actions: the worktree in VS Code is here
   if (tab === 'files') {
     const vs = document.createElement('button');
