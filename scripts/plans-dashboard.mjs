@@ -2858,7 +2858,7 @@ const server = http.createServer(async (req, res) => {
           output: warnings.length ? warnings.join('\n') : 'Settings saved — ' + cleaned.length + ' project(s).' });
       }
       if (url.pathname === '/api/add-project') return json(res, 200, addProject(b));
-      // 🖥 Code in the page header: this dashboard's own repo
+      // the Code button in the page header: this dashboard's own repo
       if (url.pathname === '/api/vscode-dash') return json(res, 200, { ok: true, target: openFolderInVsCode(DASH_REPO) });
       if (url.pathname === '/api/launchers') {
         if (!proj) return json(res, 400, { error: 'bad project' });
@@ -2871,7 +2871,7 @@ const server = http.createServer(async (req, res) => {
         const note = await pullRoot(proj, br.out);
         return json(res, 200, { ok: !note.startsWith('Not pulled'), output: note });
       }
-      // 🖥 VS Code on a project header: the main checkout, not a plan's worktree
+      // the VS Code button on a project header: the main checkout, not a plan's worktree
       if (url.pathname === '/api/vscode-project') {
         if (!proj) return json(res, 400, { error: 'bad project' });
         return json(res, 200, { ok: true, target: openInVsCode(proj) });
