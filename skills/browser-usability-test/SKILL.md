@@ -31,6 +31,8 @@ Run `node $SKILL_DIR/scripts/profile.mjs resolve`. One profile per project lives
 
 ### 0.3 Account
 
+When the profile has `auth.none: true`, the app has no login: skip this step and open the pages directly.
+
 Decide the account yourself. Ask only when no saved account fits.
 
 1. **Credentials in the call.** If the user's message gives credentials (email, password, 2FA code, role, tenant — in any form), use them and save them first: `profile.mjs add-account <project> '<json>'` (same email → updated).

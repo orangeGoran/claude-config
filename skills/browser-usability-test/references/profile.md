@@ -18,14 +18,15 @@ The schema requires only `repos`; a run also needs `app.url` (`profile.mjs resol
 | --- | --- | --- |
 | `repos[]` | `{ role, path, remote }` per repo. `remote` is the normalized origin (`github.com/org/repo`); it matches clones in other folders and worktrees | `profile.mjs resolve`, `repoPath(role)` |
 | `app.url` | Frontend URL. Must be local | `launch()` |
-| `api.url` | Backend URL; defaults to `app.url`. Must be local | `apiClient()`, request counting |
+| `api.url` | Backend URL; defaults to `app.url`. Must be local. `api: null` when the app has no separate API | `apiClient()`, request counting |
 | `api.healthPath` | Path that returns 200 when the API is up | `assertServersUp()` |
 | `api.openApiPath` | Live OpenAPI JSON | `openApiSpec()` |
 | `services.docker[]` | Containers that must run | step 0.2 check |
-| `db` | `{ kind: "docker-psql", container, user, database }` or `{ kind: "psql", url }`. Postgres only; always read-only | `sql()` |
+| `db` | `{ kind: "docker-psql", container, user, database }` or `{ kind: "psql", url }`. Postgres only; always read-only. `null` when tests get no database access | `sql()` |
 | `roles[]` | User roles, as the app names them | account choice, credential questions |
 | `tenancy` | `{ usersTable, emailColumn, roleColumn, tenantColumn, superadminColumn, tenantsTable }`; `null` for single-tenant apps | `whoami()`, isolation checks |
 | `accountSetup` | How to create a test account: `{ command, steps, confirmedAt }` (shell command and/or plain steps, e.g. API calls; `{role}`, `{email}`, `{tenant}` as placeholders). Found in the code by the agent and confirmed once by the user. `null` until known | step 0.3 |
+| `auth.none` | `true` when the app has no login: `roles`, `accountSetup` and test accounts are then not needed | `resolve` (missing fields) |
 | `auth.session` | `"bearer"` (token in `Authorization`) or `"cookie"` | session restore |
 | `auth.loginPath` | Login page path (default `/login`) | `uiLogin()` |
 | `auth.selectors` | `{ email, password, submit, twoFactor }` CSS selectors on the login page | `uiLogin()` |

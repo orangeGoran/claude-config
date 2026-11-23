@@ -32,7 +32,7 @@
       }
     },
     "api": {
-      "type": "object",
+      "type": ["object", "null"],
       "additionalProperties": false,
       "properties": {
         "url": { "$ref": "#/definitions/httpUrl" },
@@ -47,7 +47,7 @@
         "docker": { "type": "array", "items": { "type": "string" }, "description": "Containers that must run." }
       }
     },
-    "db": {
+    "db": { "oneOf": [{ "type": "null" }, {
       "type": "object",
       "required": ["kind"],
       "discriminator": { "propertyName": "kind" },
@@ -71,7 +71,7 @@
           }
         }
       ]
-    },
+    }] },
     "roles": { "type": "array", "items": { "type": "string" } },
     "tenancy": {
       "oneOf": [
@@ -110,6 +110,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "none": { "type": "boolean", "description": "true when the app has no login: no roles, account setup or test accounts are needed." },
         "session": { "enum": ["bearer", "cookie"] },
         "loginPath": { "$ref": "#/definitions/path" },
         "selectors": {

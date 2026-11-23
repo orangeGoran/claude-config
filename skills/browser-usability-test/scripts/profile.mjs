@@ -289,12 +289,16 @@ const masked = ({ password, ...rest }) => ({ ...rest, password: password ? "***"
 export function missing(project) {
   const gaps = [];
   if (!project.app?.url) gaps.push("app.url (where the frontend runs)");
-  if (!project.api?.url) gaps.push("api.url (where the backend runs; skip if there is no separate API)");
-  if (!project.db) gaps.push("db (read-only database access; skip if not available)");
-  if (!project.roles?.length) gaps.push("roles (user roles the app has)");
-  if (!project.tenancy) gaps.push("tenancy (users table, tenant column; null if single-tenant)");
-  if (!project.accountSetup) gaps.push("accountSetup (how to create a test account; command or steps)");
-  if (!readAccounts(project.name).length) gaps.push("accounts (no test account saved yet)");
+  // null is an answer: "this app has none" (api, db) or "single-tenant" (tenancy)
+  if (project.api !== null && !project.api?.url) gaps.push("api.url (where the backend runs; null if there is no separate API)");
+  if (project.db === undefined) gaps.push("db (read-only database access; null if not available)");
+  if (project.tenancy === undefined) gaps.push("tenancy (users table, tenant column; null if single-tenant)");
+  // an app with no login (auth.none) needs no roles, account setup or test accounts
+  if (!project.auth?.none) {
+    if (!project.roles?.length) gaps.push("roles (user roles the app has; auth.none if the app has no login)");
+    if (!project.accountSetup) gaps.push("accountSetup (how to create a test account; command or steps)");
+    if (!readAccounts(project.name).length) gaps.push("accounts (no test account saved yet)");
+  }
   for (const r of project.repos ?? [])
     if (!existsSync(expandHome(r.path) ?? "")) gaps.push(`repos: ${r.role} path ${r.path} not found on this machine`);
   return gaps;
