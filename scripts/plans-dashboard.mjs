@@ -3254,6 +3254,13 @@ const reportServer = http.createServer((req, res) => {
 reportServer.on('error', (e) => console.error(`QA reports server on port ${QA_PORT}: ${e.code || e}`));
 reportServer.listen(QA_PORT, '127.0.0.1');
 
+// Caddy keeps an idle connection to the dashboard open for 2 minutes, but Node closes it
+// after 5 seconds. When Caddy sends a request on a connection that Node just closed, the
+// request gets "connection reset" and Caddy answers 502 (it does not retry a POST). Keep
+// idle connections open longer than Caddy does, so Caddy always closes them first.
+server.keepAliveTimeout = 130_000;
+server.headersTimeout = 131_000;
+
 server.on('error', (e) => {
   if (e.code === 'EADDRINUSE')
     console.error(`Port ${PORT} is already taken — another dashboard instance or a web `
