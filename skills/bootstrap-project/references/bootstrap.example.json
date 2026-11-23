@@ -52,6 +52,7 @@
     "prod": "main",
     "staging": "",
     "mergeStyle": "squash",
+    "keepTracked": [],
     "tickets": {
       "evidence": true,
       "board": {

@@ -164,7 +164,9 @@ check('claudemd', 'dash-tip', 'CLAUDE.md', existsSync(R('CLAUDE.md')));
   if (on('test-review', R('.claude', 'skills', 'test-review'))) need.push('.plans/.test-review/');
   if (on('decision-sheet', R('.claude', 'skills', 'decision-sheet'))) need.push('.plans/.decision-sheets/');
   if (on('codex', R('.codex', 'skills', 'validate-implementation'))) need.push('.plans/.code-reviews/');
-  const missing = need.filter((l) => !gi.includes(l));
+  // git.keepTracked: folders the project commits on purpose
+  const keep = new Set(params?.git?.keepTracked || []);
+  const missing = need.filter((l) => !keep.has(l) && !gi.includes(l));
   check('gitignore', 'required', '.gitignore has the run-state lines', !missing.length, missing.length ? 'missing: ' + missing.join(', ') : '');
   const tracked = run('git', ['ls-files', '.claude/settings.local.json', '.plans/auto-runs']);
   check('not-tracked', 'required', 'settings.local.json and auto-runs/ are not tracked', tracked.ok && !tracked.out.trim(), tracked.out.trim());

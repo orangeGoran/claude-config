@@ -147,12 +147,22 @@ export function checkParams(p) {
   if (p.layout?.migrationHints !== undefined && !strList(p.layout.migrationHints)) errs.push('layout.migrationHints must be a list of texts');
   const btp = p.registry?.browserTestProject;
   if (btp !== undefined && btp !== '' && !isSafeName(btp)) errs.push('registry.browserTestProject must use only letters, digits, ".", "_" and "-"');
+  const kt = p.git?.keepTracked;
+  if (kt !== undefined && !(Array.isArray(kt) && kt.every((x) => KEEP_TRACKABLE.includes(x)))) {
+    errs.push(`git.keepTracked must be a list of these run-state folders: ${KEEP_TRACKABLE.join(', ')}`);
+  }
   const board = p.git?.tickets?.board;
   if (board !== undefined && (!str(board.owner) || !/^\d+$/.test(String(board.number ?? '')) || !str(board.status))) {
     errs.push('git.tickets.board needs "owner", a numeric "number" and "status"');
   }
   return errs;
 }
+
+/**
+ * Run-state folders a project may commit instead of ignore (git.keepTracked), for example
+ * Codex reviews the team reads later. Run reports and settings.local.json are never in it.
+ */
+export const KEEP_TRACKABLE = ['.plans/.workflow-state/', '.plans/.test-review/', '.plans/.decision-sheets/', '.plans/.code-reviews/'];
 
 /** Returns true when a module is on. Every module is on unless the answers turn it off. */
 export const moduleOn = (p, m) => p.modules?.[m] !== false;
@@ -701,6 +711,11 @@ export function renderAll(params, { upgrade = false, now = new Date(), repo = nu
       try { JSON.parse(content); } catch (e) { die(`${s.rel}: rendered JSON is not valid: ${e.message}`); }
     }
     if (files.has(p) && kind !== 'merge') die(`two templates write ${p}`);
+    // git.keepTracked: run-state folders the project commits; their ignore line is left out
+    if (kind === 'merge') {
+      const keep = new Set(arr(params.git?.keepTracked));
+      content = content.split('\n').filter((l) => !keep.has(l.trim())).join('\n');
+    }
     if (kind === 'merge' && files.has(p)) {
       files.get(p).content += '\n' + content;
       continue;

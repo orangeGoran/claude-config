@@ -82,6 +82,7 @@ The owner is not a template expert. Ask only what the owner alone can decide. Fi
 | Ticket evidence and board | `git.tickets.*` | the old skills or scripts that comment on issues or move them on a project board (`gh issue comment`, `gh project item-edit`); else leave it out |
 | Services a run needs | `pipeline.services[]` | the old skills' preflight checks, docker compose, the ports in `.env.example`; else leave it out |
 | Protected files, extra allow rules | `rules.protectedPaths`, `rules.extraAllow` | generated files; the old `settings.json` allow rules that are still useful |
+| Run-state folders the project commits | `git.keepTracked` | the old skills stage them (for example `skill-5-ship` stages `.plans/.code-reviews/`), or the owner says so. Allowed: `.plans/.workflow-state/`, `.plans/.test-review/`, `.plans/.decision-sheets/`, `.plans/.code-reviews/`. The `.gitignore` merge leaves out their lines, and verify does not ask for them |
 
 ### The summary (one message, after the questions)
 
