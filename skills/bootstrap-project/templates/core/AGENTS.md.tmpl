@@ -50,7 +50,7 @@ Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS
 - `/skill-2-implement <plan file>` alone implements one plan in the current tree, with no commits.
 - `/skill-3-test` and `/skill-4-verify` also run alone, after a manual `/skill-2-implement`.
 @@IF MOD_CODEX@@
-- `/skill-4-verify` runs Claude's `/code-review` loop, then Codex on the code (`.codex/skills/validate-implementation`, when `codex` is installed; `--no-codex` skips it), then the rule audit. A missing Codex never blocks it.
+- `/skill-4-verify` runs a review loop of max 2 rounds, each round one Claude `/code-review` and then one Codex review (`.codex/skills/validate-implementation`, when `codex` is installed; `--no-codex` skips it), then the rule audit. A missing Codex never blocks it.
 @@END@@
 - `/skill-5-ship` merges `@@BASE_BRANCH@@`, runs the checks, pushes the branch and opens a draft PR. Only when the owner asks.
 @@IF MOD_TEST_REVIEW@@
