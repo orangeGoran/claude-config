@@ -7,7 +7,7 @@ Use this structure. Plain words, concrete examples (real values, real ids).
 
 **Ticket:** <[repo#435](https://github.com/…/issues/435), one per issue or PR tested; "none found" when there is none>
 
-**TLDR:** <2–3 plain sentences: does it work, the worst problem, what to do first.>
+**TLDR:** <2–4 plain sentences for someone new to the project (rules in SKILL.md section 7): what was tested, does it work, the worst problem, what to do first. No HTTP codes, request counts or file names.>
 
 **Report page:** [<the file name compare.mjs printed>](<url that compare.mjs printed>) — updated after every change
 
