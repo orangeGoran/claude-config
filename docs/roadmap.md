@@ -27,6 +27,8 @@ This is the roadmap: the goals and the architecture of the repo, and the list of
 
 - **Move the apps out of `scripts/`** — plan not written yet. Move the dashboard (`plans-dashboard.mjs`, `plans-dashboard/`, `chat-relay.mjs`, `restart-dashboard.mjs`) to `apps/dashboard/` and the scout (`scout.mjs`) to `apps/scout/`, so `scripts/` keeps only setup and helper scripts. About 25 files point at the old paths, and the installed login service has the old script path in its plist, so the plan also updates `setup-macos.sh` and says to run it again on each Mac. Runs first, before Mac app phase 1, whose paths it changes (owner decision 2026-11-22).
 
+- **Orchestrator** — [.plans/20261123-100855-orchestrator-parent.md](../.plans/20261123-100855-orchestrator-parent.md): one parent session per project group that gives work to a lead session per repo, reacts to merges and contracts commits by itself, sends product questions to the PO on GitHub, and brings the owner only decisions and draft PRs. Full autopilot from a new ticket to a draft PR (owner decision 2026-11-23). Five phases; phase 1 (event watcher and `Waits for:` plans, `.plans/20261123-102654-event-watcher-and-waits-for.md`) is planned, phases 2–5 are not written yet. The conductor acts for the owner; only PR merges stay with the owner. Open decisions are in the parent plan.
+
 ## Open decisions
 
 - None at the repo level. Each parent plan lists its own open decisions.
