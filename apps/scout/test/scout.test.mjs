@@ -1,7 +1,7 @@
-// Tests for scout.mjs. The end-to-end runs use a throwaway HOME and fake gh, aws and claude
+// Tests for apps/scout/scout.mjs. The end-to-end runs use a throwaway HOME and fake gh, aws and claude
 // commands, so no test talks to GitHub, AWS or the Anthropic API.
 //
-//   node --test 'scripts/test/*.test.mjs'
+//   npm test
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
@@ -12,12 +12,18 @@ import { fileURLToPath } from 'node:url';
 import {
   normalizeRoute, redact, errorKey, mergeRoutes, slowRoutes, errorSpikes,
   ciRedFindings, flakyFindings, stuckPrFindings, securityFindings, decide, proposalText, learn, outcomeOf,
+  plistTemplate,
 } from '../scout.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scout.mjs');
 const DAY = 864e5;
 const NOW = Date.parse('2026-11-20T07:00:00Z');
 const iso = (msAgo) => new Date(NOW - msAgo).toISOString();
+
+test('--install reads the launchd template from scripts/launchd/ of this checkout', () => {
+  assert.match(plistTemplate(), /\/scripts\/launchd\/com\.plans-dashboard\.scout\.plist\.template$/);
+  assert.ok(existsSync(plistTemplate()), `${plistTemplate()} exists`);
+});
 
 test('routes lose their ids, so one endpoint is one row', () => {
   assert.equal(normalizeRoute('/v1/cases/3f2a1b4c-1111-2222-3333-444455556666/report?x=1'), '/v1/cases/:id/report');

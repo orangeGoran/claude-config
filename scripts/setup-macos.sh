@@ -50,6 +50,7 @@ esac
   || die "--port must be 1024–65535 (Caddy owns 80 and 443)."
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$HERE/.." && pwd)"
 STATE="$HOME/.claude/pipeline-dashboard"
 PLIST="$HOME/Library/LaunchAgents/com.plans-dashboard.plist"
 SITE="$STATE/caddy-site.caddy"
@@ -65,7 +66,7 @@ JOB="gui/$(id -u)/com.plans-dashboard"
 NEW_PLIST="$(mktemp)"
 trap 'rm -f "$NEW_PLIST"' EXIT
 sed -e "s|__NODE__|$NODE|" \
-    -e "s|__SCRIPT__|$HERE/plans-dashboard.mjs|" \
+    -e "s|__SCRIPT__|$REPO/apps/dashboard/server.mjs|" \
     -e "s|__LOG__|$STATE/server.log|" \
     "$HERE/launchd/com.plans-dashboard.plist.template" > "$NEW_PLIST"
 plutil -replace EnvironmentVariables.DASH_PORT -string "$PORT" "$NEW_PLIST"

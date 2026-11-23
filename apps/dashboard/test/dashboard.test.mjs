@@ -1,7 +1,7 @@
-// Smoke tests for plans-dashboard.mjs. Every run happens against a throwaway HOME
+// Smoke tests for apps/dashboard/server.mjs. Every run happens against a throwaway HOME
 // and a throwaway repo, so the real registry and the real ~/.claude are never touched.
 //
-//   node --test 'scripts/test/*.test.mjs'
+//   npm test
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
@@ -11,9 +11,9 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sameNameIn, writeVersioned } from '../page-versions.mjs';
+import { sameNameIn, writeVersioned } from '../../../scripts/page-versions.mjs';
 
-const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'plans-dashboard.mjs');
+const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'server.mjs');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const freePort = () => new Promise((resolve, reject) => {
@@ -207,7 +207,7 @@ before(async () => {
 
 after(async () => {
   await stop(server);
-  // chats outlive the server on purpose (scripts/chat-relay.mjs): end the ones this run left
+  // chats outlive the server on purpose (apps/dashboard/chat-relay.mjs): end the ones this run left
   const chatDir = path.join(home, '.claude', 'pipeline-dashboard', 'chats', String(port));
   for (const f of existsSync(chatDir) ? readdirSync(chatDir) : []) {
     try { execFileSync('pkill', ['-f', JSON.parse(readFileSync(path.join(chatDir, f), 'utf8')).sock]); } catch {}
@@ -1374,6 +1374,35 @@ test('the Scout drawer lists the missing setup steps, runs the scout and shows i
   assert.match(s.projects[0].lastRun.warnings.join(' '), /gh pr list/, 'the fake gh answers no JSON, so the check is reported as failed');
 });
 
+test('the Scout drawer names the scout script and its docs in this checkout, and both files exist', async () => {
+  const s = await (await get('/api/scout')).json();
+  const real = (p) => p.replace(/^~(?=\/|$)/, home);
+  assert.match(s.script, /\/apps\/scout\/scout\.mjs$/);
+  assert.match(s.docs, /\/docs\/scout\.md$/);
+  assert.ok(existsSync(real(s.script)), `${s.script} exists`);
+  assert.ok(existsSync(real(s.docs)), `${s.docs} exists`);
+});
+
+test('the Scout drawer counts the daily job as installed only while the script of its plist exists', async () => {
+  const plist = path.join(home, 'Library', 'LaunchAgents', 'com.plans-dashboard.scout.plist');
+  const xml = (script) => '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n\t<key>Label</key>\n\t<string>com.plans-dashboard.scout</string>\n'
+    + `\t<key>ProgramArguments</key>\n\t<array>\n\t\t<string>${process.execPath}</string>\n\t\t<string>${script}</string>\n\t</array>\n</dict>\n</plist>\n`;
+  mkdirSync(path.dirname(plist), { recursive: true });
+  try {
+    writeFileSync(plist, xml(path.join(home, 'Workspace', 'claude-config', 'moved-away', 'scout.mjs')));
+    assert.equal((await (await get('/api/scout')).json()).installed, false, 'a plist from before the move shows the --install step again');
+    writeFileSync(plist, xml(path.join(path.dirname(SCRIPT), '..', 'scout', 'scout.mjs')));
+    assert.equal((await (await get('/api/scout')).json()).installed, true);
+    // a plist the dashboard cannot read a script from is still an installed job
+    writeFileSync(plist, '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>Label</key><string>com.plans-dashboard.scout</string></dict></plist>\n');
+    assert.equal((await (await get('/api/scout')).json()).installed, true, 'a plist without ProgramArguments counts as installed');
+    rmSync(plist);
+    assert.equal((await (await get('/api/scout')).json()).installed, false, 'no plist, no job');
+  } finally {
+    rmSync(plist, { force: true });
+  }
+});
+
 test('Unmute lets the scout count a muted check or finding again from now', async () => {
   const f = path.join(home, '.claude', 'pipeline-dashboard', 'state', 'demo', 'scout.json');
   writeFileSync(f, JSON.stringify({ findings: {}, learn: { mutedChecks: { 'stuck-prs': 'you dismissed its last 5 proposals' },
@@ -1389,4 +1418,51 @@ test('Unmute lets the scout count a muted check or finding again from now', asyn
   assert.deepEqual(st.learn.mutedKeys, {});
   s = await (await get('/api/scout')).json();
   assert.equal(s.projects.find((p) => p.name === 'demo').checkRuns['stuck-prs'].runs, 9);
+});
+
+test('docs-media copies a dashboard that starts and serves the page, without the test folders', async () => {
+  // a dynamic import after CHROME is set: without the IS_MAIN guard the import exits the test run
+  const chromeBefore = process.env.CHROME;
+  process.env.CHROME = '/nonexistent';
+  const { copyDashboard } = await import('../../../scripts/docs-media.mjs');
+  if (chromeBefore === undefined) delete process.env.CHROME; else process.env.CHROME = chromeBefore;
+
+  const box = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'plans-dash-copy-')));
+  // a node_modules/ folder in the source (git ignores it) must not reach the copy
+  const nodeModules = path.join(path.dirname(SCRIPT), '..', '..', 'scripts', 'node_modules');
+  const madeNodeModules = !existsSync(nodeModules);
+  if (madeNodeModules) { mkdirSync(nodeModules); writeFileSync(path.join(nodeModules, 'marker.txt'), 'test'); }
+  let child;
+  try {
+    const dash = path.join(box, 'Workspace', 'claude-config');
+    const script = copyDashboard(dash);
+    assert.equal(existsSync(path.join(dash, 'scripts', 'node_modules')), false, 'scripts/node_modules is not copied');
+    assert.equal(script, path.join(dash, 'apps', 'dashboard', 'server.mjs'));
+    for (const f of ['apps/dashboard/server.mjs', 'apps/dashboard/page/app.js', 'apps/dashboard/chat-relay.mjs',
+      'scripts/artifact-copies.mjs', 'scripts/page-versions.mjs', 'skills/bootstrap-project/scripts/render.mjs'])
+      assert.ok(existsSync(path.join(dash, f)), `${f} is copied`);
+    for (const app of readdirSync(path.join(dash, 'apps')))
+      assert.equal(existsSync(path.join(dash, 'apps', app, 'test')), false, `apps/${app}/test is not copied`);
+
+    const copyHome = path.join(box, 'home');
+    mkdirSync(path.join(copyHome, '.claude'), { recursive: true });
+    const copyPort = await freePort(), copyQaPort = await freePort();
+    child = spawn(process.execPath, [script], {
+      env: { ...process.env, HOME: copyHome, DASH_PORT: String(copyPort), QA_REPORTS_PORT: String(copyQaPort),
+             DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1', CLAUDE_TMP: path.join(box, 'claude-tmp'), QA_HOME: '' },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let err = '';
+    child.stderr.on('data', (c) => (err += c));
+    let res;
+    for (const deadline = Date.now() + 15000; Date.now() < deadline && child.exitCode == null; await sleep(100)) {
+      try { res = await fetch(`http://127.0.0.1:${copyPort}/`); break; } catch {}
+    }
+    assert.ok(res, 'the copied server answers: ' + err);
+    assert.equal(res.status, 200);
+  } finally {
+    await stop(child);
+    rmSync(box, { recursive: true, force: true });
+    if (madeNodeModules) rmSync(nodeModules, { recursive: true, force: true });
+  }
 });

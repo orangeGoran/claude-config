@@ -13,7 +13,7 @@
 // the DevTools protocol with Node's built-in WebSocket: no npm dependencies.
 // Needs Node 22+ and Chrome; set CHROME=/path/to/chrome if it is not in /Applications.
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, cpSync, realpathSync,
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, realpathSync,
   existsSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,12 +24,17 @@ const DOCS = path.join(REPO, 'docs');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const W = 1600, H = 910;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-if (!existsSync(CHROME)) { console.error(`Chrome not found at ${CHROME} — set CHROME=/path/to/chrome`); process.exit(1); }
-if (typeof WebSocket === 'undefined') { console.error('Needs Node 22+ (built-in WebSocket).'); process.exit(1); }
+// true when this file runs as a command; false when a test imports it for copyDashboard()
+// realpath: a run through a symlinked folder must still count as a run
+const IS_MAIN = (() => {
+  try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; }
+})();
+if (IS_MAIN && !existsSync(CHROME)) { console.error(`Chrome not found at ${CHROME} — set CHROME=/path/to/chrome`); process.exit(1); }
+if (IS_MAIN && typeof WebSocket === 'undefined') { console.error('Needs Node 22+ (built-in WebSocket).'); process.exit(1); }
 
 const children = [];
 const cleanup = [];
-process.on('exit', () => { children.forEach((c) => { try { c.kill('SIGKILL'); } catch {} }); cleanup.forEach((f) => f()); });
+if (IS_MAIN) process.on('exit', () => { children.forEach((c) => { try { c.kill('SIGKILL'); } catch {} }); cleanup.forEach((f) => f()); });
 
 // ---------- demo worlds ----------
 
@@ -38,18 +43,31 @@ const repoDir = (p, files) => {
   mkdirSync(path.join(p, '.git'), { recursive: true });
   for (const [f, s] of Object.entries(files)) put(path.join(p, f), s);
 };
+/**
+ * Copies the files the dashboard needs to run (apps/, scripts/, skills/ and docs/) from this
+ * checkout into dest. It skips the test folders of the apps (apps/<app>/test/) and every
+ * node_modules/ folder. Gives the path of the copied server.
+ */
+export function copyDashboard(dest) {
+  const apps = path.join(REPO, 'apps');
+  const filter = (src) => {
+    if (path.basename(src) === 'node_modules') return false;
+    return !(path.basename(src) === 'test' && path.dirname(path.dirname(src)) === apps);
+  };
+  for (const dir of ['apps', 'scripts', 'skills', 'docs'])
+    cpSync(path.join(REPO, dir), path.join(dest, dir), { recursive: true, filter });
+  return path.join(dest, 'apps', 'dashboard', 'server.mjs');
+}
+
 // realpath: on macOS /var and /private/var both name the temp dir, and a mismatch
 // lists every repo twice
 const newHome = () => {
   const home = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'dash-shots-')));
   cleanup.push(() => rmSync(home, { recursive: true, force: true }));
   // the dashboard scans the folder its own repo sits in, so the copy lives in the fake ~/Workspace
-  const dash = path.join(home, 'Workspace', 'claude-config');
-  mkdirSync(path.join(dash, 'scripts'), { recursive: true });
-  copyFileSync(path.join(REPO, 'scripts/plans-dashboard.mjs'), path.join(dash, 'scripts/plans-dashboard.mjs'));
-  cpSync(path.join(REPO, 'docs'), path.join(dash, 'docs'), { recursive: true });
+  const script = copyDashboard(path.join(home, 'Workspace', 'claude-config'));
   mkdirSync(path.join(home, '.claude'), { recursive: true });
-  return { home, ws: path.join(home, 'Workspace'), script: path.join(dash, 'scripts/plans-dashboard.mjs') };
+  return { home, ws: path.join(home, 'Workspace'), script };
 };
 const ALLOW = JSON.stringify({ permissions: { allow: ['Bash(npm test)'] } });
 const SKILL = (n) => `---\nname: ${n}\n---\n`;
@@ -568,11 +586,13 @@ async function demoVideo(b) {
   console.log(`  docs/demo.mp4 (${(statSync(out).size / 1e6).toFixed(1)} MB, ${shots.length} frames)`);
 }
 
-const b = await openChrome();
-if (process.argv.includes('--video')) await demoVideo(b);
-else for (const theme of ['light', 'dark']) {
-  console.log(theme);
-  await onboardingShots(b, theme);
-  await dashboardShots(b, theme);
+if (IS_MAIN) {
+  const b = await openChrome();
+  if (process.argv.includes('--video')) await demoVideo(b);
+  else for (const theme of ['light', 'dark']) {
+    console.log(theme);
+    await onboardingShots(b, theme);
+    await dashboardShots(b, theme);
+  }
+  process.exit(0);
 }
-process.exit(0);

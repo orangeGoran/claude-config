@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Multi-project plans & pipeline dashboard (global, zero deps).
 //
-//   node ~/Workspace/claude-config/scripts/plans-dashboard.mjs   →  http://127.0.0.1:4899
+//   node ~/Workspace/claude-config/apps/dashboard/server.mjs   →  http://127.0.0.1:4899
 //
 // Projects are registered in ~/.claude/pipeline-projects.json:
 //   { "projects": [ { "name": "...", "client": "...", "root": "<repo>",
 //                     "plansDir": "<any folder with *.md plans>",
 //                     "launchers": [ { "label": "...", "cmd": "... {plan} ..." } ] } ] }
-// See pipeline-projects.example.json next to this file, `--help` for the options,
+// See scripts/pipeline-projects.example.json, `--help` for the options,
 // and docs/plans-dashboard.md for the full field reference.
 //
 // Two flavors per project, auto-detected:
@@ -33,8 +33,9 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { OTHER, inlineHtml, findIssues, readMeta } from './artifact-copies.mjs';
-import { olderVersions } from './page-versions.mjs';
+import { OTHER, inlineHtml, findIssues, readMeta } from '../../scripts/artifact-copies.mjs';
+import { olderVersions } from '../../scripts/page-versions.mjs';
+import { plistScript } from './restart.mjs';
 
 const VERSION = '1.0.0';
 const HOME = os.homedir();
@@ -50,7 +51,7 @@ const NO_SUMMARY = !!process.env.DASH_NO_SUMMARY;
 const SUMMARY_MODEL = process.env.DASH_SUMMARY_MODEL || 'haiku';
 // the claude-config checkout this script lives in — onboarding points prompts at its
 // docs and launcher template, and scans its parent folder for sibling repos
-const DASH_REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
+const DASH_REPO = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
   console.log(VERSION);
@@ -59,7 +60,7 @@ if (process.argv.includes('--version') || process.argv.includes('-v')) {
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
   console.log(`plans-dashboard ${VERSION} — local web dashboard for plan files across projects
 
-  node plans-dashboard.mjs            start the server (default http://127.0.0.1:4899)
+  node server.mjs                     start the server (default http://127.0.0.1:4899)
 
 Options
   -h, --help          show this help
@@ -83,7 +84,7 @@ Environment
 
 Files
   ${REG_FILE}
-      the project registry — see pipeline-projects.example.json next to this script
+      the project registry — see scripts/pipeline-projects.example.json
   ${CENTRAL}
       logs, run records and per-project state for projects with no plan-meta.json`);
   process.exit(0);
@@ -1147,7 +1148,7 @@ const archivePlan = async (proj, slug) => {
   renameSync(src, path.join(proj.doneDir, slug + '.md'));
   return { ok: true, output: `Moved to ${path.join(proj.doneDir, slug + '.md')} — commit the move if the folder is tracked.` };
 };
-// --- scout proposals (scripts/scout.mjs writes them with status "proposed") ---
+// --- scout proposals (apps/scout/scout.mjs writes them with status "proposed") ---
 // Confirm: a new chat in the repo root runs /skill-1-plan, which writes the plan over the proposal,
 // so the plan keeps its card. Dismiss: archived with status "dismissed"; the scout reads that and
 // proposes the finding again only when it gets worse.
@@ -1186,7 +1187,7 @@ const scoutDismiss = async (proj, slug) => {
 // --- the 🔭 Scout drawer: what is set up on this Mac, each project's last run, the log, Run now ---
 const SCOUT_CFG = path.join(HOME, '.claude', 'scout.json');
 const SCOUT_LOG = path.join(CENTRAL, 'logs', 'scout.log');
-const SCOUT_SCRIPT = path.join(DASH_REPO, 'scripts', 'scout.mjs');
+const SCOUT_SCRIPT = path.join(DASH_REPO, 'apps', 'scout', 'scout.mjs');
 const SCOUT_PLIST = path.join(HOME, 'Library', 'LaunchAgents', 'com.plans-dashboard.scout.plist');
 const SCOUT_LOCK = path.join(CENTRAL, 'scout.lock');
 let scoutChild = null;
@@ -1205,6 +1206,14 @@ const awsProfiles = () => {
     for (const m of t.matchAll(/^\[(?:profile\s+)?([^\]\s]+)\s*\]/gm)) names.add(m[1]);
   }
   return names;
+};
+// the daily job counts as installed only while the script its plist starts exists: a plist from
+// before the scout moved to apps/scout/ fails every day, so the drawer shows the --install step again
+const scoutInstalled = () => {
+  let xml;
+  try { xml = readFileSync(SCOUT_PLIST, 'utf8'); } catch { return false; }
+  const script = plistScript(xml);
+  return !script || existsSync(script);
 };
 const logTail = (f, lines) => {
   try {
@@ -1226,7 +1235,7 @@ const scoutStatus = () => {
   return {
     config: !!cfg, configPath: tilde(SCOUT_CFG), example: tilde(path.join(DASH_REPO, 'scripts', 'scout.example.json')),
     script: tilde(SCOUT_SCRIPT), docs: tilde(path.join(DASH_REPO, 'docs', 'scout.md')),
-    installed: existsSync(SCOUT_PLIST), mac: process.platform === 'darwin',
+    installed: scoutInstalled(), mac: process.platform === 'darwin',
     notifier: ['/opt/homebrew/bin/terminal-notifier', '/usr/local/bin/terminal-notifier'].some((f) => existsSync(f)),
     running: !!running, startedAt: (running || {}).startedAt || null,
     current: running ? loadJson(path.join(CENTRAL, 'scout-current.json'), null) : null,
@@ -1825,7 +1834,7 @@ const usageState = () => ({ claude: usageClaude(), codex: usageCodex() });
 const chats = new Map();         // plan key -> the open claude
 const chatClients = new Map();   // plan key -> the pages listening (server-sent events)
 const chatNotes = new Map();     // plan key -> how the last claude ended, when it failed
-// Each chat's claude runs under scripts/chat-relay.mjs, detached, so a restart of this server
+// Each chat's claude runs under apps/dashboard/chat-relay.mjs, detached, so a restart of this server
 // (launchctl kickstart -k ends its whole process group) does not end it. The relay listens on
 // a socket in CHAT_SOCKS; a .json in CHAT_DIR says whose chat it is and where its socket is,
 // and a restarted server reads those and connects again (chatReattach). One folder per port:
@@ -2931,9 +2940,9 @@ const server = http.createServer(async (req, res) => {
 
 // ---------- page ----------
 
-// The browser page lives in plans-dashboard/: page.html is the shell, app.css and app.js are inlined into it at
+// The browser page lives in page/: page.html is the shell, app.css and app.js are inlined into it at
 // startup, so the page stays one request. The server fills in the two values the page needs from it.
-const UI_DIR = fileURLToPath(new URL('./plans-dashboard/', import.meta.url));
+const UI_DIR = fileURLToPath(new URL('./page/', import.meta.url));
 const uiFile = (f) => readFileSync(path.join(UI_DIR, f), 'utf8');
 const fill = (s, mark, value) => s.split(mark).join(value); // split/join: no $-patterns as in String.replace
 const PAGE = fill(fill(fill(fill(uiFile('page.html'),

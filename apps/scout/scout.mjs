@@ -4,10 +4,10 @@
 // The plans dashboard shows proposals in its Proposed column: Confirm starts /skill-1-plan in a chat,
 // Dismiss archives the proposal. Guide: docs/scout.md.
 //
-//   node scripts/scout.mjs                 scan every configured project
-//   node scripts/scout.mjs --dry-run       print the findings, write nothing
-//   node scripts/scout.mjs --project <n>   scan one project
-//   node scripts/scout.mjs --install       run it every day at 07:00 (macOS launchd)
+//   node apps/scout/scout.mjs                 scan every configured project
+//   node apps/scout/scout.mjs --dry-run       print the findings, write nothing
+//   node apps/scout/scout.mjs --project <n>   scan one project
+//   node apps/scout/scout.mjs --install       run it every day at 07:00 (macOS launchd)
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -564,14 +564,17 @@ export const loadProjects = (only) => {
 };
 
 // ---------- launchd ----------
+/** Gives the absolute path of the scout's launchd template in scripts/launchd/ of this checkout. */
+export const plistTemplate = () =>
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'scripts', 'launchd', 'com.plans-dashboard.scout.plist.template');
+
 const install = () => {
-  const here = path.dirname(fileURLToPath(import.meta.url));
   const label = 'com.plans-dashboard.scout';
   const plist = path.join(HOME, 'Library', 'LaunchAgents', label + '.plist');
   const log = path.join(CENTRAL, 'logs', 'scout.log');
   mkdirSync(path.dirname(log), { recursive: true });
   mkdirSync(path.dirname(plist), { recursive: true });
-  const xml = readFileSync(path.join(here, 'launchd', label + '.plist.template'), 'utf8')
+  const xml = readFileSync(plistTemplate(), 'utf8')
     .replaceAll('__NODE__', process.execPath).replaceAll('__SCRIPT__', fileURLToPath(import.meta.url))
     .replaceAll('__LOG__', log).replaceAll('__PATH__', process.env.PATH);
   writeFileSync(plist, xml);

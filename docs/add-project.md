@@ -15,7 +15,7 @@ For a new repository, run `/bootstrap-project` in Claude Code first. It writes t
    | Your situation | Do this |
    | --- | --- |
    | You installed the dashboard with `scripts/setup.sh` | Click **[https://plans.test/?guide=1](https://plans.test/?guide=1)** |
-   | You did not install it | In the `claude-config` repository, run `node scripts/plans-dashboard.mjs`. Then click **[http://127.0.0.1:4899/?guide=1](http://127.0.0.1:4899/?guide=1)** |
+   | You did not install it | In the `claude-config` repository, run `node apps/dashboard/server.mjs`. Then click **[http://127.0.0.1:4899/?guide=1](http://127.0.0.1:4899/?guide=1)** |
 
    If you are not sure, click the first link. If the page does not open, use the second line. If you typed a different domain during the install, use that domain instead of `plans.test`.
 
@@ -99,7 +99,7 @@ Register this repository with my plans dashboard.
 
 The dashboard lives at ~/Workspace/claude-config (adjust if I cloned it
 elsewhere). Read its docs/plans-dashboard.md, the header comment of
-scripts/plans-dashboard.mjs, and scripts/pipeline-projects.example.json so you
+apps/dashboard/server.mjs, and scripts/pipeline-projects.example.json so you
 know the registry format.
 
 Then look at THIS repository and work out:

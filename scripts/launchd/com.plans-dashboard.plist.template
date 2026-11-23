@@ -13,7 +13,7 @@
   an empty dashboard. Restart by hand after editing: npm run restart (launchctl kickstart -k).
 
   __NODE__    absolute path to the node binary   (command -v node)
-  __SCRIPT__  absolute path to plans-dashboard.mjs
+  __SCRIPT__  absolute path to apps/dashboard/server.mjs
   __LOG__     absolute path to the log file, in a directory that already exists
 
   If you manage node with nvm, __NODE__ points into a versioned directory —
