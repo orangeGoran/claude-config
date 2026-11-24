@@ -53,9 +53,9 @@ const IGNORE_PATTERNS = [/(^|\/)(dist|build|coverage|node_modules|\.build)\//];
 
 // Without a `## Affected files` section, read the files from these sections
 // (heading starts with the text). Without those either, the whole plan minus SKIP.
-const SCOPE_SECTIONS = ['implementation steps', 'steps'];
+const SCOPE_SECTIONS = @@LANES_SCOPE_SECTIONS@@;
 // 'reference implementation': files a plan only reads, never changes
-const SKIP_SECTIONS = ['context', 'reference implementation', 'out of scope', 'follow-ups', 'how to verify', 'open questions'];
+const SKIP_SECTIONS = @@LANES_SKIP_SECTIONS@@;
 
 // A plan whose migration file a generator writes names no migrations/ path. These words
 // in the plan text mark it as a plan that adds a migration too.
@@ -521,6 +521,7 @@ const result = {
       : p.opsManual ? 'manual ops runbook (aws/ssm/host commands) — run by hand, never headless'
       : `names no code files under ${[...ROOT_FILES, ...HARD_DOCS, ...FOOTPRINT_ROOTS].join(', ')} — docs-only or names unresolved`,
     unresolvedNames: p.unresolvedNames,
+    opsCommandHits: p.opsCommandHits,
     autoRunStatus: p.autoRunStatus,
   })),
   footprintRoots: FOOTPRINT_ROOTS,
@@ -557,7 +558,10 @@ if (process.argv.includes('--json')) {
     console.log(`      status=${r.status ?? '—'} files=${r.hardFileCount} validation=${v ? `${r.validation.claude}c/${r.validation.codex}x` : 'none'}`);
     console.log(`      areas: ${r.areas.join(', ')}`);
     for (const m of r.minorWith) console.log(`      ~ shares ${m.files.join(', ')} with ${m.slug} — expect a merge conflict`);
-    for (const b of r.blockedByActiveRun) console.log(`      !! ${b.files.length} file(s) also held by ${b.slug} (${b.state}): ${b.files.join(', ')}`);
+    for (const b of r.blockedByActiveRun) {
+      const next = b.state === 'awaiting-review' ? 'review/commit it first' : 'let it finish and land first';
+      console.log(`      !! ${b.files.length} file(s) also held by ${b.slug} (${b.state}) — ${next}: ${b.files.join(', ')}`);
+    }
   }
   console.log('');
   console.log('LANES (connected conflict components — one plan per lane at a time)');
@@ -573,7 +577,8 @@ if (process.argv.includes('--json')) {
   console.log('');
   if (result.excluded.length) {
     console.log('NOT SCHEDULABLE');
-    for (const e of result.excluded) console.log(`  · ${e.slug} — ${e.reason}`);
+    // the count matches the aws cli pattern of the opsManual check above
+    for (const e of result.excluded) console.log(`  · ${e.slug} — ${e.reason}${e.opsCommandHits ? ` (${e.opsCommandHits} aws cli refs)` : ''}`);
     console.log('');
   }
   for (const kind of ['minor', 'soft']) {

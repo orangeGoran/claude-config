@@ -56,7 +56,7 @@ Rules:
 
 - `summary`: always. One short paragraph (2–4 sentences) in plain words, written in ASD-STE100. The owner reads it in place of the `internal` note: what changed, for whom, and any limit or catch. No code names unless the reader needs one.
 - `internal`: always. The developer details: endpoints, fields, error codes, migrations, settings, and anything surprising.
-- `customer`: only for `customer` and `both`, with every language (`en`) filled. Translate it yourself; never leave a placeholder. Write for a person who uses the product: what they can now do, not which endpoint changed. No field names, no status codes.
+- `customer`: only for `customer` and `both`, with every language (`en`) filled. With `audience: internal`, leave the `customer` key out completely (no empty block). Translate it yourself; never leave a placeholder. Write for a person who uses the product: what they can now do, not which endpoint changed. No field names, no status codes.
 - Use made-up values when an example helps. Never put real customer data, credentials or unshipped security details in the entry.
 
 ## Step 4 — Check

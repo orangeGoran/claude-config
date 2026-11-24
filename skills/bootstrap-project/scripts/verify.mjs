@@ -184,7 +184,10 @@ check('claudemd', 'dash-tip', 'CLAUDE.md', existsSync(R('CLAUDE.md')));
 // leftover template placeholders anywhere the bootstrap writes
 {
   const files = [...['AGENTS.md', 'CLAUDE.md', 'README.md', '.gitignore', '.editorconfig'].map((f) => R(f)).filter(existsSync),
-    ...walk(R('.claude')), ...walk(R('.codex')), ...walk(R('.github')), ...walk(R('changelog.d')),
+    ...walk(R('.claude')), ...walk(R('.codex')), ...walk(R('.github')),
+    // changelog.d/: only the docs the bootstrap writes, never the entries (*.yaml), which are
+    // history and may name a placeholder on purpose (an entry about the templates)
+    ...walk(R('changelog.d')).filter((f) => f.endsWith('.md')),
     // only the plan files the bootstrap writes (top level), never the history in
     // done/ or .validations/, which may quote template-like text
     ...(existsSync(R('.plans')) ? readdirSync(R('.plans')).filter((f) => f.endsWith('.md')).map((f) => R('.plans', f)) : [])];

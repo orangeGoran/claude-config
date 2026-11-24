@@ -60,10 +60,19 @@ DEFAULT_MODE="pr"
 PREFLIGHT_CMDS=()
 # EDIT 7: the browser-usability-test project of this repo; empty = no browser test.
 BROWSER_TEST_PROJECT="plans-dashboard"
+# EDIT 2b: a command that runs once in the main checkout before any worktree install;
+# empty = none. Example: the first use of a newly pinned pnpm installs that version by
+# itself. Parallel worktree installs at that moment can leave a half-built *_tmp_* folder,
+# and later installs crash. `pnpm --version` builds it once, before any worktree install.
+# INSTALL_PREWARM_FIX is the hint that a failed prewarm prints; empty = no hint.
+INSTALL_PREWARM_CMD=""
+INSTALL_PREWARM_FIX=""
 # ===================================================================================
 # settings that a CONFIG block from an older template does not have
 [ -n "${PREFLIGHT_CMDS+x}" ] || PREFLIGHT_CMDS=()
 BROWSER_TEST_PROJECT="${BROWSER_TEST_PROJECT:-}"
+INSTALL_PREWARM_CMD="${INSTALL_PREWARM_CMD:-}"
+INSTALL_PREWARM_FIX="${INSTALL_PREWARM_FIX:-}"
 
 # --add-dir for a browser-test run: run.mjs runs click scripts only from a temp folder, and a
 # headless session writes only in its working directories. /tmp/claude-<uid> holds the
@@ -90,9 +99,12 @@ worktree_of_branch() { # $1 = slug
     | awk -v ref="branch refs/heads/auto/$1" '/^worktree /{ wt = substr($0, 10) } $0 == ref { print wt }'
 }
 
+# git knows the real path; without an auto/<slug> entry (a worktree that moved to another
+# branch) try the current folder, then the older flat one ($WORKTREES_ROOT/<slug>)
 existing_worktree() { # $1 = slug
   local wt
   wt="$(worktree_of_branch "$1")"
+  [ -n "$wt" ] || { [ -d "$WORKTREES_ROOT/$1" ] && [ ! -d "$WORKTREES_DIR/$1" ] && wt="$WORKTREES_ROOT/$1"; } || true
   echo "${wt:-$WORKTREES_DIR/$1}"
 }
 
@@ -169,17 +181,14 @@ check_install_tool() {
   local tool="${INSTALL_CMD%% *}"
   command -v "$tool" >/dev/null 2>&1 || {
     echo "FATAL: $tool is not on PATH (INSTALL_CMD in the CONFIG block)."; exit 1; }
-  # The first use of a newly pinned pnpm version installs that version by itself. Parallel
-  # worktree installs at that moment can leave a half-built *_tmp_* folder, and later
-  # installs crash. One pnpm command here builds it once, before any worktree install.
-  if [ "$tool" = pnpm ]; then
-    ( cd "$REPO" && pnpm --version >/dev/null 2>&1 ) || {
-      echo "FATAL: pnpm does not run (an interrupted self-install?)."
-      echo "       Remove the *_tmp_* folders in the pnpm tools folder (~/Library/pnpm/.tools on macOS,"
-      echo "       ~/.local/share/pnpm/.tools on Linux), then run: pnpm --version"
-      exit 1
-    }
-  fi
+  # the prewarm command (INSTALL_PREWARM_CMD) runs once here, before any worktree install
+  [ -n "$INSTALL_PREWARM_CMD" ] || return 0
+  local argv=()
+  read -r -a argv <<< "$INSTALL_PREWARM_CMD"
+  ( cd "$REPO" && "${argv[@]}" ) >/dev/null 2>&1 || {
+    echo "FATAL: \`$INSTALL_PREWARM_CMD\` failed in the main checkout (INSTALL_PREWARM_CMD in the CONFIG block)."
+    [ -z "$INSTALL_PREWARM_FIX" ] || echo "       Try: $INSTALL_PREWARM_FIX"
+    exit 1; }
   return 0
 }
 
@@ -198,6 +207,17 @@ real_read_rules() {
   return 0
 }
 
+# A Bash rule for a tool in the home folder (~/.local/bin/codex) also needs the absolute
+# spelling: a session whose PATH lacks the folder calls the tool by its full path, which
+# the ~ rule does not match.
+home_bash_rules() {
+  local rule
+  for rule in ${RUN_EXTRA_ALLOW[@]+"${RUN_EXTRA_ALLOW[@]}"}; do
+    case "$rule" in 'Bash(~/'*) echo "Bash($HOME/${rule#'Bash(~/'}" ;; esac
+  done
+  return 0
+}
+
 # per-run permission overlay: local commit rights + report writing in the MAIN repo
 write_run_settings() { # $1 = output path, $2 = mode (verify|commit|pr)
   # push + PR rights only in pr mode, and only for auto/* branches
@@ -207,6 +227,9 @@ write_run_settings() { # $1 = output path, $2 = mode (verify|commit|pr)
     "Bash(git merge --abort)", "Bash(git rev-list*)",
     "Bash(git push -u origin auto/*)", "Bash(git push origin auto/*)",
     "Bash(gh pr create --draft*)", "Bash(gh pr view*)", "Bash(gh pr edit*)"]')"
+  # rules derived from RUN_EXTRA_ALLOW, one per line (a rule can hold spaces and *)
+  local derived=() rule
+  while IFS= read -r rule; do [ -n "$rule" ] && derived+=("$rule"); done < <(real_read_rules; home_bash_rules)
   jq -n --arg repo "$REPO" --argjson pr "$pr_rules" --args '($repo | ltrimstr("/")) as $r | {
     permissions: { allow: ([
       "Bash(git add*)",
@@ -219,7 +242,7 @@ write_run_settings() { # $1 = output path, $2 = mode (verify|commit|pr)
       ("Read(//" + $r + "/.plans/auto-runs/**)"),
       ("Edit(//" + $r + "/.plans/auto-runs/**)")
     ] + $ARGS.positional + $pr) }
-  }' ${RUN_EXTRA_ALLOW[@]+"${RUN_EXTRA_ALLOW[@]}"} $(real_read_rules) > "$1"
+  }' ${RUN_EXTRA_ALLOW[@]+"${RUN_EXTRA_ALLOW[@]}"} ${derived[@]+"${derived[@]}"} > "$1"
 }
 
 # merge the repo allowlist + per-run overlay into ALLOW_RULES, passed via --allowedTools:
@@ -535,8 +558,11 @@ if [ "${1:-}" = "--cleanup" ]; then
         echo "  git -C \"$REPO\" worktree remove --force \"$wt\""
         exit 1
       fi
-      # checked-out submodules block `git worktree remove`: deinit them first
+      # submodules block `git worktree remove`: deinit them, then drop the worktree's
+      # modules/ store (git refuses while .git/worktrees/<id>/modules exists, even after deinit)
       git -C "$wt" submodule deinit -f --all >/dev/null 2>&1 || true
+      wt_gitdir="$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null || true)"
+      case "$wt_gitdir" in */.git/worktrees/*) rm -rf "$wt_gitdir/modules" ;; esac
     fi
     git -C "$REPO" worktree remove "$wt" \
       || { echo "Removal refused. Re-check, then: git -C \"$REPO\" worktree remove --force \"$wt\""; exit 1; }
@@ -592,6 +618,8 @@ if [ "${1:-}" = "--resume" ]; then
       echo "No terminal to ask for mode — pass --stop-at-verify, --full or --to-pr."; exit 1
     fi
   fi
+  # a worktree from an older script may have empty submodule folders: check them out
+  [ ! -f "$wt/.gitmodules" ] || git -C "$wt" submodule update --init --recursive >> "$log" 2>&1 || true
   write_run_settings "$run_settings" "$STOP_AFTER"
   build_allow_rules "$run_settings"
   check_run_permissions

@@ -56,6 +56,9 @@ const TEMPLATES = path.join(SKILL_DIR, 'templates');
 export const MODULES = ['codex', 'changelog', 'decision-sheet', 'test-review', 'step-gate',
   'post-edit-lint', 'plans-parallel', 'pr-feedback', 'run-skill'];
 export const MODES = ['verify', 'commit', 'pr'];
+// the plan headings the skills, validators and plan-lanes.mjs read (rules.planSections)
+export const PLAN_SECTION_KEYS = ['goal', 'context', 'steps', 'tests', 'verify'];
+export const PLAN_SECTION_DEFAULTS = { goal: 'Goal', context: 'Context', steps: 'Steps', tests: 'Tests', verify: 'How to verify' };
 
 const die = (msg) => { console.error('render: ' + msg); process.exit(1); };
 const isSafeName = (s) => typeof s === 'string' && /^[A-Za-z0-9._-]+$/.test(s);
@@ -103,6 +106,14 @@ export function checkParams(p) {
     if (!strList(h.tests)) errs.push(`rules.hard[${i}].tests must be a list of texts`);
   });
   if (!strList(r.validatorLimits)) errs.push('rules.validatorLimits must be a list of texts');
+  if (r.planSections !== undefined) {
+    const ps = r.planSections;
+    if (!ps || typeof ps !== 'object' || Array.isArray(ps)) errs.push('rules.planSections must be an object');
+    else for (const [k, v] of Object.entries(ps)) {
+      if (!PLAN_SECTION_KEYS.includes(k)) errs.push(`rules.planSections.${k} is unknown (use ${PLAN_SECTION_KEYS.join(', ')})`);
+      else if (typeof v !== 'string' || !v.trim()) errs.push(`rules.planSections.${k} must be a heading text`);
+    }
+  }
   if (!str(r.parentPlan)) errs.push('rules.parentPlan is required (for example ".plans/20261109-205757-parent.md" or "docs/PLAN.md")');
   const mode = p.pipeline?.defaultMode ?? 'pr';
   if (!MODES.includes(mode)) errs.push(`pipeline.defaultMode must be one of ${MODES.join(', ')}`);
@@ -323,6 +334,11 @@ export function buildVars(p, now = new Date()) {
     ? `Types and enum values come from ${code(contractSource)}${contract.direction ? ` (${contract.direction})` : ''}. Do not duplicate them or hardcode their values.`
     : 'The project has no shared contract source yet. When one exists, add it here and take types and enum values only from it.';
   const parent = str(r.parentPlan);
+  // plan headings: a repo with its own names keeps them on every upgrade
+  const ps = Object.fromEntries(PLAN_SECTION_KEYS.map((k) => [k, str(r.planSections?.[k], PLAN_SECTION_DEFAULTS[k])]));
+  const low = (s) => s.toLowerCase();
+  const lanesScope = [...new Set(['implementation steps', 'steps', low(ps.steps)])];
+  const lanesSkip = [...new Set([low(ps.context), 'reference implementation', 'out of scope', 'follow-ups', low(ps.verify), 'open questions'])];
   const rulesDocs = [...new Set(['AGENTS.md', parent, ...arr(r.rulesDocs)])];
 
   // changelog: the project's own validator command, when it has one (else the rendered script)
@@ -413,8 +429,9 @@ export function buildVars(p, now = new Date()) {
   const tickets = g.tickets || {};
   const hasTickets = tickets.evidence === true || Boolean(tickets.board);
   const board = tickets.board || null;
-  if (hasTickets) runExtra.push('Bash(gh issue view*)', 'Bash(gh issue comment*)');
-  if (board) runExtra.push('Bash(gh project field-list*)', 'Bash(gh project item-list*)', 'Bash(gh project item-edit*)', 'Bash(gh project view*)');
+  // the evidence step reads its comment back (gh api); the board step reopens a closed ticket
+  if (hasTickets) runExtra.push('Bash(gh issue view*)', 'Bash(gh issue comment*)', 'Bash(gh api repos/*/issues/comments/*)');
+  if (board) runExtra.push('Bash(gh issue reopen*)', 'Bash(gh project field-list*)', 'Bash(gh project item-list*)', 'Bash(gh project item-edit*)', 'Bash(gh project view*)');
 
   // hard-rule blocks
   const hardMd = hard.map((h) => `- **${h.title}.** ${h.rule}` + sub(h.details)).join('\n');
@@ -422,7 +439,8 @@ export function buildVars(p, now = new Date()) {
   const checklistMd = hard.map((h) => `- [ ] ${h.title} respected`).join('\n');
   const planCheckMd = hard.map((h) => `- **${h.title}.** ${h.rule} How does the plan keep this rule?` + sub(h.details)).join('\n');
   const ruleTestsMd = hard.filter((h) => h.tests.length).map((h) => `- **${h.title}:**` + sub(h.tests)).join('\n');
-  const ruleDetailsMd = hard.filter((h) => h.details.length).map((h) => `- **${h.title}:**` + sub(h.details)).join('\n');
+  // one level under the "A reviewer's fine is INVALID when …" bullet (apply-validation)
+  const ruleDetailsMd = hard.filter((h) => h.details.length).map((h) => `  - **${h.title}:**` + h.details.map((x) => '\n    - ' + x).join('')).join('\n');
   const limits = arr(r.validatorLimits).map((x) => str(x)).filter(Boolean);
   let n = 2;
   // check-only: an audit that fixes files proves nothing
@@ -430,19 +448,35 @@ export function buildVars(p, now = new Date()) {
     ? `${code(str(cmd.lintCheck))} (AGENTS.md, Commands, "Lint (check only)") and a format command that only checks, on the changed files. Never a \`--fix\` command. Error and warning counts.`
     : 'The check-only lint and format commands of AGENTS.md, Commands, on the changed files. Never a `--fix` command; with only a fixing command, report "check-only command not available yet". Error and warning counts.';
   const auditRows = [`| ${n} | Lint and format | ${lintRow} |`];
+  // the rows that may be N/A before the step is complete (AUDIT_NA_RULE); all others must pass
+  const naRows = [], neverNa = ['1 (Code review)', `${n} (Lint and format)`];
+  const firstRule = n + 1;
   for (const h of hard) {
     const how = [h.check, ...h.details].filter(Boolean).map((x) => x.replace(/\|/g, '\\|'));
     auditRows.push(`| ${++n} | ${h.title} | ${h.rule.replace(/\|/g, '\\|')}${how.length ? ' Check: ' + how.join(' ') : ''} Name the file:line of each place you checked. |`);
   }
+  if (hard.length) naRows.push(`${hard.length > 1 ? `rows ${firstRule}–${n}` : `row ${n}`} (the hard rules), only when the scope has nothing the rule checks, with that reason`);
   // a hard rule about contracts already covers this row (no duplicate rule)
   const contractInRules = hard.some((h) => /contract/i.test(h.title));
-  if (!contractInRules) auditRows.push(`| ${++n} | Contracts | ${contractsRule} |`);
+  if (!contractInRules) {
+    auditRows.push(`| ${++n} | Contracts | ${contractsRule} |`);
+    naRows.push(`row ${n} (Contracts), when the change does not touch a contract`);
+  }
   auditRows.push(`| ${++n} | JSDoc | Every new or changed public function has a doc comment in ASD-STE100. Report only what the diff added or changed. |`);
-  auditRows.push(`| ${++n} | Tests | Every test in the plan's **Tests** list exists, and each rule above that the change touches has a test that fails when the rule breaks. |`);
+  neverNa.push(`${n} (JSDoc)`);
+  auditRows.push(`| ${++n} | Tests | Every test in the plan's **${ps.tests}** list exists, and each rule above that the change touches has a test that fails when the rule breaks. |`);
+  neverNa.push(`${n} (Tests)`);
   // a hard rule about secrets already covers this row (no duplicate row)
   const secretsInRules = hard.some((h) => /secret/i.test(h.title));
-  if (!secretsInRules) auditRows.push(`| ${++n} | Secrets | No keys, passwords, tokens or private paths in the code or fixtures. Fixtures use made-up data only. |`);
+  if (!secretsInRules) {
+    auditRows.push(`| ${++n} | Secrets | No keys, passwords, tokens or private paths in the code or fixtures. Fixtures use made-up data only. Evidence: the secrets scan of Step 2 (files scanned, findings or "clean"). |`);
+    neverNa.push(`${n} (Secrets)`);
+  }
+  auditRows.push(`| ${++n} | Security | No \`confirmed\` finding from the security pass of Step 2. Evidence: the checklists used, the files reviewed, and each finding with its attacker, victim and result. A \`needs_validation\` item does not fail the row. |`);
+  naRows.push(`row ${n} (Security), only when no changed path matches the table of the security pass`);
   auditRows.push(`| ${++n} | Plan scope | Every plan step is done. No file outside **Affected files** changed without a reason in the summary. No open owner decision taken silently. |`);
+  naRows.push(`row ${n} (Plan scope), only when there is no plan file`);
+  const auditNaRule = `These rows may be N/A: ${naRows.join('; ')}. Rows ${neverNa.join(', ')} are never N/A.`;
 
   // layout
   const layoutRows = arr(ly.folders).map((f) => `| ${code(str(f.path))} | ${str(f.what)} |`);
@@ -514,11 +548,24 @@ export function buildVars(p, now = new Date()) {
     COMMANDS_TABLE: commandsMd,
     INSTALL_CMD: str(st.installCmd),
     INSTALL_MANIFEST: str(st.manifest, 'package.json'),
+    // auto-pipeline.sh prewarm: pnpm builds a newly pinned version once, before parallel installs
+    INSTALL_PREWARM_CMD: pm === 'pnpm' ? 'pnpm --version' : '',
+    INSTALL_PREWARM_FIX: pm === 'pnpm'
+      ? 'remove the *_tmp_* folders in the pnpm tools folder (~/Library/pnpm/.tools on macOS, ~/.local/share/pnpm/.tools on Linux), then run pnpm --version'
+      : '',
     ENV_FILES_BASH: bashWords(arr(ly.envFiles).length ? arr(ly.envFiles) : ['.env']),
     RUN_EXTRA_ALLOW_BASH: bashWords([...new Set(runExtra)]),
     DEFAULT_MODE: p.pipeline?.defaultMode ?? 'pr',
     HARD_RULES: hardMd,
-    HARD_RULE_TITLES: hard.map((h) => h.title.toLowerCase()).join(', '),
+    // titles keep their case: "SSE", "E2E" and names stay readable
+    HARD_RULE_TITLES: hard.map((h) => h.title).join('; '),
+    PLAN_GOAL: ps.goal,
+    PLAN_CONTEXT: ps.context,
+    PLAN_STEPS: ps.steps,
+    PLAN_TESTS: ps.tests,
+    PLAN_VERIFY: ps.verify,
+    LANES_SCOPE_SECTIONS: jsList(lanesScope),
+    LANES_SKIP_SECTIONS: jsList(lanesSkip),
     VALIDATOR_HUNT: huntMd,
     VALIDATOR_RULE_CHECKS: checklistMd,
     PLAN_RULE_CHECKS: planCheckMd,
@@ -530,6 +577,7 @@ export function buildVars(p, now = new Date()) {
     HAS_VALIDATOR_LIMITS: limits.length > 0,
     AUDIT_ROWS: auditRows.join('\n'),
     AUDIT_LAST: String(n),
+    AUDIT_NA_RULE: auditNaRule,
     CONTRACTS_RULE: contractsRule,
     CONTRACT_SOURCE: contractSource || 'none yet',
     TEST_DATA_RULE: str(r.testData, 'Use made-up test data only. Never put real customer data, real names, real addresses or real secrets in a test or a fixture. Example: `"Ana Example"`, `ana@example.test`, a fake key `sk-test-0000`.'),

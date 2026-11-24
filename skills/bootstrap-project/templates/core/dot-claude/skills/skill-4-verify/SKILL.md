@@ -1,11 +1,11 @@
 ---
 name: skill-4-verify
 @@IF MOD_CODEX@@
-description: Verify step of the workflow (step 4). Runs a bug-hunt loop of max 2 rounds; each round is one Claude /code-review and then one Codex review (the repo's validate-implementation skill; skipped when Codex is missing or out of quota), and it fixes and re-tests their valid findings (it stops when it converges or only deferrals are left), then audits the result against the hard rules in AGENTS.md (@@HARD_RULE_TITLES@@), contracts, doc comments, tests, secrets and plan scope, and reports an evidence table. Use after /skill-3-test; /skill-auto-pipeline calls it unattended.
+description: Verify step of the workflow (step 4). Runs a bug-hunt loop of max 2 rounds; each round is one Claude /code-review and then one Codex review (the repo's validate-implementation skill; skipped when Codex is missing or out of quota), and it fixes and re-tests their valid findings (it stops when it converges or only deferrals are left), then audits the result against the hard rules in AGENTS.md (@@HARD_RULE_TITLES@@), contracts, doc comments, tests, secrets, security and plan scope, and reports an evidence table. Use after /skill-3-test; /skill-auto-pipeline calls it unattended.
 argument-hint: "[plan file | files] [--unattended] [--no-codex]"
 @@END@@
 @@IFNOT MOD_CODEX@@
-description: Verify step of the workflow (step 4). Runs a capped /code-review bug-hunt loop that fixes defects and re-tests them (it stops when it converges or only deferrals are left), then audits the result against the hard rules in AGENTS.md (@@HARD_RULE_TITLES@@), contracts, doc comments, tests, secrets and plan scope, and reports an evidence table. Use after /skill-3-test; /skill-auto-pipeline calls it unattended.
+description: Verify step of the workflow (step 4). Runs a capped /code-review bug-hunt loop that fixes defects and re-tests them (it stops when it converges or only deferrals are left), then audits the result against the hard rules in AGENTS.md (@@HARD_RULE_TITLES@@), contracts, doc comments, tests, secrets, security and plan scope, and reports an evidence table. Use after /skill-3-test; /skill-auto-pipeline calls it unattended.
 argument-hint: "[plan file | files] [--unattended]"
 @@END@@
 ---
@@ -34,7 +34,7 @@ You run the **Verify** step: `/skill-1-plan` → `/skill-2-implement` → `/skil
 ## Step 0 — Scope
 
 - The changed files, each command in its own call: `git diff --name-only @@BASE_BRANCH@@...HEAD`, `git diff --name-only`, `git diff --cached --name-only`, `git ls-files --others --exclude-standard`.
-- A plan file: also read it. Its **Affected files** list is the expected scope, and its **Tests** section feeds the **Tests** row.
+- A plan file: also read it. Its **Affected files** list is the expected scope, and its **@@PLAN_TESTS@@** section feeds the **Tests** row.
 - Unclear scope: interactive, ask; unattended, use the plan's **Affected files** plus the changed files, and record the choice under **Open items**.
 
 @@IF MOD_CODEX@@
@@ -49,9 +49,9 @@ The rule audit (Step 2) checks compliance, not logic. Run the bug hunt yourself;
 3. **Record Claude's part:** findings fixed, findings deferred, files touched, re-test result. Number each finding `F1`, `F2`, … in the order found.
 4. **Codex** (skip with `--no-codex`, or when Codex is OFF for the run):
    1. **Find the CLI (round 1 only).** `command -v codex`, else `test -x ~/.local/bin/codex` (the Bash tool does not load `~/.zshrc`). Use the one you found as `<codex>`. Write the path exactly as `codex` or `~/.local/bin/codex` (with the `~`, not the expanded home folder): the allow rules match that text. Then run `<codex> login status`. Missing or not logged in → **Codex OFF for the run** ("Codex not available"; the fix for the owner: `npm install -g @openai/codex`, then `codex login`). A command that the session refuses ("requires approval") is not a missing CLI: record `permission denied: <command>`.
-   2. **Run it.** `mkdir -p .plans/.code-reviews`. Then, as a background Bash with a 10-minute timeout, run the repo's Codex skill as it is, with the round number in the file name:
+   2. **Run it.** `mkdir -p .plans/.code-reviews`. The report has one fixed name per branch, `.plans/.code-reviews/<branch-with-slashes-as-dashes>-codex.md`, because `/skill-5-ship`, `/skill-auto-pipeline`, `plan-lanes.mjs` and the plans dashboard read only that name. Each round overwrites it, so in round 2 first copy the findings of round 1 (with their `F<n>` and states) into the round log. Then, as a background Bash with a 10-minute timeout, run the repo's Codex skill as it is:
       ```bash
-      <codex> exec --sandbox read-only -o ".plans/.code-reviews/<branch-with-slashes-as-dashes>-codex-round-<n>.md" "Use the validate-implementation skill from this repository (.codex/skills/validate-implementation/SKILL.md) and follow it exactly. Base: @@BASE_BRANCH@@. Plan: <plan file or none>. Read the skill file first. Your final message must be only the report." </dev/null
+      <codex> exec --sandbox read-only -o ".plans/.code-reviews/<branch-with-slashes-as-dashes>-codex.md" "Use the validate-implementation skill from this repository (.codex/skills/validate-implementation/SKILL.md) and follow it exactly. Base: @@BASE_BRANCH@@. Plan: <plan file or none>. Read the skill file first. Your final message must be only the report." </dev/null
       ```
       Keep `</dev/null` (without it, `codex exec` waits for input forever). Do not pipe the output, and never edit the `-o` file. A non-zero exit, a timeout, an empty `-o` file, or output that mentions a quota, a usage limit, a rate limit or billing → **Codex OFF for this round** with that reason in a few words (`quota: usage limit until 14:00`). A quota or a missing CLI keeps it OFF for the rest of the run; after another failure, try again in the next round.
    3. **Codex OFF never fails this step.** Interactive: tell the owner in one line (`Codex is OFF: <reason> — continuing with Claude only`). Write the reason in the round log and in row 1.
@@ -108,6 +108,31 @@ Read the nested `AGENTS.md` files of the touched folders. Then check the post-re
 
 **Evidence gate.** A row is Pass only when you looked: name the files and lines, or the command and its counts. "Lint passed" does not prove a hard-rule row. An auto-fixed file gets the same audit.
 
+### Secrets scan (subagent, Grep and Read only)
+
+Start it as a background subagent at the start of Step 2, in the same message as the other subagents. Give it the list of changed files from Step 0 and Step 1:
+
+> Search these changed files for secrets: <changed files>. Look for literal values assigned to names such as `password`, `secret`, `token`, `apiKey` or `api_key` (not type definitions); database, cache or service URLs that must come from config or the environment; PEM blocks, base64 key material and credential files; real customer data, real names, real addresses and private paths in fixtures, seeds and tests (fixtures use made-up data only). Ignore example env files that hold only placeholders, and type-only definitions such as `password: string`. Report each finding with its file path and line number, or say "clean" and list the files you searched.
+
+Its result is the evidence of the Secrets row (or of the hard-rule row that covers secrets). Fix a finding that has one clear fix (move the value to config, replace the fixture value with a made-up one); put every other finding under **Open items**.
+
+### Security pass (subagent, Grep and Read only)
+
+Pick the checklists of `.claude/skills/skill-4-verify/security-checklist.md` from the changed paths:
+
+| The change touches | Checklist |
+| --- | --- |
+| a query, a repository, a cache key, a background job, an export, a delete or a purge | A — Data isolation |
+| a prompt, a retrieval query, or code that acts on model output | B — AI and model output |
+| sign-in, sessions, tokens, cookies, an access check, a middleware, a rate limit | C — Authentication and access |
+| a shell command, a raw query, a file path from the request, a URL that the server fetches, HTML output | D — Injection and files |
+
+No row matches → the Security row is N/A, with "no changed path matches the security table". Otherwise start a background subagent in the same message as the secrets scan:
+
+> You do a security review of a change. Read `.claude/skills/skill-4-verify/security-checklist.md`: the **Rules** section, the checklists <A/B/C/D>, and the **Output** section. Review these files and the code they call: <changed files>. Read the global guards and middleware before you claim that a check is missing, and quote them. Report only what passes the candidate gate (attacker, input, control, gap, victim, result). Return only the Output block.
+
+Do not fix its findings automatically. A `confirmed` finding fails the Security row and goes in the **Violations** list. A finding that cannot name the attacker, the victim and the result is rejected. A `needs_validation` item does not fail the row: put it in the **Security: needs validation** block of the report (Step 3).
+
 ### Red flags — stop if you catch yourself doing one of these
 
 - A row is Pass, but you did not read the changed files of that row.
@@ -116,6 +141,7 @@ Read the nested `AGENTS.md` files of the touched folders. Then check the post-re
 - A placement is accepted because "the plan put it there". The plan is not an exception to a rule.
 - A file is left out of the audit because the Step 1 reviewer rewrote it. Its fixes are code like any other.
 - A security finding is accepted that cannot name the attacker, the victim and the result.
+- The Security row is N/A, but you did not check the changed paths against the table of the security pass.
 - A test count comes from an earlier run, not from a run in this step.
 @@IF MOD_TEST_REVIEW@@
 
@@ -150,7 +176,7 @@ Then the table:
 | # | Check | Result | Evidence |
 | --- | --- | --- | --- |
 @@IF MOD_CODEX@@
-| 1 | Code review | Pass/Fail | rounds, fixed, deferred, re-test result; per round `Codex ON: <n> VALID, <n> fixed, <n> deferred` or `Codex OFF: <reason>`; the path of the last Codex report that ran |
+| 1 | Code review | Pass/Fail | rounds, fixed, deferred, re-test result; per round `Codex ON: <n> VALID, <n> fixed, <n> deferred` or `Codex OFF: <reason>`; the Codex report path (`.plans/.code-reviews/<branch-with-slashes-as-dashes>-codex.md`) when a round ran Codex |
 @@END@@
 @@IFNOT MOD_CODEX@@
 | 1 | Code review | Pass/Fail | rounds, fixed, deferred, re-test result |
@@ -167,11 +193,12 @@ Then **Code review rounds** (one line per round, and why the loop stopped: conve
 @@END@@
 
 - **Findings:** every code-review finding of every round, numbered `F1`, `F2`, … in the order found: `F<n>. file:line — one-line gist — fixed | deferred | decided (<by whom>)`. Keep the numbers when you report again, so that "F3" means the same finding in the report, the PR and a follow-up chat.
-- **Open items:** the deferred findings (by their `F<n>`) and the decisions for the owner. Write each decision as `Question N: <title>` in ASD-STE100: the facts, one example step by step, Option A (recommended) and Option B, and why A. The owner answers with a reply like "1A 2B", so the text must make sense without this session.
+- **Security: needs validation:** when the security pass returned `needs_validation` items, one line per item below the table: its title, the missing fact, and who can answer it. These items are questions for a person, not failures. Leave the block out when there are none.
+- **Open items:** the deferred findings (by their `F<n>`), the `needs_validation` items and the decisions for the owner. Write each decision as `Question N: <title>` in ASD-STE100: the facts, one example step by step, Option A (recommended) and Option B, and why A. The owner answers with a reply like "1A 2B", so the text must make sense without this session.
 
 After any fix in this step, run the scoped tests and the check-only lint for the touched files again. Do not start the Step 1 loop again for rule fixes.
 
-The step is complete only when rows 1–@@AUDIT_LAST@@ are Pass or N/A. Otherwise report what is left and stop.
+The step is complete only when rows 1–@@AUDIT_LAST@@ are Pass or N/A, and each N/A has its reason. @@AUDIT_NA_RULE@@ Otherwise report what is left and stop.
 @@IF MOD_STEP_GATE@@
 
 When the step is complete, run `bash .claude/scripts/workflow-complete-step.sh <plan-basename> verify` (`<plan-basename>` without `.md`).

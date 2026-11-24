@@ -206,12 +206,18 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 
 <What the end-to-end tests cannot assert for this feature (a service the harness replaces with a double, a header that only the real server sets, a second process), and where each such assertion goes instead. Take it from the nested `AGENTS.md` of the test folder. "None" when the harness covers everything.>
 
+### AI output
+
+<When a line is about text an AI model writes (length, language, words, no raw values): the real AI runs, never a mocked answer. At least 3 runs on the reference case that the line or its review names, and what is measured in each run: words per field against the limit, the language of the case, no internal values (`snake_case` names, enum values, English words in a case of another language). The results go into the evidence as a table (field, old value, limit, run 1, run 2, run 3). A run over a limit means the line is not met. "None" when no line is about AI text.>
+
 > For every test ask: would it still pass if the feature were not built? If yes, rewrite it.
 
 ## Browser test
 
 - Routes: <the screens to open, for example `/orders/:id`>
 - Siblings: <other screens that use the same component or flow, to check for the same defect>
+- Same in every place: <when a line says the same behavior holds in several places (every module, method, screen or tool): a table with one row per place and one column per way the item is made there (a user action, made by the app itself, an import, an AI step). Each cell says what the test checks, for example the first status, owner and dates of a new item. The browser test fills every cell. "None" when no line says so.>
+- Widths: 1440 px and 390 px with touch, for every changed screen.
 - Account and data: <role, and the test data to make, as the browser-test profile notes allow>
 - What to compare: <the old app on http://127.0.0.1:4899 against the new code, step by step, with what must differ>
 
@@ -240,11 +246,13 @@ Before you show the plan, check it. Fix the plan if any item fails.
 - [ ] The Tests section covers each endpoint case
 - [ ] The Tests section has a Harness constraints subsection: what the end-to-end tests cannot assert, and where it goes instead
 - [ ] No test would still pass with the feature not built
+- [ ] The AI output subsection is filled (real AI, 3 runs, what is measured), or says "None"
 - [ ] Every symbol, path and section was opened in this session, and every signature the plan calls was checked against the source (it would compile)
 - [ ] No `:line` citation is left that you did not open again after the last edit to the plan
 - [ ] Every number has the command that measured it
 - [ ] No step that edits `.claude/` or `.vscode/` lacks the "(owner, by hand)" mark
 - [ ] The Browser test section names real routes and siblings, or says `None` with a reason
+- [ ] A line that says "the same in every place" has a table in the Browser test section with a row per place and a column per way the item is made
 - [ ] Every "How to verify" command exists when it runs, and can fail
 - [ ] No "TBD" or "decide later" is left; each one was raised in the queue
 - [ ] No two steps conflict, and no step contradicts Tests or Affected files

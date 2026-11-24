@@ -49,10 +49,17 @@ BASE_BRANCH="@@BASE_BRANCH@@"
 # It runs only when INSTALL_MANIFEST exists in the worktree.
 INSTALL_CMD="@@INSTALL_CMD@@"
 INSTALL_MANIFEST="@@INSTALL_MANIFEST@@"
+# EDIT 2b: a command that runs once in the main checkout before any worktree install;
+# empty = none. Example: the first use of a newly pinned pnpm installs that version by
+# itself. Parallel worktree installs at that moment can leave a half-built *_tmp_* folder,
+# and later installs crash. `pnpm --version` builds it once, before any worktree install.
+# INSTALL_PREWARM_FIX is the hint that a failed prewarm prints; empty = no hint.
+INSTALL_PREWARM_CMD="@@INSTALL_PREWARM_CMD@@"
+INSTALL_PREWARM_FIX="@@INSTALL_PREWARM_FIX@@"
 # EDIT 3: untracked files the main checkout copies into each new worktree.
 ENV_FILES=(@@ENV_FILES_BASH@@)
 # EDIT 4: extra allow rules for every run (install, services, migrations). A command
-# the plan's "How to verify" uses must be here or in .claude/settings.json, or the
+# the plan's "@@PLAN_VERIFY@@" uses must be here or in .claude/settings.json, or the
 # headless run is BLOCKED. Never put push or PR rules here: the PR overlay below has them.
 RUN_EXTRA_ALLOW=(@@RUN_EXTRA_ALLOW_BASH@@)
 # EDIT 5: the mode the dashboard preselects (verify | commit | pr).
@@ -66,6 +73,8 @@ BROWSER_TEST_PROJECT="@@BROWSER_TEST_PROJECT@@"
 # settings that a CONFIG block from an older template does not have
 [ -n "${PREFLIGHT_CMDS+x}" ] || PREFLIGHT_CMDS=()
 BROWSER_TEST_PROJECT="${BROWSER_TEST_PROJECT:-}"
+INSTALL_PREWARM_CMD="${INSTALL_PREWARM_CMD:-}"
+INSTALL_PREWARM_FIX="${INSTALL_PREWARM_FIX:-}"
 
 # --add-dir for a browser-test run: run.mjs runs click scripts only from a temp folder, and a
 # headless session writes only in its working directories. /tmp/claude-<uid> holds the
@@ -92,9 +101,12 @@ worktree_of_branch() { # $1 = slug
     | awk -v ref="branch refs/heads/auto/$1" '/^worktree /{ wt = substr($0, 10) } $0 == ref { print wt }'
 }
 
+# git knows the real path; without an auto/<slug> entry (a worktree that moved to another
+# branch) try the current folder, then the older flat one ($WORKTREES_ROOT/<slug>)
 existing_worktree() { # $1 = slug
   local wt
   wt="$(worktree_of_branch "$1")"
+  [ -n "$wt" ] || { [ -d "$WORKTREES_ROOT/$1" ] && [ ! -d "$WORKTREES_DIR/$1" ] && wt="$WORKTREES_ROOT/$1"; } || true
   echo "${wt:-$WORKTREES_DIR/$1}"
 }
 
@@ -171,17 +183,14 @@ check_install_tool() {
   local tool="${INSTALL_CMD%% *}"
   command -v "$tool" >/dev/null 2>&1 || {
     echo "FATAL: $tool is not on PATH (INSTALL_CMD in the CONFIG block)."; exit 1; }
-  # The first use of a newly pinned pnpm version installs that version by itself. Parallel
-  # worktree installs at that moment can leave a half-built *_tmp_* folder, and later
-  # installs crash. One pnpm command here builds it once, before any worktree install.
-  if [ "$tool" = pnpm ]; then
-    ( cd "$REPO" && pnpm --version >/dev/null 2>&1 ) || {
-      echo "FATAL: pnpm does not run (an interrupted self-install?)."
-      echo "       Remove the *_tmp_* folders in the pnpm tools folder (~/Library/pnpm/.tools on macOS,"
-      echo "       ~/.local/share/pnpm/.tools on Linux), then run: pnpm --version"
-      exit 1
-    }
-  fi
+  # the prewarm command (INSTALL_PREWARM_CMD) runs once here, before any worktree install
+  [ -n "$INSTALL_PREWARM_CMD" ] || return 0
+  local argv=()
+  read -r -a argv <<< "$INSTALL_PREWARM_CMD"
+  ( cd "$REPO" && "${argv[@]}" ) >/dev/null 2>&1 || {
+    echo "FATAL: \`$INSTALL_PREWARM_CMD\` failed in the main checkout (INSTALL_PREWARM_CMD in the CONFIG block)."
+    [ -z "$INSTALL_PREWARM_FIX" ] || echo "       Try: $INSTALL_PREWARM_FIX"
+    exit 1; }
   return 0
 }
 

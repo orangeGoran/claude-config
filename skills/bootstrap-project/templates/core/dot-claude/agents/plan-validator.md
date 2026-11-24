@@ -40,7 +40,7 @@ In your final reply, list each command that touched a service or the database (o
 @@IF HAS_MIGRATIONS@@
    - **Schema:** a plan that adds tables, columns or enums has a migration in its **Migrations** section and follows the schema rules in `AGENTS.md`.
 @@END@@
-4. **Run the plan's "How to verify" commands in your head against the current files.** Confirm each one exists (AGENTS.md, **Commands**, or the manifest), can pass after the steps, and can fail when the work is wrong.
+4. **Run the plan's "@@PLAN_VERIFY@@" commands in your head against the current files.** Confirm each one exists (AGENTS.md, **Commands**, or the manifest), can pass after the steps, and can fail when the work is wrong.
 
 ## What to hunt for
 
@@ -54,7 +54,7 @@ In your final reply, list each command that touched a service or the database (o
 - **Estimates vs measurements:** the plan states a count or size without the command that measured it.
 - **Edge cases:** empty input, duplicates, missing permissions, a service that is down, concurrent runs.
 - **Owner decisions:** the plan takes a decision that `@@PARENT_PLAN@@` lists as open.
-- **Template gaps:** a missing or empty Goal, Context, Hard rules, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, Steps, @@MIGRATIONS_GAP@@Tests or How to verify section (an empty section must say "None" or "No new wiring"); @@ENDPOINT_GAP@@a Tests section without its Harness constraints; steps that are vague or longer than 2–5 minutes; verify steps that cannot fail.
+- **Template gaps:** a missing or empty @@PLAN_GOAL@@, @@PLAN_CONTEXT@@, Hard rules, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, @@PLAN_STEPS@@, @@MIGRATIONS_GAP@@@@PLAN_TESTS@@ or @@PLAN_VERIFY@@ section (an empty section must say "None" or "No new wiring"); @@ENDPOINT_GAP@@a @@PLAN_TESTS@@ section without its Harness constraints; steps that are vague or longer than 2–5 minutes; verify steps that cannot fail.
 
 ## Output
 
@@ -84,7 +84,7 @@ In your final reply, list each command that touched a service or the database (o
 @@IFNOT CONTRACT_IN_RULES@@
 - [ ] Contracts respected
 @@END@@
-- [ ] "How to verify" commands are real and can fail
+- [ ] "@@PLAN_VERIFY@@" commands are real and can fail
 ```
 
 Then a copy-paste block for the plan author, in one fenced code block:
