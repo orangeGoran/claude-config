@@ -497,7 +497,7 @@ function renderList() {
         (flightN ? '<span class="chip warn">⏳ ' + flightN + '</span>' : '');
       // one card per project: header, plans and worktrees end together at its bottom edge
       return '<div class="pgrp pcx"' + projStyle(pr) + '><div class="phead pcx" data-toggle="' + esc(pr) + '"' + projStyle(pr) + '><span class="chev">' +
-        (closed ? '▸' : '▾') + '</span>' + esc(pr) +
+        (closed ? '▸' : '▾') + '</span><span class="pname">' + esc(pr) + '</span>' +
         (hasLanes ? '<button class="pbtn" data-suggest="' + esc(pr) +
           '" title="Suggest a parallel launch batch" aria-label="Suggest a parallel launch batch">⚡</button>' : '') +
         '<button class="pbtn" data-pull="' + esc(pr) + '" title="Pull: git pull --ff-only in ' + escA(sp.root) +
@@ -506,11 +506,11 @@ function renderList() {
           ' in VS Code" aria-label="Open in VS Code">' + VSCODE_SVG + '</button>' + runBadges +
         (sp.setupLevel === 'red' ? '<span class="chip bad x" data-guide="' + escA(sp.root) +
           '" title="something required is missing — see what and how to fix it">needs setup</span>'
-          : sp.bootstrap ? '<span class="chip warn x" data-guide="' + escA(sp.root) + '" title="' +
+          : sp.bootstrap ? '<span class="chip warn x" data-bscopy="' + escA(sp.bootstrapPrompt || '') + '" title="' +
             (sp.bootstrap === 'missing' ? 'never set up with /bootstrap-project'
               : sp.bootstrap === 'error' ? 'render.mjs could not check .claude/bootstrap.json'
               : 'the bootstrap-project templates changed since the last apply — run /bootstrap-project --upgrade') +
-            ' — click for the prompt">' + (sp.bootstrap === 'missing' ? 'needs bootstrap'
+            ' — click to copy the prompt">' + (sp.bootstrap === 'missing' ? 'needs bootstrap'
               : sp.bootstrap === 'error' ? 'bootstrap error' : 'bootstrap update') + '</span>' : '') +
         '<span class="cnt">' + items.length + ' plan' + (items.length === 1 ? '' : 's') +
         '</span></div>' + (closed ? '' : (items.length ? items.map((p) => itemHtml(p)).join('')
@@ -525,6 +525,14 @@ function renderList() {
       e.stopPropagation();
       if (el.dataset.guide) onbOpenCards.add(el.dataset.guide);
       openGuide(el.dataset.guide ? 1 : 0);
+    }));
+  byId('side').querySelectorAll('[data-bscopy]').forEach((el) =>
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!el.dataset.bscopy) { openGuide(1); return; }   // a server from before this field
+      const was = el.textContent, ok = await copyText(el.dataset.bscopy);
+      el.textContent = ok ? '✓ copied' : 'copy failed';
+      setTimeout(() => { el.textContent = was; }, 1400);
     }));
   byId('side').querySelectorAll('[data-suggest]').forEach((el) =>
     el.addEventListener('click', (e) => { e.stopPropagation(); openSuggest(el.dataset.suggest); }));

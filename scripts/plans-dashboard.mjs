@@ -560,6 +560,8 @@ const fullState = async () => {
       prError: proj.issuesUrl ? (prLists[proj.root] || {}).error || '' : '',
       setupLevel: health.level,
       bootstrap: boot && !boot.ok ? boot.state : '',
+      // the chip copies this prompt on click, the same text the setup guide shows
+      bootstrapPrompt: boot && !boot.ok ? boot.fixPrompt : '',
       plans: await listPlans(proj),
       // a worktree on a branch that a plan names shows as that plan, not twice
       worktrees: proj.issuesUrl ? worktreesFor(proj)

@@ -62,11 +62,12 @@
   .ghead:first-child { border-top:0; }
   .phead { padding:7px 13px; font:600 calc(12px * var(--fs))/1.4 ui-monospace,monospace; color:var(--fg);
            border-top:2px solid var(--line); border-bottom:1px solid var(--line);
-           background:var(--thbg); display:flex; align-items:center; gap:8px;
+           background:var(--thbg); display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px;
            cursor:pointer; user-select:none; position:sticky; top:0; z-index:2; }
   .phead:hover { background:var(--hover); }
   .phead .cnt { font-weight:400; margin-left:auto; color:var(--dim); white-space:nowrap; }
   .phead .chev { color:var(--dim); width:13px; flex-shrink:0; }
+  .phead .pname { min-width:0; overflow-wrap:anywhere; }
   .phead .pbtn { padding:1px 6px; font-size:calc(11px * var(--fs)); border-radius:7px; flex-shrink:0; }
   .item { padding:10px 13px; border-bottom:1px solid var(--line); cursor:pointer;
           display:flex; gap:10px; }

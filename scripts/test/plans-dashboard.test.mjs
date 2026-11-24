@@ -237,6 +237,7 @@ test('lists the registered project and parses the plan title', async () => {
 
 test('a repo without bootstrap.json shows "needs bootstrap"; a broken one shows the render error', async () => {
   assert.equal((await state())[0].bootstrap, 'missing');
+  assert.match((await state())[0].bootstrapPrompt, /^Run \/bootstrap-project in this repository\./);
   const ws = path.join(tmp, 'bootstrap-ws');
   const plain = path.join(ws, 'plain'), broken = path.join(ws, 'broken');
   for (const d of [path.join(plain, '.git'), path.join(broken, '.git'), path.join(broken, '.claude')]) mkdirSync(d, { recursive: true });
