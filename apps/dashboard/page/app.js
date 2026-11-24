@@ -4203,10 +4203,11 @@ function drawSessionTabs() {
   stabsShownSel = cur ? selected : null;
   if (a) (findTabControl(focused) || cur)?.focus();
 }
-/** Opens the plan or worktree item of key, as a click on its sidebar row does. */
+/** Opens the plan or worktree item of key, as a click on its sidebar row does. A folded project
+ *  or a search that hides the plan opens, so the side list shows the open plan, as an alert does. */
 function openSession(key) {
   if (key === selected) return;
-  selected = key; renderList(); renderDetail(true);
+  selected = key; revealInSide(key); renderList(); renderDetail(true); scrollToSelected();
   if (boardOn) renderBoard();
 }
 /** Closes the tab of key (default: the open plan). The plan stays in the sidebar; its run goes on. */

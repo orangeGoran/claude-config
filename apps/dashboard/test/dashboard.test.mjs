@@ -418,6 +418,8 @@ test('the page has the tab strip, the palette and the window.dashboard hooks', a
   // the gates: tab hooks do nothing under an overlay or the open palette; the palette hook only under an overlay
   assert.match(page, /const tabHook = \(f\) => \(\.\.\.a\) => \{ if \(!keysOwned\(\) && !paletteOpen\(\)\) f\(\.\.\.a\); \};/);
   assert.match(page, /const searchHook = \(\) => \{ if \(!keysOwned\(\)\) openSearch\(\); \};/);
+  // a tab or palette pick shows the plan in the side list, as an alert does (folded project, hiding search)
+  assert.match(page, /function openSession\(key\) \{[^}]*revealInSide\(key\); renderList\(\); renderDetail\(true\); scrollToSelected\(\);/);
 });
 
 test('stores status and tags', async () => {
