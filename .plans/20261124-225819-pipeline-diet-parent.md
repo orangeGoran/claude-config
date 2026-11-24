@@ -11,7 +11,7 @@ Cut the Claude tokens and the wall time of an unattended pipeline run in every p
 ### 1. Templates diet — `.plans/20261124-161043-pipeline-diet-templates.md`
 
 - **Scope:** the skill-text diet in the templates (verify, test, implement, test-review, auto-pipeline); Codex leaves verify by default (`pipeline.codexInVerify`, `CODEX_IN_VERIFY`); in "to PR" mode the decision sheet runs before the commit with `--fix`; the core script `run-usage.mjs` with its self-test, Commands rows and allow rules.
-- **Owner decisions:** 1A generic infrastructure retry signs; 2A the diet applies to the Codex-in-verify variant too; 3B the sheet fixes its Codex findings before the commit and lists each fixed finding, which is not a checkbox question ("fix it now", no follow-up tickets).
+- **Owner decisions:** 1A generic infrastructure retry signs; 2A the diet applies to the Codex-in-verify variant too; 3B the sheet fixes its Codex findings before the commit and lists each fixed finding, which is not a checkbox question ("fix it now", no follow-up tickets). Plan validation 1A (2026-11-24): `/skill-auto-validate-plan` runs max 2 rounds, not 4 (step 19).
 - **Open decisions:** none.
 
 ### 2. Tickets for defects of another repo — not written yet
