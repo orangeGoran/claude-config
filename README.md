@@ -76,6 +76,11 @@ This repo uses its own plan pipeline. The rules for each change are in [AGENTS.m
 3. The run implements, tests and verifies the plan in its own worktree, then opens a draft PR.
 4. Review and merge the PR, then run `bash .claude/scripts/auto-pipeline.sh --cleanup <slug>`.
 
+## Development
+
+- Plans live in `.plans/`. The rules for plans are in the **Plans** section of [AGENTS.md](AGENTS.md#plans).
+- Run reports live in `.plans/auto-runs/`. Git ignores this folder, so the reports stay on your machine.
+
 ## Author
 
 Goran Tubic ([@orangeGoran](https://github.com/orangeGoran))
