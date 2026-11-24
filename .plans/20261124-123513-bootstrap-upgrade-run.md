@@ -27,6 +27,7 @@ Example, end to end (made-up project `acme-api` in `~/code/acme-api`):
   - The push and the draft PR on `auto/bootstrap-upgrade-<hash>` count as the "to PR" permission (AGENTS.md, Git). The script never pushes the base branch and never force-pushes.
   - The PR gets the label `no-changelog` when the project's `changelog` module is on. The change is internal tooling. When the label call fails, the PR body gets one more owner checkbox: "add the label `no-changelog`".
   - Recovery (see step 3): a failure before the commit removes the worktree and the local branch, so a retry starts clean; the run folder stays for a look. A failure after the commit keeps the branch, and a retry continues from the push or the PR. An open PR for the same hash is never made twice. A PR for the same hash that was closed stops the run with the commands to start again (the owner closed it on purpose).
+  - Owner answer 2026-11-24 (validation round 4, question 1 → A): the Claude session's boundary is the Claude Code permission system (the same trust as every `auto-pipeline.sh` run), with no probe gate. The first real run is checked by hand (Harness constraints, Open items).
   - The commit runs the project's git hooks (no `--no-verify`). A hook failure is a run failure, and the `error` has the hook output.
 - Open decisions this plan does not take: the open decisions of the parent plan (canary choice, trigger, auto-merge file list).
 
