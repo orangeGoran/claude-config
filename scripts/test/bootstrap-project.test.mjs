@@ -326,14 +326,16 @@ test('codex on: verify runs the Codex code review, the sheet reuses it, and the 
   const off = bootstrapRepo((p) => { p.modules.codex = false; return p; });
   try {
     const v = read(on.repo, '.claude/skills/skill-4-verify/SKILL.md');
-    assert.match(v, /^## Step 1\.5 — Codex review/m);
+    assert.match(v, /^## Step 1 — Bug hunt \(max 2 rounds; each round is one Claude review, then one Codex review\)$/m);
+    assert.doesNotMatch(v, /^## Step 1 — Bug hunt \(code-review loop/m);
     assert.match(v, /validate-implementation skill .*Base: develop\./);
     assert.match(v, /argument-hint: .*--no-codex/);
     assert.doesNotMatch(v, /@@/);
-    assert.match(read(on.repo, '.claude/skills/skill-auto-pipeline/SKILL.md'), /--codex-report \.plans\/\.code-reviews\//);
+    assert.match(read(on.repo, '.claude/skills/skill-auto-pipeline/SKILL.md'), /--codex-report <path>` with the last Codex report that ran .*\.plans\/\.code-reviews\/.*-codex-round-2\.md/);
     assert.match(read(on.repo, '.claude/skills/decision-sheet/SKILL.md'), /Verify already ran Codex/);
     assert.match(read(on.repo, '.gitignore'), /^\.plans\/\.code-reviews\/$/m);
     const offV = read(off.repo, '.claude/skills/skill-4-verify/SKILL.md');
+    assert.match(offV, /^## Step 1 — Bug hunt \(code-review loop, max 2 rounds\)$/m);
     assert.doesNotMatch(offV, /Codex/);
     assert.doesNotMatch(offV, /@@/);
     assert.doesNotMatch(read(off.repo, '.claude/skills/skill-auto-pipeline/SKILL.md'), /codex-report/);

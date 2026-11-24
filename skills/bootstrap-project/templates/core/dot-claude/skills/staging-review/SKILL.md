@@ -18,7 +18,7 @@ QA works only on the "@@BOARD_REVIEW_STATUS@@" column. A ticket gets there only 
 
 ## Step 1 — Read the board
 
-1. `gh project field-list @@BOARD_NUMBER@@ --owner @@BOARD_OWNER@@ --format json`: the id of the Status field and of the options "@@BOARD_STATUS@@" and "@@BOARD_REVIEW_STATUS@@". An option is missing → stop and tell the owner to add the column in the board UI (never through the API: an edit of the Status options replaces all of them, and items lose their Status).
+1. `gh project field-list @@BOARD_NUMBER@@ --owner @@BOARD_OWNER@@ --format json`: the id of the Status field and of the options "@@BOARD_STATUS@@" and "@@BOARD_REVIEW_STATUS@@". An option is missing → stop and tell the owner. Add a column only in the board UI, or through `updateProjectV2Field` with every existing option and its `id` (an option sent without its `id` is made again, and its items lose their Status); count the items per Status before and after.
 2. `gh project view @@BOARD_NUMBER@@ --owner @@BOARD_OWNER@@ --format json`: the project id and `items.totalCount`.
 3. `gh project item-list @@BOARD_NUMBER@@ --owner @@BOARD_OWNER@@ --format json --limit 5000`. When the count read is lower than `items.totalCount`, raise `--limit` and read again. Never work from a partial list.
 4. Keep the issue items with Status "@@BOARD_STATUS@@". With `#n` arguments, keep only those tickets; a named ticket that is not in "@@BOARD_STATUS@@" goes to the report as "not in @@BOARD_STATUS@@ (<its Status>)".
