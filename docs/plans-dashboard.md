@@ -159,6 +159,32 @@ Generic run state (pid, exit code, log) lives under `~/.claude/pipeline-dashboar
 
 Every column fills in by itself. Tick **queue** on a Ready card and use **▶ Launch queued**. The filters narrow the board by client or project and by tag. Done shows plans from the last 14 days (by merge date, else by the date in the file name), the newest 40; **older archived** adds the rest.
 
+## Tabs and keyboard shortcuts
+
+Each plan or worktree you open becomes a tab in the strip under the header. You open it from the sidebar, the run strip, a board card, an alert, a link or the palette. Click a tab to open its plan, and **×** to close the tab. Closing a tab never stops an agent or a run: the plan stays in the sidebar and in the run strip. Esc closes the open plan, and its tab stays.
+
+| Key | What it does |
+|---|---|
+| Ctrl+1 … Ctrl+8 | Open tab 1 … 8 |
+| Ctrl+9 | Open the last tab |
+| Ctrl+W | Close the open tab; the tab to its right opens (else the one to its left) |
+| Ctrl+Shift+T | Open the last closed tab again |
+| ⌘K (macOS), Ctrl+K (other systems) | Open the palette: find a plan or a worktree, or run a header action (Board, Scout, Settings, Add project, Chat, Plan tab, Files changed, Close tab, Reopen closed tab, Theme, Alerts) |
+| Arrow Up / Arrow Down, Enter | In the palette: pick a row, run it |
+| Esc | In the palette: close it; the focus goes back where it was |
+
+The tabs are kept in this browser (`localStorage` key `dash-tabs`). A tab goes away when its plan is gone from a project that the dashboard still shows. The closed-tab list is kept only until the page reloads.
+
+The page gives the Mac app its hooks in `window.dashboard`: `switchSession(n)`, `nextSession(d)`, `closeSession()`, `reopenSession()` and `openSearch()`.
+
+Known limits:
+
+- ⌘K inside the Files changed diff editor opens the palette.
+- Two browser windows share one `dash-tabs` list; the last change wins.
+- Back or Forward to a closed plan opens it as a tab again.
+- macOS can take Ctrl+1 … Ctrl+9 when "Switch to Desktop N" is on (System Settings → Keyboard → Keyboard Shortcuts → Mission Control).
+- On Windows and Linux the browser keeps Ctrl+1 … Ctrl+8, Ctrl+W and Ctrl+Shift+T for itself. There, use Ctrl+K and clicks.
+
 ## Alerts
 
 **🔔** in the header turns on a short sound when a run stops (needs you, failed or finished) the chat agent finishes an answer, or the chat agent asks for permission. When the dashboard tab is not in front, a desktop notification comes too; clicking it opens that plan. The browser asks once for permission to show notifications. The setting is remembered in this browser, and alerts need the dashboard open in a tab (a background tab can be up to a minute late).
