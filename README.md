@@ -85,6 +85,11 @@ This repo uses its own plan pipeline. The rules for each change are in [AGENTS.m
 
 `AGENTS.md`, section **Commands**, has the full list.
 
+## Development
+
+- Plans live in `.plans/`. The rules for plans are in the **Plans** section of [AGENTS.md](AGENTS.md#plans).
+- Run reports live in `.plans/auto-runs/`. Git ignores this folder, so the reports stay on your machine.
+
 ## Author
 
 Goran Tubic ([@orangeGoran](https://github.com/orangeGoran))
