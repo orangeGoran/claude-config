@@ -988,15 +988,20 @@ let ch = null;        // the chat on screen: { p, key, items, first, total, sess
 let chatLock = null;  // the lock on that chat: { key, release }
 let chatSel = null;   // the lines that go with the next message
 const chatDraft = {}, chatImgs = {}, chatMetas = {};   // plan key -> unsent text, unsent images; project -> commands and models
-// sent messages, oldest first; ArrowUp on the first line steps back through them, like a terminal.
-// chatHistList is fixed while you step: the dashboard's own sends, then this chat's messages from its log
-let chatHist = [], chatHistAt = -1, chatHistDraft = '', chatHistList = [];
-try { chatHist = JSON.parse(localStorage.getItem('dash-chat-hist') || '[]'); } catch {}
-function chatHistPush(text) {
+// sent messages per chat (plan key -> texts, oldest first); ArrowUp on the first line steps back through them, like a terminal.
+// chatHistList is fixed while you step: this chat's sends from the dashboard, then its messages from its log
+let chatHist = {}, chatHistAt = -1, chatHistDraft = '', chatHistList = [];
+try {
+  const h = JSON.parse(localStorage.getItem('dash-chat-hist') || '{}');
+  chatHist = h && !Array.isArray(h) && typeof h === 'object' ? h : {};   // the old shared list cannot be split per chat: drop it
+} catch {}
+function chatHistPush(key, text) {
   chatHistAt = -1;
-  if (chatHist[chatHist.length - 1] === text) return;
-  chatHist.push(text);
-  chatHist = chatHist.slice(-100);
+  const list = chatHist[key] || [];
+  if (list[list.length - 1] === text) return;
+  delete chatHist[key]; chatHist[key] = [...list, text].slice(-100);   // newest chat last, so the cap drops the oldest chats
+  const keys = Object.keys(chatHist);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 50))) delete chatHist[k];
   try { localStorage.setItem('dash-chat-hist', JSON.stringify(chatHist)); } catch {}
 }
 const chatBtn = (p) => hasChat(p) ? '<button class="chatbtn' + (chatOn ? ' on' : '') + '" data-chat="1" aria-pressed="' + chatOn +
@@ -1470,7 +1475,7 @@ async function chatSendMsg(command) {
   if (ch === c) paintLive();
   if (!r.ok || ch !== c) return;
   if (!command) {
-    if (text) chatHistPush(text);
+    if (text) chatHistPush(c.key, text);
     inp.value = ''; delete chatDraft[c.key];
     delete chatImgs[c.key];
     if (ch === c) paintImgs();
@@ -1547,7 +1552,7 @@ function chatKey(e) {
     if (up && chatHistAt === -1) {
       const said = Object.values(ch.items || {}).filter((it) => it.k === 'you' && it.text.trim())
         .sort((x, y) => x.i - y.i).map((it) => it.text.trim());
-      chatHistList = [...chatHist.filter((t) => !said.includes(t)), ...said]
+      chatHistList = [...(chatHist[ch.key] || []).filter((t) => !said.includes(t)), ...said]
         .filter((t, n, all) => t !== all[n - 1]);
     }
     if (up ? !chatHistList.length || chatHistAt === 0 : chatHistAt === -1) return;
