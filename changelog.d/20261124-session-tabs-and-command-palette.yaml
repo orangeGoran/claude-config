@@ -1,0 +1,12 @@
+kind: added
+audience: both
+scope: dashboard
+summary: |
+  Each plan you open in the dashboard now becomes a tab in a strip under the header, so you can keep several plans open and switch between them from the keyboard. Ctrl+1 to Ctrl+8 open a tab, Ctrl+9 opens the last one, Ctrl+W closes the open tab and Ctrl+Shift+T opens the last closed tab. ⌘K (Ctrl+K off macOS) opens a palette that finds plans and worktrees and runs the header actions. Closing a tab never stops an agent or a run. After the pull, restart the dashboard (check pgrep -fl chat-relay.mjs first) and reload the page.
+internal: |
+  Page only (apps/dashboard/page/): no server change, no new endpoint, no /api/state field. New elements #stabs and #palette in page.html. In app.js the session-tabs block (pure functions tabsOpen, tabsClose, tabAt, tabStep, tabsPrune, tabsShown, tabsLoad, closedPush between the "// --- session tabs ---" and "// --- end session tabs ---" lines) and the palette block (paletteMatch before "// --- end palette match ---") are cut out of the served page by the tests in apps/dashboard/test/dashboard.test.mjs.
+  The tab list is added in one place, renderDetail(), so every way to open a plan adds a tab. Tabs are kept in localStorage dash-tabs; refreshOnce() drops a tab only when its project is in the state and its plan is not. The closed-tab stack lives in memory (10 keys).
+  One capture-phase keydown handler owns ⌘K / Ctrl+K, Ctrl+1–9, Ctrl+W, Ctrl+Shift+T and Esc while the palette is open; it does nothing while the guide, the tour, a full-screen diagram or picture, or the selection dialog is open.
+  window.dashboard = { switchSession, nextSession, closeSession, reopenSession, openSearch } is the hook list for the Mac app; the hooks follow the same overlay and palette checks as the keys.
+customer:
+  en: Every plan you open now gets its own tab under the header. Switch tabs with Ctrl and a number, close one with Ctrl+W and bring it back with Ctrl+Shift+T. Press ⌘K (Ctrl+K on Windows and Linux) to find a plan or run an action. Closing a tab never stops a running plan.
