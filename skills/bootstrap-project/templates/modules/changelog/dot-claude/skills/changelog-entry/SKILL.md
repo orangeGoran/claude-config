@@ -21,7 +21,12 @@ Look at what changed. Run each command alone:
 - `git status --short`
 - `git diff --name-only --diff-filter=A origin/@@BASE_BRANCH@@...HEAD -- changelog.d`
 
-If the last command lists a file, the branch has an entry already. Show it and stop. Do not add a second one.
+@@IF HAS_VERSION_BUMP@@
+If the last command lists a file, the branch has an entry already. Do not add a second one. Show it, confirm the version raise (Step 3b), run the check (Step 4), and stop.
+@@END@@
+@@IFNOT HAS_VERSION_BUMP@@
+If the last command lists a file, the branch has an entry already. Do not add a second one. Show it, run the check (Step 4), and stop.
+@@END@@
 
 If the change ships nothing a reader cares about (a dependency update, a CI fix, a typo, a refactor with no visible effect): **stop**. Tell the owner to put the label `no-changelog` on the PR. The check runs again by itself when a label changes. Do not write an empty entry to satisfy the check.
 
@@ -91,12 +96,23 @@ The branch has raised it already when `git diff origin/@@BASE_BRANCH@@...HEAD --
 
 Run `@@CHANGELOG_VALIDATE@@`. It must print `PASS`. Fix each problem it names and run it again.
 
+Then run `git status --short` and check that the new file is the only new file under `changelog.d/`. Another new file there (a draft, a copy, an entry of another plan) is a finding: name it and do not stage it.
+
 ## Step 5 — Output
 
+- The path of the new file, on its own line.
+@@IF HAS_VERSION_BUMP@@
+- The version raise in `@@CHANGELOG_VERSION_FILE@@`: `<old>` → `<new>` and the step (patch, minor or major), or "raised already on this branch".
+@@END@@
 @@IF CHANGELOG_SUMMARY@@
-- The path of the new file, on its own line, and the `summary` text, so the owner can check the tone.
+- The `summary` text and the English `customer` text (or "internal only"), so the owner can check the tone.
 @@END@@
 @@IFNOT CHANGELOG_SUMMARY@@
-- The path of the new file, on its own line, and the English `customer` text (or "internal only"), so the owner can check the tone.
+- The English `customer` text (or "internal only"), so the owner can check the tone.
 @@END@@
+@@IF HAS_VERSION_BUMP@@
+- Do not run `git add` or `git commit`. `/skill-auto-pipeline` commits it in a run. In an interactive session, give the owner a copy-paste `git add -- <path> @@CHANGELOG_VERSION_FILE@@` command, plus every other file this skill changed.
+@@END@@
+@@IFNOT HAS_VERSION_BUMP@@
 - Do not run `git add` or `git commit`. `/skill-auto-pipeline` commits it in a run. In an interactive session, give the owner a copy-paste `git add -- <path>` command for the new file and every other file this skill changed.
+@@END@@

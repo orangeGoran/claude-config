@@ -466,6 +466,18 @@ export function buildVars(p, now = new Date()) {
   neverNa.push(`${n} (JSDoc)`);
   auditRows.push(`| ${++n} | Tests | Every test in the plan's **${ps.tests}** list exists, and each rule above that the change touches has a test that fails when the rule breaks. |`);
   neverNa.push(`${n} (Tests)`);
+  // typed end-to-end tests: request and response bodies keep their types (HTTP API only)
+  if (st.httpApi !== false) {
+    auditRows.push(`| ${++n} | E2E type safety | When the end-to-end tests are written in a typed language: each valid request body that a changed test sends is checked against its request type (for example \`satisfies <RequestDto>\`), and each response body is cast to its response type before the test reads a field. A test that sends an invalid body on purpose is exempt. List each violation with file:line and the fix. |`);
+    naRows.push(`row ${n} (E2E type safety), when the change adds or changes no end-to-end test, or the tests are not typed`);
+  }
+  // a missing migration and a drifted schema are two different failures (migrations only)
+  if (st.migrations !== false) {
+    auditRows.push(`| ${++n} | Migrations | Each new or changed model, entity, table, column, enum or index in the change has a migration in the change. Name the model file and its migration file. |`);
+    naRows.push(`row ${n} (Migrations), when the change touches no model or schema`);
+    auditRows.push(`| ${++n} | Migration drift | The migration drift check of AGENTS.md, **Commands**, run in this step after the last fix: the models and the migrations give the same schema. Read the whole output; drift SQL in it is a Fail. No such command → "not available yet" and the row is N/A. |`);
+    naRows.push(`row ${n} (Migration drift), when the change touches no model or migration, or the repo has no drift check yet`);
+  }
   // a hard rule about secrets already covers this row (no duplicate row)
   const secretsInRules = hard.some((h) => /secret/i.test(h.title));
   if (!secretsInRules) {

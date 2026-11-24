@@ -33,7 +33,7 @@ The script does all the mechanical work. It reads every top-level `.plans/*.md`,
 | `LANES` | Groups of plans that are joined by file overlap. Plans in one lane run one after the other. |
 | `NOT SCHEDULABLE` | Parent or roadmap plans (split them into subplans first), trackers, manual runbooks, and plans that name no code files. |
 | `MINOR OVERLAPS` | Two plans share 1–2 code files. They can run at the same time. The second one to merge fixes a small conflict by hand. |
-| `SOFT OVERLAPS` | Both plans append to a shared file (a registration list, a lock file). They can run at the same time. |
+| `SOFT OVERLAPS` | Both plans append to a shared file (a registration list, a lock file). They can run at the same time: flag the expected merge conflict, do not serialize on it. |
 | `CONFIG CHECK` | A path in the analyzer's `CONFIG` block matches no tracked file. Fine for a folder that a future plan creates; otherwise say that the `CONFIG` block or `layout.*` in `.claude/bootstrap.json` needs a fix. |
 
 The JSON has the same data: `inFlight`, `awaitingReview`, `needsCleanup`, `staleReports`, `recommendedBatch`, `lanes`, `overlaps`, `excluded`, `plans`.
@@ -112,7 +112,12 @@ After the table, in this order, each one a **bold lead-in with bullets**, no sub
 - **Cannot run in parallel with anything:** plans whose footprint touches every lane. One bullet each: the link, the area count, and `Run it alone.`
 - **Not machine-runnable:** one bullet per manual runbook, with the one detail that makes it manual.
 - **Roadmap only, nothing to implement:** one line, with the links separated by commas.
-- **Friction to expect:** minor overlaps by file (name both plans and say which one merges second), soft overlaps by file, and plans in the batch that both add database migrations. Leave this out when there is none.
+@@IF HAS_MIGRATIONS@@
+- **Friction to expect:** minor overlaps by file (name both plans and say which one merges second), soft overlaps by file, and plans in the batch that both add database migrations (the file names do not collide, but the migration drift check of `AGENTS.md`, **Commands**, is only honest once all of those migrations are on the base branch). Leave this out when there is none.
+@@END@@
+@@IFNOT HAS_MIGRATIONS@@
+- **Friction to expect:** minor overlaps by file (name both plans and say which one merges second), and soft overlaps by file. Leave this out when there is none.
+@@END@@
 
 ### The plan for now
 

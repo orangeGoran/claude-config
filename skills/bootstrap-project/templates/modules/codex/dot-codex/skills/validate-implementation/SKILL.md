@@ -60,6 +60,9 @@ A finding is each place where the code breaks or skips one of these rules:
 ### Discrepancies
 - The code differs from the plan or from the files of its **Reference implementation** section: deviations without a reason, renamed fields, dropped steps.
 - Registration gaps: a new module, entity, route or event that is not added to the place where the project registers it (the plan's **Wiring & registration** section, `AGENTS.md`).
+@@IF HAS_HTTP_API@@
+- HTTP setup (a global pipe, filter, guard, middleware, prefix or CSRF check) changed in one caller, for example in one test or one entry point, instead of in the shared app setup that the server and the tests both use.
+@@END@@
 
 ### Performance
 - N+1 queries: a query inside a loop where one query with `IN (...)` or a join is enough.
@@ -108,6 +111,10 @@ When the stack has database migrations, read each added or changed migration as 
 ### Tests
 - Changed behavior without a test; a test that checks the mock and not the behavior; old names in test helpers or seeds.
 - An expected result or UI text that comes from what the app shows, not from the spec or the plan.
+- A test file that uses the runner's globals (`describe`, `it`, `expect`, mocks) without an import, when the project imports them explicitly in each test folder.
+@@IF HAS_HTTP_API@@
+- An end-to-end test that builds its own app instead of the shared test-app helper, so it skips the shared HTTP setup.
+@@END@@
 - @@TEST_DATA_RULE@@
 @@IF MOD_CHANGELOG@@
 

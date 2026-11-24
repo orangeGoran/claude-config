@@ -118,53 +118,76 @@ Part 2 adds what the dashboard does not check, but a run needs: valid `--describ
 
 ## Upgrade report
 
-Step 2 shows the result of an upgrade or adopt render in this format, in one fenced `text` block, then asks once. Use plain words. Never write "stage", "take the stage" or a status name from `render.mjs`.
+Step 2 shows the result of an upgrade or adopt render in the chat as rendered Markdown (headings, a table, short bullets), never in a fenced block: a fenced block shows as one grey wall of monospace text. The summary comes first, the per-file details last. Use plain words. Never write "stage", "take the stage" or a status name from `render.mjs`.
 
-1. **Count line**: the total and each group, for example `Upgrade: 17 files → 1 add, 15 replace, 1 merge, 0 keep, 0 remove, 40 unchanged`.
-2. **What changes for you**: 2–6 lines about behavior (what a run, a review or a ship now does), not files. Say "before: …" when a step changes.
-3. **Groups**, in this order, each with its count. Leave out an empty group, except REMOVE, which always shows its count:
-   - `ADD`: `new` files. One line each: `+ <path>   <what it is for>`.
-   - `REPLACE with the template`: **Replace** recommendations (no project content is lost). The group title says so.
-   - `MERGE`: **Merge** recommendations, and `config` files with their differing CONFIG lines (`-` yours, `+` from the answers).
-   - `KEEP yours`: **Keep** recommendations, with the evidence that the template adds nothing.
-   - `REMOVE`: `orphan` files: which module is off. Ask; never delete.
-   - `.gitignore` lines (`merge` status) go under ADD as `+ .gitignore: <n> lines`.
-4. **One line per change under each file**, with one sign per line:
-   - `+` a template feature that moves in (section, step, flag, check, failure path)
-   - `-` something the repo file has that will be lost (write `- nothing lost` when that is the case)
-   - `=` project content that stays
-   - `~` the file as a whole is replaced, `±` merged (use these on the file line)
-5. **Reply line**: `Reply "all", or name the files to skip or handle differently.`
+**Short names.** In the summary, name a file by its skill or script name (`verify`, `ship`, `auto-pipeline.sh`), not by its full path. The per-file details have the full paths.
+
+**Icons**, one per action: ➕ add, 🔄 replace, 🔀 merge, ✋ keep yours, 🗑️ remove, ⚙️ settings (`config`).
+
+### Summary
+
+1. **Title line**: `## 🔧 Upgrade: <n> files to update` and one line under it with the counts: `➕ 1 new · 🔄 12 replace · 🔀 1 merge · ✋ 5 keep · 🗑️ 0 remove · ✔️ 22 unchanged`.
+2. **TLDR**: 1–2 sentences. What the upgrade gives, and what the owner must decide.
+3. **⚠️ Important** (leave out when empty): max 2 findings that affect the owner now, one sentence each, with the cause in plain words.
+4. **✨ What changes for you**: max 5 bullets about behavior (what a run, a review or a ship now does), not files. One short line each. Add "(before: …)" only when a step changes.
+5. **🧭 Your decision**: one table with only the files where the recommendation is not "take the template": merge, keep, remove and settings. Columns: `#`, `File`, `I recommend`, `Why` (max 12 words). Number the rows, so the owner can reply with numbers. For a settings file, the Why cell names the setting: `base branch: yours main, answers develop`.
+6. **✅ Safe to take**: one line each, short names separated by `·`:
+   - `🔄 Replace (no project text lost): verify · ship · decision-sheet · …`
+   - `➕ New: security-checklist.md · .gitignore (3 lines)`
+7. **📋 Per-file details**: see below.
+8. **Reply line** (the last line of the message, after the details): `Reply **all** to accept the recommendations, or numbers to change, for example "2 replace, 3 skip".`
 
 Example:
 
-```text
-Upgrade: 4 files → 1 add, 1 replace, 1 merge, 0 keep, 1 remove, 40 unchanged
+```markdown
+## 🔧 Upgrade: 19 files to update
+➕ 1 new · 🔄 12 replace · 🔀 1 merge · ✋ 5 keep · 🗑️ 0 remove · ✔️ 22 unchanged
 
-WHAT CHANGES FOR YOU
-  + Each review round runs Claude, then Codex (before: Codex once at the end)
-  + Verify has a security pass with a checklist
+**TLDR:** Verify gets a secrets scan and a security pass, and ship gets safer. 12 files can take the template as they are; 6 files need your decision.
 
-ADD (1)
-  + .claude/skills/skill-4-verify/security-checklist.md   checklists for the security pass
+### ⚠️ Important
+- The dashboard does not see the Codex results of runs: verify writes `-codex-round-<n>.md`, but plan-lanes reads `-codex.md`. The upgrade fixes this.
 
-REPLACE with the template (1, no project content lost)
-  ~ .claude/skills/skill-5-ship/SKILL.md
-      + commits the work before it merges the base branch
-      - nothing lost
+### ✨ What changes for you
+- Verify scans for secrets and runs a security pass (new audit row 14).
+- Ship commits the work before it merges the base branch.
+- A new worktree checks that the contracts submodule is ready.
+- Commit mode gives the exact push and `gh pr create` commands.
 
-MERGE (1)
-  ± .claude/skills/skill-4-verify/SKILL.md
-      + Codex inside each review round
-      + security pass (audit row 14)
-      = your hard-rule rows
-      - nothing lost
+### 🧭 Your decision
+| # | File | I recommend | Why |
+|---|---|---|---|
+| 1 | 🔀 verify | Merge | keeps your 8 hard-rule rows |
+| 2 | ✋ ship | Keep yours | template drops your release-notes step |
+| 3 | ✋ auto-pipeline.sh | Keep yours | template drops your run lock |
 
-REMOVE (1)
-  - .claude/scripts/validate-changelog.mjs   the changelog module is off. Delete it?
+### ✅ Safe to take
+- 🔄 Replace (no project text lost): decision-sheet · skill-1-plan · skill-2-implement · plan-lanes.mjs · …
+- ➕ New: security-checklist.md
 
-Reply "all", or name the files to skip or handle differently.
+### 📋 Per-file details
+#### 🔀 `.claude/skills/skill-4-verify/SKILL.md`
+- ➕ secrets scan and security pass (row 14)
+- ➕ fixed Codex report name `-codex.md`
+- 🟰 your 8 hard-rule rows and their checks
+- ➖ nothing lost
+
+#### ✋ `.claude/skills/skill-5-ship/SKILL.md`
+- ➕ commits the work before the merge
+- ➖ your release-notes step (template has none)
+
+Reply **all** to accept the recommendations, or numbers to change, for example "2 replace, 3 skip".
 ```
+
+### Per-file details
+
+One `####` heading per file: `#### <icon> \`<full path>\``, grouped in the order merge, keep, replace, add, remove, settings (decisions first). Under it, one short bullet per change, with one sign:
+
+- ➕ a template feature that moves in (section, step, flag, check, failure path)
+- ➖ something the repo file has that will be lost (write `➖ nothing lost` when that is the case)
+- 🟰 project content that stays
+
+A settings file lists its differing CONFIG lines (➖ yours, ➕ from the answers). A kept file gives the evidence that the template adds nothing. A removed file names the module that is off; ask, never delete.
 
 ## Hand-off
 
