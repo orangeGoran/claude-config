@@ -31,7 +31,7 @@ Files marked `??` are new and untracked. Read them.
 ## How to work
 
 1. **List the behaviors.** A behavior is one effect that a user or caller sees: a status code, a response field, a row that is written or not written, an event, an access rule, a state change. Take them from the plan (if given) **and** from the production diff. A behavior that the code adds but the plan does not mention still counts. Ignore renames, doc comments, formatting and docs.
-2. **Rank them by risk.** Highest first: the hard rules in `AGENTS.md` (restart after dashboard changes, no npm dependencies, public repo: no private data, global rules affect every project, never stop processes by name, tests for logic changes, docs: current state only), access and permission checks, data writes and deletes, state changes, breaking API changes. Lowest: log lines and documentation decorators.
+2. **Rank them by risk.** Highest first: the hard rules in `AGENTS.md` (Restart after dashboard changes; No npm dependencies; Public repo: no private data; Global rules affect every project; Never stop processes by name; Tests for logic changes; Docs: current state only), access and permission checks, data writes and deletes, state changes, breaking API changes. Lowest: log lines and documentation decorators.
 3. **Find the test for each behavior.** Search the test files in the diff and next to the changed files. Open the test and read its assertions. Never judge a test by its name.
 4. **Judge each assertion.** Read the nested `AGENTS.md` of the test folder first, if there is one. It can list known traps of the test harness. Mark a test **WEAK** when it can pass while the behavior is broken, for example:
    - it checks only the status code, but the behavior is in the body;

@@ -506,6 +506,19 @@ test('a root CLAUDE.md with another job stays: .claude/CLAUDE.md loads AGENTS.md
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('the placeholder check skips changelog entries, but still checks the changelog docs', () => {
+  const { dir, repo } = bootstrapRepo();
+  try {
+    const verify = () => JSON.parse(node('verify.mjs', ['.', '--registry', path.join(dir, 'none.json'), '--json'], repo).stdout);
+    // an entry about the templates names a placeholder on purpose: it is history, not a leftover
+    writeFileSync(path.join(repo, 'changelog.d/20260101-templates.yaml'), 'kind: changed\naudience: internal\nsummary: x\ninternal: fills @@PLAN_GOAL@@\n');
+    assert.ok(!verify().failed.some((f) => /placeholders/.test(JSON.stringify(f))));
+    // a leftover in a doc the bootstrap writes still fails
+    writeFileSync(path.join(repo, 'changelog.d/README.md'), '# Changelog\n\n@@PROJECT_NAME@@\n');
+    assert.ok(verify().failed.some((f) => /placeholders/.test(JSON.stringify(f))));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('one branch for base and production is named once, and a repo with no install asks before adding a package', () => {
   const { dir, repo } = bootstrapRepo((p) => ({ ...p, git: { ...p.git, base: 'main', prod: 'main' }, stack: { ...p.stack, installCmd: '' } }));
   try {

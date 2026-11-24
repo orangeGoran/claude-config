@@ -56,7 +56,7 @@ Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS
 - The dashboard runs `.claude/scripts/auto-pipeline.sh <mode> <plan>`. It creates a worktree `../worktrees/claude-config/<slug>` on branch `auto/<slug>` from `origin/main` and runs `/skill-auto-pipeline` headless: `/skill-2-implement` → `/skill-3-test` → `/skill-4-verify` (`/code-review` loop + rule audit, then `/test-review --fix`) → plan to `.plans/done/` and one commit for the whole plan → `/decision-sheet` → `/skill-5-ship` (draft PR). Modes: stop at verify (nothing committed), full (one local commit), to PR. The report is `.plans/auto-runs/<slug>.md`.
 - `/skill-2-implement <plan file>` alone implements one plan in the current tree, with no commits.
 - `/skill-3-test` and `/skill-4-verify` also run alone, after a manual `/skill-2-implement`.
-- `/skill-4-verify` runs Claude's `/code-review` loop, then Codex on the code (`.codex/skills/validate-implementation`, when `codex` is installed; `--no-codex` skips it), then the rule audit. A missing Codex never blocks it.
+- `/skill-4-verify` runs a review loop of max 2 rounds, each round one Claude `/code-review` and then one Codex review (`.codex/skills/validate-implementation`, when `codex` is installed; `--no-codex` skips it), then the rule audit. A missing Codex never blocks it.
 - `/skill-5-ship` merges `main`, runs the checks, pushes the branch and opens a draft PR. Only when the owner asks.
 - `/test-review` checks the tests of a change against the plan (the `test-reviewer` agent). The pipeline runs it inside `/skill-4-verify`.
 - `/changelog-entry` writes the `changelog.d/` entry of a change. Every PR adds one, or carries the `no-changelog` label.

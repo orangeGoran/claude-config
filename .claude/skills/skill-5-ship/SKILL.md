@@ -33,8 +33,8 @@ These rules apply to every summary, report section, PR body, comment and status 
 
 1. `git branch --show-current`. Stop if it is `main`.
 2. **A merge in progress.** `git status`. When it says "You have unmerged paths" or "All conflicts fixed but you are still merging", an earlier run stopped during a merge, or the owner merged by hand. Do not start a new merge. Resolve the files of `git diff --name-only --diff-filter=U` as **Resolve the conflicts** says (Step 2), and keep the files the owner already staged as they are. Then continue at its "commit the merge" item.
-3. `git status --porcelain`. Stop if it shows a change that belongs to this work and is not committed, and name the files. (Interactive: ask the owner whether to commit them first.) A file that never ships (`.env*`, `.claude/settings.local.json`, the files of another plan) does not stop the ship: leave it unstaged and note it for Step 7.
-4. `git log --oneline origin/<base>..HEAD`. Stop if there are no commits to ship.
+3. `git status --porcelain`. Interactive: a change that belongs to this work and is not committed goes into the commit of Step 1.6. Unattended: `/skill-auto-pipeline` made the one commit of the plan already, so such a change → stop and name the files. A file that never ships (`.env*`, `.claude/settings.local.json`, the files of another plan) does not stop the ship: leave it unstaged and note it for Step 7.
+4. Step 1.6 checks that there are commits to ship.
 5. **Re-run detection.** An earlier ship attempt can have done part of the work. Each step checks its own result first and does not do it twice: Step 1.5 skips a convention that an `AGENTS.md` already holds,
    Step 3.5 skips when the branch already adds a file under `changelog.d/`,
    and Step 6 updates the open PR of the branch instead of opening a second one.
@@ -52,12 +52,23 @@ Skip this step with `--skip-docs`, and when `/skill-auto-pipeline` runs this ski
 
 Interactive: ask the owner only for a real either/or that the conversation does not answer, or for a rule that contradicts a documented rule. Otherwise apply and report.
 
+## Step 1.6 — Commit the work before the merge
+
+The order is important. Commit the work **before** you merge the base, and run the checks (Step 3) **after** the merge. Git refuses to merge over an uncommitted edit to a file that the base also changed, and a version file changes on every PR. This commit is a local checkpoint: nothing is pushed until the checks pass on the merged tree.
+
+1. **The plan is in `.plans/done/`.** When the branch has a plan, run `ls .plans/done/<plan-file>`. When it is missing, run `bash .claude/scripts/workflow-complete-step.sh <slug> document`, then `ls .plans/done/<plan-file>` again. Still missing → a step mark is missing: stop, run `ls .plans/.workflow-state/<slug>/` to name the marked steps, and list the steps that are missing. The commit guard refuses the commit until the plan is in `.plans/done/`.
+2. `git status --porcelain` shows nothing of this work → skip to item 5 (a re-run after the work was committed).
+3. Stage only this work, by path (see **Rules**): the changed files, their tests, the doc edits and the plan's move to `.plans/done/`. Then `git diff --cached --stat` to check the staged set.
+4. `git commit -m "<type>(<scope>): <what the work does, in plain words>"`. Conventional Commits, no AI attribution.
+   When `workflow-guard.sh` blocks the commit, stop and report its output.
+5. `git log --oneline origin/<base>..HEAD`. Stop if there are no commits to ship.
+
 ## Step 2 — Merge the base branch
 
 1. `git fetch origin <base>`.
 2. `git merge --no-edit origin/<base>`.
    - "Already up to date" → Step 3.
-   - Git refuses because local changes would be overwritten → stop and name the files. Only files left unstaged on purpose can cause this.
+   - Git refuses because local changes would be overwritten → stop and name the files. After Step 1.6, only files left unstaged on purpose can cause this.
    - Merged cleanly → check the auto-merged files (below), then run the checks again (Step 3), because the base changed.
    - Conflicts → resolve them (below), check the auto-merged files, commit the merge with `git commit --no-edit`, then run the checks again (Step 3). A conflict alone never stops the ship: the owner chose "to PR" to get a PR.
 
@@ -92,9 +103,18 @@ Interactive: ask one question per hard file, in the decision question format (th
 
 Record each resolved file in one line (what each side changed and how you combined them) for the PR body and, unattended, the Timeline.
 
+### Rebuild the decision sheet after a merge with conflicts
+
+The decision sheet was built before the merge. When this step resolved conflicts and a sheet exists (unattended: `<report dir>/<slug>-decision-sheet.md`), build it again on the merged tree, so each resolution that picked a side becomes a question ("choice nobody planned"). Read `.claude/skills/decision-sheet/SKILL.md` and follow it with the same `--out` and `--no-codex`, without `--fix` (its fixes are in the plan's commit already). Copy the Codex line and the Codex questions from the old sheet into the new one. A clean merge or "Already up to date" keeps the sheet as it is.
+
 ## Step 3 — Checks
 
-Run the repo's real checks for the changed files (AGENTS.md, **Commands**: lint, type check, tests), each as a bare command. If a check is "not available yet", say so. A failing check → stop.
+Run the repo's real checks on the merged tree (AGENTS.md, **Commands**: lint, type check, tests), each as a bare command. If a check is "not available yet", say so. A failing check → stop.
+
+When a check changes a tracked file (for example a lint fix or a formatter):
+
+- After a merge that brought new commits: stage the changed files by path and commit them as one follow-up commit, for example `chore(<scope>): apply the checks after merging <base>`.
+- Unattended, after "Already up to date": stop with `BLOCKED: a check changed <file> on an unchanged tree`. The pipeline ran the same checks before its commit, so a new change means that the checks do not give the same result twice. Name the check and the files under `## Diagnosis`.
 
 ## Step 3.5 — Changelog entry
 
