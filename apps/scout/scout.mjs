@@ -568,15 +568,19 @@ export const loadProjects = (only) => {
 export const plistTemplate = () =>
   path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'scripts', 'launchd', 'com.plans-dashboard.scout.plist.template');
 
+/** Gives the launchd plist of the daily job: the template with each value written as XML text. */
+export const renderPlist = (template, values) =>
+  Object.entries(values).reduce((xml, [k, v]) => xml.replaceAll(`__${k}__`,
+    String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')), template);
+
 const install = () => {
   const label = 'com.plans-dashboard.scout';
   const plist = path.join(HOME, 'Library', 'LaunchAgents', label + '.plist');
   const log = path.join(CENTRAL, 'logs', 'scout.log');
   mkdirSync(path.dirname(log), { recursive: true });
   mkdirSync(path.dirname(plist), { recursive: true });
-  const xml = readFileSync(plistTemplate(), 'utf8')
-    .replaceAll('__NODE__', process.execPath).replaceAll('__SCRIPT__', fileURLToPath(import.meta.url))
-    .replaceAll('__LOG__', log).replaceAll('__PATH__', process.env.PATH);
+  const xml = renderPlist(readFileSync(plistTemplate(), 'utf8'),
+    { NODE: process.execPath, SCRIPT: fileURLToPath(import.meta.url), LOG: log, PATH: process.env.PATH });
   writeFileSync(plist, xml);
   const job = `gui/${process.getuid()}/${label}`;
   try { execFileSync('launchctl', ['bootout', job], { stdio: 'ignore' }); } catch {}

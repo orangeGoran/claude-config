@@ -1,13 +1,16 @@
-// The setup scripts and the npm scripts name files that exist in this checkout. The scripts
-// themselves are not run: setup changes the real login service (docs/plans-dashboard.md).
+// The setup scripts and the npm scripts name files that exist in this checkout. The whole scripts
+// are not run, because setup changes the real login service (docs/plans-dashboard.md): the tests run
+// only the lines that build the plist and pick the port, on temp files.
 //
 //   npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { plistPort, plistScript } from '../apps/dashboard/restart.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPTS = path.join(REPO, 'scripts');
@@ -16,13 +19,49 @@ const read = (f) => readFileSync(path.join(REPO, f), 'utf8');
 const expand = (s) => s.replaceAll('$REPO', REPO).replaceAll('$HERE', SCRIPTS);
 const REPO_LINE = 'REPO="$(cd "$HERE/.." && pwd)"';
 
-test('setup-macos.sh writes the path of the dashboard server into the login service', () => {
+// runs the lines of setup-macos.sh from the line that starts with `from` to the line that starts with `to`, in bash
+const runPart = (from, to, env, tail) => {
+  const lines = read('scripts/setup-macos.sh').split('\n');
+  const a = lines.findIndex((l) => l.startsWith(from)), b = lines.findIndex((l, i) => i > a && l.startsWith(to));
+  assert.ok(a >= 0 && b > a, `setup-macos.sh has the lines ${from} … ${to}`);
+  return spawnSync('bash', ['-euo', 'pipefail', '-c', lines.slice(a, b + 1).join('\n') + '\n' + tail], { env: { ...process.env, ...env }, encoding: 'utf8' });
+};
+const isMac = process.platform === 'darwin';
+
+test('setup-macos.sh writes the path of the dashboard server into the login service, also when the path has & or |', { skip: !isMac }, () => {
   const sh = read('scripts/setup-macos.sh');
   assert.ok(sh.includes(REPO_LINE), 'REPO is the folder above scripts/');
-  const m = /s\|__SCRIPT__\|([^|]+)\|/.exec(sh);
-  assert.ok(m, 'the __SCRIPT__ replacement is there');
-  assert.equal(expand(m[1]), path.join(REPO, 'apps', 'dashboard', 'server.mjs'));
-  assert.ok(existsSync(expand(m[1])));
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'setup-plist-'));
+  try {
+    const plist = path.join(dir, 'new.plist');
+    for (const repo of [REPO, '/Users/ana/R&D|x/claude-config']) {
+      const r = runPart('cp "$HERE/launchd/com.plans-dashboard.plist.template"', 'plutil -replace EnvironmentVariables.DASH_PORT',
+        { HERE: SCRIPTS, REPO: repo, NODE: '/usr/local/bin/node', STATE: '/tmp/a&b', PORT: '4920', NEW_PLIST: plist }, '');
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(spawnSync('plutil', ['-lint', plist]).status, 0, 'plutil reads the plist');
+      const xml = readFileSync(plist, 'utf8');
+      assert.equal(plistScript(xml), path.join(repo, 'apps', 'dashboard', 'server.mjs'));
+      assert.equal(plistPort(xml), 4920);
+      assert.doesNotMatch(xml, /__[A-Z]+__/, 'every placeholder is filled');
+    }
+    assert.ok(existsSync(path.join(REPO, 'apps', 'dashboard', 'server.mjs')));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('setup-macos.sh without --port keeps the port of the installed service, else 4899', { skip: !isMac }, () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'setup-port-'));
+  try {
+    const plist = path.join(dir, 'installed.plist');
+    writeFileSync(plist, '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>EnvironmentVariables</key><dict><key>DASH_PORT</key><string>4920</string></dict></dict></plist>\n');
+    const port = (env) => runPart('if [ -z "$PORT" ]; then', 'fi', env, 'printf %s "$PORT"').stdout;
+    assert.equal(port({ PORT: '', PLIST: plist }), '4920', 'a re-run keeps 4920');
+    assert.equal(port({ PORT: '4930', PLIST: plist }), '4930', '--port wins');
+    assert.equal(port({ PORT: '', PLIST: path.join(dir, 'none.plist') }), '4899', 'a first install gets 4899');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('setup.sh installs the scout and names the dashboard server from this checkout', () => {

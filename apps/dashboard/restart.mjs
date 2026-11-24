@@ -24,15 +24,24 @@ export const plistScript = (xml) => {
   return m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 };
 
+/** Gives the DASH_PORT that a launchd plist sets for the dashboard, or null when it sets none. */
+export const plistPort = (xml) => {
+  const m = /<key>DASH_PORT<\/key>\s*<string>(\d+)<\/string>/.exec(String(xml));
+  return m ? +m[1] : null;
+};
+
 // true when this file runs as a command; false when a test or the server imports plistScript()
 const IS_MAIN = (() => {
   try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; }
 })();
 
 if (IS_MAIN) {
-  const PORT = +(process.env.DASH_PORT || 4899);
   const LOG = path.join(os.homedir(), '.claude', 'pipeline-dashboard', 'server.log');
   const PLIST = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.plans-dashboard.plist');
+  let xml = '';
+  try { xml = readFileSync(PLIST, 'utf8'); } catch {}
+  // the port the service listens on: DASH_PORT when set, else the one its plist sets
+  const PORT = +(process.env.DASH_PORT || plistPort(xml) || 4899);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // true once the restarted server answers
   const up = async () => {
@@ -44,8 +53,7 @@ if (IS_MAIN) {
     console.error('The dashboard runs as a launchd service only on macOS. Restart it the way you started it.');
     process.exit(1);
   }
-  let script = null;
-  try { script = plistScript(readFileSync(PLIST, 'utf8')); } catch {}
+  const script = plistScript(xml);
   if (script && !existsSync(script)) {
     console.error('The login service starts ' + script + ', which does not exist. A restart would stop the dashboard.\n'
       + 'Run scripts/setup-macos.sh again with the --domain and --port of this Mac: it points the service at apps/dashboard/server.mjs and starts it.');

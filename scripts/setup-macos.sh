@@ -7,8 +7,8 @@
 #
 # Options
 #   --domain <name>   hostname to serve the dashboard at (default: asks, plans.test)
-#   --port <n>        port the dashboard itself listens on (default 4899, must be
-#                     above 1023 — Caddy owns 80 and 443)
+#   --port <n>        port the dashboard itself listens on (default: the port of the
+#                     installed service, else 4899; above 1023 — Caddy owns 80, 443)
 #
 # Installs Caddy with Homebrew if missing, installs the launchd agent from
 # scripts/launchd/, points Caddy at the dashboard, adds the domain to /etc/hosts
@@ -16,7 +16,7 @@
 # Safe to re-run — e.g. to change the domain.
 set -euo pipefail
 
-DOMAIN="" PORT=4899
+DOMAIN="" PORT=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -46,13 +46,18 @@ case "$DOMAIN" in
   *) echo "warning: $DOMAIN is not under .test or .localhost — if it is a real domain," \
           "this machine will no longer reach the real site." >&2 ;;
 esac
-[[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ] \
-  || die "--port must be 1024–65535 (Caddy owns 80 and 443)."
-
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 STATE="$HOME/.claude/pipeline-dashboard"
 PLIST="$HOME/Library/LaunchAgents/com.plans-dashboard.plist"
+
+# no --port: keep the port of the installed service, so a re-run does not move the dashboard
+if [ -z "$PORT" ]; then
+  PORT="$(plutil -extract EnvironmentVariables.DASH_PORT raw "$PLIST" 2>/dev/null || true)"
+  PORT="${PORT:-4899}"
+fi
+[[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ] \
+  || die "--port must be 1024–65535 (Caddy owns 80 and 443)."
 SITE="$STATE/caddy-site.caddy"
 CADDYFILE="$(brew --prefix)/etc/Caddyfile"
 IMPORT="import $SITE"
@@ -65,10 +70,13 @@ step "Dashboard login agent (port $PORT)"
 JOB="gui/$(id -u)/com.plans-dashboard"
 NEW_PLIST="$(mktemp)"
 trap 'rm -f "$NEW_PLIST"' EXIT
-sed -e "s|__NODE__|$NODE|" \
-    -e "s|__SCRIPT__|$REPO/apps/dashboard/server.mjs|" \
-    -e "s|__LOG__|$STATE/server.log|" \
-    "$HERE/launchd/com.plans-dashboard.plist.template" > "$NEW_PLIST"
+# plutil, not sed: it writes each path as XML text, so a repo path with & or | stays valid
+cp "$HERE/launchd/com.plans-dashboard.plist.template" "$NEW_PLIST"
+plutil -replace ProgramArguments -array "$NEW_PLIST"
+plutil -insert ProgramArguments -string "$NODE" -append "$NEW_PLIST"
+plutil -insert ProgramArguments -string "$REPO/apps/dashboard/server.mjs" -append "$NEW_PLIST"
+plutil -replace StandardOutPath -string "$STATE/server.log" "$NEW_PLIST"
+plutil -replace StandardErrorPath -string "$STATE/server.log" "$NEW_PLIST"
 plutil -replace EnvironmentVariables.DASH_PORT -string "$PORT" "$NEW_PLIST"
 if cmp -s "$NEW_PLIST" "$PLIST" && launchctl print "$JOB" >/dev/null 2>&1; then
   # a re-run with the same settings leaves the running dashboard alone
