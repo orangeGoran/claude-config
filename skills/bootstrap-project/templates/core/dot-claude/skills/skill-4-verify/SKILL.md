@@ -1,7 +1,7 @@
 ---
 name: skill-4-verify
 @@IF MOD_CODEX@@
-description: Verify step of the workflow (step 4). Runs a capped /code-review bug-hunt loop that fixes defects and re-tests them (it stops when it converges or only deferrals are left), then a Codex review of the code (the repo's validate-implementation skill; skipped when Codex is missing or out of quota) whose valid findings it fixes, then audits the result against the hard rules in AGENTS.md (@@HARD_RULE_TITLES@@), contracts, doc comments, tests, secrets and plan scope, and reports an evidence table. Use after /skill-3-test; /skill-auto-pipeline calls it unattended.
+description: Verify step of the workflow (step 4). Runs a bug-hunt loop of max 2 rounds; each round is one Claude /code-review and then one Codex review (the repo's validate-implementation skill; skipped when Codex is missing or out of quota), and it fixes and re-tests their valid findings (it stops when it converges or only deferrals are left), then audits the result against the hard rules in AGENTS.md (@@HARD_RULE_TITLES@@), contracts, doc comments, tests, secrets and plan scope, and reports an evidence table. Use after /skill-3-test; /skill-auto-pipeline calls it unattended.
 argument-hint: "[plan file | files] [--unattended] [--no-codex]"
 @@END@@
 @@IFNOT MOD_CODEX@@
@@ -15,9 +15,9 @@ Verify: $ARGUMENTS
 You run the **Verify** step: `/skill-1-plan` → `/skill-2-implement` → `/skill-3-test` → `/skill-4-verify` → `/skill-5-ship`.
 
 @@IF MOD_CODEX@@
-`--no-codex` skips Step 1.5.
+`--no-codex` skips the Codex part of each round (Step 1, item 4).
 
-**Order matters.** The bug hunt runs first (Claude's loop, then Codex), the rule audit second. The reviewers' fixes are code too, so the audit must see them.
+**Order matters.** The bug hunt runs first (each round: Claude, then Codex), the rule audit second. The reviewers' fixes are code too, so the audit must see them.
 @@END@@
 @@IFNOT MOD_CODEX@@
 **Order matters.** The bug hunt runs first, the rule audit second. The reviewer's fixes are code too, so the audit must see them.
@@ -37,6 +37,43 @@ You run the **Verify** step: `/skill-1-plan` → `/skill-2-implement` → `/skil
 - A plan file: also read it. Its **Affected files** list is the expected scope, and its **Tests** section feeds the **Tests** row.
 - Unclear scope: interactive, ask; unattended, use the plan's **Affected files** plus the changed files, and record the choice under **Open items**.
 
+@@IF MOD_CODEX@@
+## Step 1 — Bug hunt (max 2 rounds; each round is one Claude review, then one Codex review)
+
+The rule audit (Step 2) checks compliance, not logic. Run the bug hunt yourself; do not leave "run /code-review next" for the owner. It is a loop, because a fix that rewrites a query or a branch changes the code that the next review reads. Each round has two reviewers in this order: Claude reads the code, then Codex reads the code that Claude's fixes left. Round 2 repeats both on the result of round 1.
+
+### One round
+
+1. **Claude.** Invoke the code-review skill: `Skill(skill: "code-review", args: "high --fix")`. You wrote this code, so do not review it inline yourself.
+2. **Re-test Claude's fixes.** They are not checked yet. List the files it touched (`git diff --name-only`). For each one, run the scoped tests (AGENTS.md, **Commands**, "Test (one file)") and the check-only lint and format commands again. When it touched an entry point that an end-to-end test covers (a route, a handler, a public interface), also run the matching end-to-end test ("Test (end to end)"). A command that is "not available yet" is skipped with that reason. Fix a failure before the Codex part.
+3. **Record Claude's part:** findings fixed, findings deferred, files touched, re-test result. Number each finding `F1`, `F2`, … in the order found.
+4. **Codex** (skip with `--no-codex`, or when Codex is OFF for the run):
+   1. **Find the CLI (round 1 only).** `command -v codex`, else `test -x ~/.local/bin/codex` (the Bash tool does not load `~/.zshrc`). Use the one you found as `<codex>`. Write the path exactly as `codex` or `~/.local/bin/codex` (with the `~`, not the expanded home folder): the allow rules match that text. Then run `<codex> login status`. Missing or not logged in → **Codex OFF for the run** ("Codex not available"; the fix for the owner: `npm install -g @openai/codex`, then `codex login`). A command that the session refuses ("requires approval") is not a missing CLI: record `permission denied: <command>`.
+   2. **Run it.** `mkdir -p .plans/.code-reviews`. Then, as a background Bash with a 10-minute timeout, run the repo's Codex skill as it is, with the round number in the file name:
+      ```bash
+      <codex> exec --sandbox read-only -o ".plans/.code-reviews/<branch-with-slashes-as-dashes>-codex-round-<n>.md" "Use the validate-implementation skill from this repository (.codex/skills/validate-implementation/SKILL.md) and follow it exactly. Base: @@BASE_BRANCH@@. Plan: <plan file or none>. Read the skill file first. Your final message must be only the report." </dev/null
+      ```
+      Keep `</dev/null` (without it, `codex exec` waits for input forever). Do not pipe the output, and never edit the `-o` file. A non-zero exit, a timeout, an empty `-o` file, or output that mentions a quota, a usage limit, a rate limit or billing → **Codex OFF for this round** with that reason in a few words (`quota: usage limit until 14:00`). A quota or a missing CLI keeps it OFF for the rest of the run; after another failure, try again in the next round.
+   3. **Codex OFF never fails this step.** Interactive: tell the owner in one line (`Codex is OFF: <reason> — continuing with Claude only`). Write the reason in the round log and in row 1.
+   4. **Check each finding** against the code as `/apply-validation` does: VALID, PARTIALLY VALID or INVALID, each with `file:line` evidence. A finding that repeats an earlier finding keeps its `F<n>`. Number the new ones after the last number and mark them `(codex)`.
+   5. **Fix the VALID findings.** Then re-test the touched files as item 2 says. A VALID finding without one clear fix is deferred and goes under **Open items**. A finding that argues against an earlier fix is an oscillation: do not change the code, report both versions ("Stop at once").
+   6. **Record Codex's part:** VALID, fixed, deferred, files touched, re-test result, and the report path. Codex's "Present but not planned" list goes under **Open items** when a person must decide whether to keep the extra code.
+
+### When to stop
+
+Stop the loop after a round as soon as one of these is true. An early stop is the normal result:
+
+- **Converged:** in this round, neither Claude nor Codex fixed anything or found anything new. A finding that repeats an earlier deferred finding is not new.
+- **Only deferrals left:** the round found problems but could fix none of them. They need a person; more rounds do not help.
+
+**Hard cap: 2 rounds** (Claude, Codex, Claude, Codex). Never run a third. If round 2 still fixed something, stop anyway, say that the loop hit the cap, and list what round 2 changed, so the owner looks at it first.
+
+**Stop at once and escalate** (report, do not continue):
+
+- **Oscillation:** a reviewer undoes or argues against an earlier fix (its own or the other reviewer's). Report both versions and which one is in the tree. A person decides.
+- **A test keeps failing:** the same test still fails after two fix attempts. Report it; do not keep patching.
+@@END@@
+@@IFNOT MOD_CODEX@@
 ## Step 1 — Bug hunt (code-review loop, max 2 rounds)
 
 The rule audit (Step 2) checks compliance, not logic. Run the bug hunt yourself; do not leave "run /code-review next" for the owner. It is a loop, because a round that rewrites a query or a branch changes the code that the next round reads.
@@ -56,22 +93,6 @@ The rule audit (Step 2) checks compliance, not logic. Run the bug hunt yourself;
 
 - **Oscillation:** a round undoes or argues against an earlier round's fix. Report both versions and which one is in the tree. A person decides.
 - **A test keeps failing:** the same test still fails after two fix attempts. Report it; do not keep patching.
-@@IF MOD_CODEX@@
-
-## Step 1.5 — Codex review (second reviewer, never blocking)
-
-A second model reads the code that the Step 1 loop left. With `--no-codex`, skip this step and write `Codex: skipped (--no-codex)` in row 1.
-
-1. **Find the CLI.** `command -v codex`, else `test -x ~/.local/bin/codex` (the Bash tool does not load `~/.zshrc`). Use the one you found as `<codex>`. Write the path exactly as `codex` or `~/.local/bin/codex` (with the `~`, not the expanded home folder): the allow rules match that text. Then run `<codex> login status`. Missing or not logged in → **Codex OFF** ("Codex not available"; the fix for the owner: `npm install -g @openai/codex`, then `codex login`). A command that the session refuses ("requires approval") is not a missing CLI: record `permission denied: <command>`.
-2. **Run it.** `mkdir -p .plans/.code-reviews`. Then, as a background Bash with a 10-minute timeout, run the repo's Codex skill as it is:
-   ```bash
-   <codex> exec --sandbox read-only -o ".plans/.code-reviews/<branch-with-slashes-as-dashes>-codex.md" "Use the validate-implementation skill from this repository (.codex/skills/validate-implementation/SKILL.md) and follow it exactly. Base: @@BASE_BRANCH@@. Plan: <plan file or none>. Read the skill file first. Your final message must be only the report." </dev/null
-   ```
-   Keep `</dev/null` (without it, `codex exec` waits for input forever). Do not pipe the output, and never edit the `-o` file. A non-zero exit, a timeout, an empty `-o` file, or output that mentions a quota, a usage limit, a rate limit or billing → **Codex OFF** with that reason in a few words (`quota: usage limit until 14:00`).
-3. **Codex OFF never fails this step.** Interactive: tell the owner in one line (`Codex is OFF: <reason> — continuing with Claude only`). Write the reason in row 1 and continue with Step 2.
-4. **Check each finding** against the code as `/apply-validation` does: VALID, PARTIALLY VALID or INVALID, each with `file:line` evidence. A finding that repeats a Step 1 finding keeps its `F<n>`. Number the new ones after the last Step 1 number and mark them `(codex)`.
-5. **Fix the VALID findings, one round only.** Then re-test the touched files as Step 1, item 2 says. A VALID finding without one clear fix is deferred and goes under **Open items**. A finding that argues against a Step 1 fix is an oscillation: do not change the code, report both versions (Step 1, "Stop at once").
-6. Do not run Codex again after the fixes. Codex's "Present but not planned" list goes under **Open items** when a person must decide whether to keep the extra code.
 @@END@@
 
 ## Step 2 — Rule audit
@@ -129,7 +150,7 @@ Then the table:
 | # | Check | Result | Evidence |
 | --- | --- | --- | --- |
 @@IF MOD_CODEX@@
-| 1 | Code review | Pass/Fail | rounds, fixed, deferred, re-test result; `Codex ON: <n> VALID, <n> fixed, <n> deferred` or `Codex OFF: <reason>` |
+| 1 | Code review | Pass/Fail | rounds, fixed, deferred, re-test result; per round `Codex ON: <n> VALID, <n> fixed, <n> deferred` or `Codex OFF: <reason>`; the path of the last Codex report that ran |
 @@END@@
 @@IFNOT MOD_CODEX@@
 | 1 | Code review | Pass/Fail | rounds, fixed, deferred, re-test result |
@@ -139,7 +160,7 @@ Then the table:
 @@IF MOD_CODEX@@
 Codex OFF does not make row 1 Fail.
 
-Then **Code review rounds** (one line per round, and why the loop stopped: converged, only deferrals left, hit the cap, or escalated; then one line for Codex: ON with its counts and the report path, or OFF with the reason), **Findings**, **Violations** (file, line, what is wrong, the fix, and whether you fixed it), and **Open items**.
+Then **Code review rounds** (per round one line for Claude and one line for Codex: ON with its counts and the report path, or OFF with the reason; then why the loop stopped: converged, only deferrals left, hit the cap, or escalated), **Findings**, **Violations** (file, line, what is wrong, the fix, and whether you fixed it), and **Open items**.
 @@END@@
 @@IFNOT MOD_CODEX@@
 Then **Code review rounds** (one line per round, and why the loop stopped: converged, only deferrals left, hit the cap, or escalated), **Findings**, **Violations** (file, line, what is wrong, the fix, and whether you fixed it), and **Open items**.

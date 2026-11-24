@@ -15,9 +15,10 @@
 //     "date": "2026-10-31",                                  // day of the test run: names the file of a route's first report
 //     "runSlug": "add-order-export", "pr": 612,              // optional, pipeline runs: name the file per run (or QA_RUN_SLUG / QA_PR)
 //     "route": "/cases", "account": "Ana (Member, Acme)",
-//     "title": "Filters on /cases fit a phone",              // optional, plain-words headline
+//     "title": "Case filters fit a phone screen",            // optional, plain-words headline, 12 words max
 //     "issues": ["https://github.com/acme/shop-web/issues/435"],  // GitHub issues/PRs the run tests; the QA list searches them
-//     "summary": "…",                                        // TLDR: does it work now, what is still open
+//     "summary": "…",                                        // TLDR for someone new to the project: 2–4 sentences,
+//                                                            // 25 words max each, no HTTP codes, request counts or paths
 //     "before": "HEAD 89dd94d", "after": "working tree",     // optional, what each side was taken from
 //     "old": "main 1a2b3c4",                                 // feature/redesign runs: the code without the change
 //     "changes": [{ "id": "D4", "title": "Causes and validation on one page", "note": "…",  // feature/redesign runs: old vs new; "id" optional
@@ -58,6 +59,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { sameNameIn, writeVersioned } from "../../../scripts/page-versions.mjs";
 import { BEFORE_AFTER_FILE, PROJECT } from "./lib.mjs";
+import { summaryWarnings, titleWarnings } from "./plain-text.mjs";
 import { STORE } from "./profile.mjs";
 import { publish } from "./publish.mjs";
 import { diffShots } from "./shot-diff.mjs";
@@ -424,6 +426,7 @@ const issueLabel = (u) => {
 };
 const issues = spec.issues ?? [];
 if (!issues.length) warnings.push('no "issues": add the GitHub issue or PR this run tests');
+warnings.push(...titleWarnings(spec.title), ...summaryWarnings(spec.summary));
 const issueLinks = issues.map((u) =>
   /^https?:\/\//.test(u) ? `<a href="${esc(u)}">${esc(issueLabel(u))}</a>` : esc(u),
 );

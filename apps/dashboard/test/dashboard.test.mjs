@@ -215,6 +215,15 @@ after(async () => {
   if (tmp) rmSync(tmp, { recursive: true, force: true });
 });
 
+test('keeps idle connections open longer than the Caddy proxy does, so a proxied POST never gets a 502', async () => {
+  const res = await new Promise((resolve, reject) =>
+    http.get({ host: '127.0.0.1', port, path: '/api/state', agent: new http.Agent({ keepAlive: true }) }, resolve).on('error', reject));
+  res.resume();
+  // Caddy keeps an idle upstream connection for 120 s; the server must keep it longer
+  const timeout = +(/timeout=(\d+)/.exec(res.headers['keep-alive'] || '') || [])[1];
+  assert.ok(timeout > 120, `keep-alive timeout is ${timeout} s`);
+});
+
 test('lists the registered project and parses the plan title', async () => {
   const s = await state();
   assert.equal(s.length, 1);
@@ -228,6 +237,7 @@ test('lists the registered project and parses the plan title', async () => {
 
 test('a repo without bootstrap.json shows "needs bootstrap"; a broken one shows the render error', async () => {
   assert.equal((await state())[0].bootstrap, 'missing');
+  assert.match((await state())[0].bootstrapPrompt, /^Run \/bootstrap-project in this repository\./);
   const ws = path.join(tmp, 'bootstrap-ws');
   const plain = path.join(ws, 'plain'), broken = path.join(ws, 'broken');
   for (const d of [path.join(plain, '.git'), path.join(broken, '.git'), path.join(broken, '.claude')]) mkdirSync(d, { recursive: true });

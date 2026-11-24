@@ -561,6 +561,8 @@ const fullState = async () => {
       prError: proj.issuesUrl ? (prLists[proj.root] || {}).error || '' : '',
       setupLevel: health.level,
       bootstrap: boot && !boot.ok ? boot.state : '',
+      // the chip copies this prompt on click, the same text the setup guide shows
+      bootstrapPrompt: boot && !boot.ok ? boot.fixPrompt : '',
       plans: await listPlans(proj),
       // a worktree on a branch that a plan names shows as that plan, not twice
       worktrees: proj.issuesUrl ? worktreesFor(proj)
@@ -2867,7 +2869,7 @@ const server = http.createServer(async (req, res) => {
           output: warnings.length ? warnings.join('\n') : 'Settings saved — ' + cleaned.length + ' project(s).' });
       }
       if (url.pathname === '/api/add-project') return json(res, 200, addProject(b));
-      // 🖥 Code in the page header: this dashboard's own repo
+      // the Code button in the page header: this dashboard's own repo
       if (url.pathname === '/api/vscode-dash') return json(res, 200, { ok: true, target: openFolderInVsCode(DASH_REPO) });
       if (url.pathname === '/api/launchers') {
         if (!proj) return json(res, 400, { error: 'bad project' });
@@ -2880,7 +2882,7 @@ const server = http.createServer(async (req, res) => {
         const note = await pullRoot(proj, br.out);
         return json(res, 200, { ok: !note.startsWith('Not pulled'), output: note });
       }
-      // 🖥 VS Code on a project header: the main checkout, not a plan's worktree
+      // the VS Code button on a project header: the main checkout, not a plan's worktree
       if (url.pathname === '/api/vscode-project') {
         if (!proj) return json(res, 400, { error: 'bad project' });
         return json(res, 200, { ok: true, target: openInVsCode(proj) });
@@ -3262,6 +3264,13 @@ const reportServer = http.createServer((req, res) => {
 });
 reportServer.on('error', (e) => console.error(`QA reports server on port ${QA_PORT}: ${e.code || e}`));
 reportServer.listen(QA_PORT, '127.0.0.1');
+
+// Caddy keeps an idle connection to the dashboard open for 2 minutes, but Node closes it
+// after 5 seconds. When Caddy sends a request on a connection that Node just closed, the
+// request gets "connection reset" and Caddy answers 502 (it does not retry a POST). Keep
+// idle connections open longer than Caddy does, so Caddy always closes them first.
+server.keepAliveTimeout = 130_000;
+server.headersTimeout = 131_000;
 
 server.on('error', (e) => {
   if (e.code === 'EADDRINUSE')

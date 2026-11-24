@@ -200,6 +200,17 @@ real_read_rules() {
   return 0
 }
 
+# A Bash rule for a tool in the home folder (~/.local/bin/codex) also needs the absolute
+# spelling: a session whose PATH lacks the folder calls the tool by its full path, which
+# the ~ rule does not match.
+home_bash_rules() {
+  local rule
+  for rule in ${RUN_EXTRA_ALLOW[@]+"${RUN_EXTRA_ALLOW[@]}"}; do
+    case "$rule" in 'Bash(~/'*) echo "Bash($HOME/${rule#'Bash(~/'}" ;; esac
+  done
+  return 0
+}
+
 # per-run permission overlay: local commit rights + report writing in the MAIN repo
 write_run_settings() { # $1 = output path, $2 = mode (verify|commit|pr)
   # push + PR rights only in pr mode, and only for auto/* branches
@@ -209,6 +220,9 @@ write_run_settings() { # $1 = output path, $2 = mode (verify|commit|pr)
     "Bash(git merge --abort)", "Bash(git rev-list*)",
     "Bash(git push -u origin auto/*)", "Bash(git push origin auto/*)",
     "Bash(gh pr create --draft*)", "Bash(gh pr view*)", "Bash(gh pr edit*)"]')"
+  # rules derived from RUN_EXTRA_ALLOW, one per line (a rule can hold spaces and *)
+  local derived=() rule
+  while IFS= read -r rule; do [ -n "$rule" ] && derived+=("$rule"); done < <(real_read_rules; home_bash_rules)
   jq -n --arg repo "$REPO" --argjson pr "$pr_rules" --args '($repo | ltrimstr("/")) as $r | {
     permissions: { allow: ([
       "Bash(git add*)",
@@ -221,7 +235,7 @@ write_run_settings() { # $1 = output path, $2 = mode (verify|commit|pr)
       ("Read(//" + $r + "/.plans/auto-runs/**)"),
       ("Edit(//" + $r + "/.plans/auto-runs/**)")
     ] + $ARGS.positional + $pr) }
-  }' ${RUN_EXTRA_ALLOW[@]+"${RUN_EXTRA_ALLOW[@]}"} $(real_read_rules) > "$1"
+  }' ${RUN_EXTRA_ALLOW[@]+"${RUN_EXTRA_ALLOW[@]}"} ${derived[@]+"${derived[@]}"} > "$1"
 }
 
 # merge the repo allowlist + per-run overlay into ALLOW_RULES, passed via --allowedTools:
@@ -537,8 +551,11 @@ if [ "${1:-}" = "--cleanup" ]; then
         echo "  git -C \"$REPO\" worktree remove --force \"$wt\""
         exit 1
       fi
-      # checked-out submodules block `git worktree remove`: deinit them first
+      # submodules block `git worktree remove`: deinit them, then drop the worktree's
+      # modules/ store (git refuses while .git/worktrees/<id>/modules exists, even after deinit)
       git -C "$wt" submodule deinit -f --all >/dev/null 2>&1 || true
+      wt_gitdir="$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null || true)"
+      case "$wt_gitdir" in */.git/worktrees/*) rm -rf "$wt_gitdir/modules" ;; esac
     fi
     git -C "$REPO" worktree remove "$wt" \
       || { echo "Removal refused. Re-check, then: git -C \"$REPO\" worktree remove --force \"$wt\""; exit 1; }
@@ -594,6 +611,8 @@ if [ "${1:-}" = "--resume" ]; then
       echo "No terminal to ask for mode — pass --stop-at-verify, --full or --to-pr."; exit 1
     fi
   fi
+  # a worktree from an older script may have empty submodule folders: check them out
+  [ ! -f "$wt/.gitmodules" ] || git -C "$wt" submodule update --init --recursive >> "$log" 2>&1 || true
   write_run_settings "$run_settings" "$STOP_AFTER"
   build_allow_rules "$run_settings"
   check_run_permissions

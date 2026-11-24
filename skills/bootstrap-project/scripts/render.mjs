@@ -147,12 +147,28 @@ export function checkParams(p) {
   if (p.layout?.migrationHints !== undefined && !strList(p.layout.migrationHints)) errs.push('layout.migrationHints must be a list of texts');
   const btp = p.registry?.browserTestProject;
   if (btp !== undefined && btp !== '' && !isSafeName(btp)) errs.push('registry.browserTestProject must use only letters, digits, ".", "_" and "-"');
+  const kt = p.git?.keepTracked;
+  if (kt !== undefined && !(Array.isArray(kt) && kt.every((x) => KEEP_TRACKABLE.includes(x)))) {
+    errs.push(`git.keepTracked must be a list of these run-state folders: ${KEEP_TRACKABLE.join(', ')}`);
+  }
   const board = p.git?.tickets?.board;
   if (board !== undefined && (!str(board.owner) || !/^\d+$/.test(String(board.number ?? '')) || !str(board.status))) {
     errs.push('git.tickets.board needs "owner", a numeric "number" and "status"');
   }
+  if (board !== undefined && board.reviewStatus !== undefined) {
+    if (!str(board.reviewStatus)) errs.push('git.tickets.board.reviewStatus must be a column name, for example "In review"');
+    else if (str(board.reviewStatus) === str(board.status)) errs.push('git.tickets.board.reviewStatus must differ from "status" (for example "Next review" and "In review")');
+    if (!str(p.git?.staging)) errs.push('git.tickets.board.reviewStatus needs git.staging: a ticket moves to it only when its work is on staging');
+    if (!str(p.project?.remote)) errs.push('git.tickets.board.reviewStatus needs project.remote (owner/repo): /staging-review reads the PRs on GitHub');
+  }
   return errs;
 }
+
+/**
+ * Run-state folders a project may commit instead of ignore (git.keepTracked), for example
+ * Codex reviews the team reads later. Run reports and settings.local.json are never in it.
+ */
+export const KEEP_TRACKABLE = ['.plans/.workflow-state/', '.plans/.test-review/', '.plans/.decision-sheets/', '.plans/.code-reviews/'];
 
 /** Returns true when a module is on. Every module is on unless the answers turn it off. */
 export const moduleOn = (p, m) => p.modules?.[m] !== false;
@@ -591,6 +607,9 @@ export function buildVars(p, now = new Date()) {
     BOARD_OWNER: board ? str(board.owner) : '',
     BOARD_NUMBER: board ? String(board.number) : '',
     BOARD_STATUS: board ? str(board.status) : '',
+    // the staging gate: ship sets BOARD_STATUS, /staging-review moves a ticket on to BOARD_REVIEW_STATUS
+    HAS_REVIEW_GATE: Boolean(board && str(board.reviewStatus) && staging && pr.remote),
+    BOARD_REVIEW_STATUS: board ? str(board.reviewStatus) : '',
     PREFLIGHT_BASH: bashWords(preflight),
     CHANGELOG_LOCALES: clLocales.map(code).join(', '),
     CHANGELOG_LOCALES_JS: jsList(clLocales),
@@ -683,6 +702,11 @@ export function renderAll(params, { upgrade = false, now = new Date(), repo = nu
       files.set(p, { path: p, content: '', kind: 'orphan', note: 'changelog.validateCmd is set, so this script is unused; delete by hand' });
       continue;
     }
+    if (p === '.claude/skills/staging-review/SKILL.md' && !vars.HAS_REVIEW_GATE) {
+      // only with git.tickets.board.reviewStatus and git.staging
+      files.set(p, { path: p, content: '', kind: 'orphan', note: 'git.tickets.board.reviewStatus is not set, so this skill is unused; delete by hand' });
+      continue;
+    }
     if (p === '.plans/first-plan.md') {
       if (upgrade) continue;
       p = `.plans/${vars.FIRST_PLAN_TS}-check-the-pipeline-end-to-end.md`;
@@ -701,6 +725,11 @@ export function renderAll(params, { upgrade = false, now = new Date(), repo = nu
       try { JSON.parse(content); } catch (e) { die(`${s.rel}: rendered JSON is not valid: ${e.message}`); }
     }
     if (files.has(p) && kind !== 'merge') die(`two templates write ${p}`);
+    // git.keepTracked: run-state folders the project commits; their ignore line is left out
+    if (kind === 'merge') {
+      const keep = new Set(arr(params.git?.keepTracked));
+      content = content.split('\n').filter((l) => !keep.has(l.trim())).join('\n');
+    }
     if (kind === 'merge' && files.has(p)) {
       files.get(p).content += '\n' + content;
       continue;

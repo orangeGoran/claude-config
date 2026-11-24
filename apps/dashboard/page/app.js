@@ -1,3 +1,8 @@
+// the VS Code logo (its official blue mark) on every button that opens a folder in VS Code
+const VSCODE_SVG = '<svg class="vsc-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="#007ACC" d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z"/></svg>';
+// the GitHub mark (its octicon) on every link that opens a PR on GitHub; it takes the text colour
+const GITHUB_SVG = '<svg class="vsc-ico" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>';
+const VSC_OPEN = { html: VSCODE_SVG + ' Open in VS Code' };
 
 // theme: remembered per browser, defaults to system preference
 const applyTheme = (t) => {
@@ -492,20 +497,20 @@ function renderList() {
         (flightN ? '<span class="chip warn">⏳ ' + flightN + '</span>' : '');
       // one card per project: header, plans and worktrees end together at its bottom edge
       return '<div class="pgrp pcx"' + projStyle(pr) + '><div class="phead pcx" data-toggle="' + esc(pr) + '"' + projStyle(pr) + '><span class="chev">' +
-        (closed ? '▸' : '▾') + '</span>' + esc(pr) +
+        (closed ? '▸' : '▾') + '</span><span class="pname">' + esc(pr) + '</span>' +
         (hasLanes ? '<button class="pbtn" data-suggest="' + esc(pr) +
           '" title="Suggest a parallel launch batch" aria-label="Suggest a parallel launch batch">⚡</button>' : '') +
         '<button class="pbtn" data-pull="' + esc(pr) + '" title="Pull: git pull --ff-only in ' + escA(sp.root) +
           ' (the branch it is on, from its remote)" aria-label="Pull">📥</button>' +
         '<button class="pbtn" data-vscode="' + esc(pr) + '" title="Open ' + escA(sp.root) +
-          ' in VS Code" aria-label="Open in VS Code">🖥</button>' + runBadges +
+          ' in VS Code" aria-label="Open in VS Code">' + VSCODE_SVG + '</button>' + runBadges +
         (sp.setupLevel === 'red' ? '<span class="chip bad x" data-guide="' + escA(sp.root) +
           '" title="something required is missing — see what and how to fix it">needs setup</span>'
-          : sp.bootstrap ? '<span class="chip warn x" data-guide="' + escA(sp.root) + '" title="' +
+          : sp.bootstrap ? '<span class="chip warn x" data-bscopy="' + escA(sp.bootstrapPrompt || '') + '" title="' +
             (sp.bootstrap === 'missing' ? 'never set up with /bootstrap-project'
               : sp.bootstrap === 'error' ? 'render.mjs could not check .claude/bootstrap.json'
               : 'the bootstrap-project templates changed since the last apply — run /bootstrap-project --upgrade') +
-            ' — click for the prompt">' + (sp.bootstrap === 'missing' ? 'needs bootstrap'
+            ' — click to copy the prompt">' + (sp.bootstrap === 'missing' ? 'needs bootstrap'
               : sp.bootstrap === 'error' ? 'bootstrap error' : 'bootstrap update') + '</span>' : '') +
         '<span class="cnt">' + items.length + ' plan' + (items.length === 1 ? '' : 's') +
         '</span></div>' + (closed ? '' : (items.length ? items.map((p) => itemHtml(p)).join('')
@@ -520,6 +525,14 @@ function renderList() {
       e.stopPropagation();
       if (el.dataset.guide) onbOpenCards.add(el.dataset.guide);
       openGuide(el.dataset.guide ? 1 : 0);
+    }));
+  byId('side').querySelectorAll('[data-bscopy]').forEach((el) =>
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!el.dataset.bscopy) { openGuide(1); return; }   // a server from before this field
+      const was = el.textContent, ok = await copyText(el.dataset.bscopy);
+      el.textContent = ok ? '✓ copied' : 'copy failed';
+      setTimeout(() => { el.textContent = was; }, 1400);
     }));
   byId('side').querySelectorAll('[data-suggest]').forEach((el) =>
     el.addEventListener('click', (e) => { e.stopPropagation(); openSuggest(el.dataset.suggest); }));
@@ -663,7 +676,7 @@ async function renderDetail(loadPlan) {
     </div>
     ${p.pr && p.pr.state === 'MERGED' ? '<div class="mergedline"><span>✓ PR #' + p.pr.number +
       ' was merged into <code>' + esc(p.pr.base || '?') + '</code>' + (p.pr.mergedAt ? ' on ' + esc(new Date(p.pr.mergedAt).toLocaleString()) : '') +
-      '</span><a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener">↗ GitHub</a></div>' : ''}
+      '</span><a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener" title="Open the PR on GitHub">' + GITHUB_SVG + ' GitHub</a></div>' : ''}
     ${p.summary ? '<div class="summary">💡 ' + esc(p.summary) + '</div>'
       : p.summarizing ? '<div class="summary dim">💭 plain-language summary is being generated…</div>' : ''}
     ${withPr ? '' : lastStep}
@@ -692,7 +705,8 @@ async function renderDetail(loadPlan) {
   moreWrap.style.cssText = 'display:none;gap:8px;flex-wrap:wrap';
   const btn = (label, fn, cls, parent) => {
     const b = document.createElement('button');
-    b.textContent = label; if (cls) b.className = cls;
+    if (label.html) b.innerHTML = label.html; else b.textContent = label;
+    if (cls) b.className = cls;
     b.addEventListener('click', fn); (parent || A).appendChild(b);
     return b;
   };
@@ -708,34 +722,34 @@ async function renderDetail(loadPlan) {
     { project: p.project, slug: p.slug, launcher: +modeOf(p) }, true);
   if (notStarted(p)) btn('⚠ Why it didn’t start', () => showLaunchError(p), 'danger');
   for (const l of (p.run && p.run.links) || []) {
-    // the run's link to its own PR would open this tab: ↗ GitHub in the bar is the PR on the web
+    // the run's link to its own PR would open this tab: the GitHub button in the bar is the PR on the web
     if (p.pr && l.url.replace(/[/]+$/, '') === p.pr.url.replace(/[/]+$/, '')) continue;
     btn(l.label.replace(/^Ticket\s+(?=#)/i, ''), () => openRunLink(p, l.url), 'primary');
   }
   if (p.status === 'proposed' && !p.archived && stt === 'fresh') {
     btn('✓ Confirm: plan it', () => scoutAct(p, 'confirm'), 'primary');
     btn('✕ Dismiss', () => scoutAct(p, 'dismiss'), 'danger');
-    btn('🖥 Open in VS Code', vsc, null, moreWrap);
+    btn(VSC_OPEN, vsc, null, moreWrap);
   } else if (stt === 'starting') {
     btn('⏳ Starting… setting up the worktree', () => {}).disabled = true;
   } else if (p.archived) {
     btn('↩ Unarchive plan', () => post('/api/unarchive', { project: p.project, slug: p.slug }, true));
-    btn('🖥 Open in VS Code', vsc, null, moreWrap);
+    btn(VSC_OPEN, vsc, null, moreWrap);
   } else if (p.hasPipeline) {
     if (stt === 'live') {
       // the worktree exists while the run works: its files are open to read in VS Code
-      btn('📋 Report', rep); btn('📄 Log', log); btn('🖥 Open in VS Code', vsc);
+      btn('📋 Report', rep); btn('📄 Log', log); btn(VSC_OPEN, vsc);
     } else if (stt === 'review') {
-      btn('📋 Report', rep); btn('🖥 Open in VS Code', vsc);
+      btn('📋 Report', rep); btn(VSC_OPEN, vsc);
       btn('📄 Log', log, null, moreWrap);
       btn('🗑 Clean up run', clean, 'danger', moreWrap);
     } else if (stt === 'stuck') {
       btn('📋 Report', rep); btn('📄 Log', log);
       btn('⟳ Resume', () => post('/api/resume', { project: p.project, slug: p.slug, mode: modeOf(p) }).then(afterLaunch));
-      btn('🖥 Open in VS Code', vsc, null, moreWrap);
+      btn(VSC_OPEN, vsc, null, moreWrap);
       btn('🗑 Clean up run', clean, 'danger', moreWrap);
     } else { // fresh: launch this one now, or queue it with others via the checkbox
-      if (p.worktree) { btn('🖥 Open in VS Code', vsc); btn('🗑 Clean up run', clean, 'danger', moreWrap); }
+      if (p.worktree) { btn(VSC_OPEN, vsc); btn('🗑 Clean up run', clean, 'danger', moreWrap); }
       else {
         btn('▶ Launch now', () => {
           picked.delete(p.key); renderBar();
@@ -746,19 +760,19 @@ async function renderDetail(loadPlan) {
     }
   } else {
     if (stt === 'live') {
-      btn('📄 Log', log); btn('🖥 Open in VS Code', vsc, null, moreWrap);
+      btn('📄 Log', log); btn(VSC_OPEN, vsc, null, moreWrap);
     } else if (stt === 'review') {
-      btn('📄 Log', log); btn('🖥 Open in VS Code', vsc);
+      btn('📄 Log', log); btn(VSC_OPEN, vsc);
       btn('🗑 Clear run record', clean, 'danger', moreWrap);
       btn('📦 Archive plan → done/', () => archive(p), 'danger', moreWrap);
     } else if (stt === 'stuck') {
       btn('📄 Log', log);
       if ((p.launchers || []).length) btn('▶ Launch again', launchNow);
-      btn('🖥 Open in VS Code', vsc, null, moreWrap);
+      btn(VSC_OPEN, vsc, null, moreWrap);
       btn('🗑 Clear run record', clean, 'danger', moreWrap);
     } else { // fresh
       if ((p.launchers || []).length) btn('▶ Launch now', launchNow, 'primary');
-      btn('🖥 Open in VS Code', vsc, null, moreWrap);
+      btn(VSC_OPEN, vsc, null, moreWrap);
       btn('📦 Archive plan → done/', () => archive(p), 'danger', moreWrap);
     }
   }
@@ -855,14 +869,14 @@ function renderWtDetail(p, loadPr0) {
     ${!withPr && p.prError ? '<div class="ghhint">PRs are not shown: ' + esc(p.prError) + '.</div>' : ''}
     ${withPr && p.pr.state === 'MERGED' ? '<div class="mergedline"><span>✓ PR #' + p.pr.number +
       ' was merged into <code>' + esc(p.pr.base || '?') + '</code>' + (p.pr.mergedAt ? ' on ' + esc(new Date(p.pr.mergedAt).toLocaleString()) : '') +
-      '</span><a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener">↗ GitHub</a></div>' : ''}
+      '</span><a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener" title="Open the PR on GitHub">' + GITHUB_SVG + ' GitHub</a></div>' : ''}
     ${withPr ? '<div id="prview" class="pvpr"></div>'
       : '<div class="summary dim">No PR for <code>' + esc(p.branch || p.name) + '</code> yet.</div>'}`;
   document.body.classList.remove('review');
   bindPrTabs(p);
   const A = byId('actions');
   const vs = document.createElement('button');
-  vs.textContent = '🖥 Open in VS Code';
+  vs.innerHTML = VSC_OPEN.html;
   vs.addEventListener('click', () => post('/api/vscode', { project: p.project, slug: p.slug }));
   A.appendChild(vs);
   if (p.sessions && p.sessions.length) {
@@ -982,15 +996,20 @@ let ch = null;        // the chat on screen: { p, key, items, first, total, sess
 let chatLock = null;  // the lock on that chat: { key, release }
 let chatSel = null;   // the lines that go with the next message
 const chatDraft = {}, chatImgs = {}, chatMetas = {};   // plan key -> unsent text, unsent images; project -> commands and models
-// sent messages, oldest first; ArrowUp on the first line steps back through them, like a terminal.
-// chatHistList is fixed while you step: the dashboard's own sends, then this chat's messages from its log
-let chatHist = [], chatHistAt = -1, chatHistDraft = '', chatHistList = [];
-try { chatHist = JSON.parse(localStorage.getItem('dash-chat-hist') || '[]'); } catch {}
-function chatHistPush(text) {
+// sent messages per chat (plan key -> texts, oldest first); ArrowUp on the first line steps back through them, like a terminal.
+// chatHistList is fixed while you step: this chat's sends from the dashboard, then its messages from its log
+let chatHist = {}, chatHistAt = -1, chatHistDraft = '', chatHistList = [];
+try {
+  const h = JSON.parse(localStorage.getItem('dash-chat-hist') || '{}');
+  chatHist = h && !Array.isArray(h) && typeof h === 'object' ? h : {};   // the old shared list cannot be split per chat: drop it
+} catch {}
+function chatHistPush(key, text) {
   chatHistAt = -1;
-  if (chatHist[chatHist.length - 1] === text) return;
-  chatHist.push(text);
-  chatHist = chatHist.slice(-100);
+  const list = chatHist[key] || [];
+  if (list[list.length - 1] === text) return;
+  delete chatHist[key]; chatHist[key] = [...list, text].slice(-100);   // newest chat last, so the cap drops the oldest chats
+  const keys = Object.keys(chatHist);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 50))) delete chatHist[k];
   try { localStorage.setItem('dash-chat-hist', JSON.stringify(chatHist)); } catch {}
 }
 const chatBtn = (p) => hasChat(p) ? '<button class="chatbtn' + (chatOn ? ' on' : '') + '" data-chat="1" aria-pressed="' + chatOn +
@@ -1464,7 +1483,7 @@ async function chatSendMsg(command) {
   if (ch === c) paintLive();
   if (!r.ok || ch !== c) return;
   if (!command) {
-    if (text) chatHistPush(text);
+    if (text) chatHistPush(c.key, text);
     inp.value = ''; delete chatDraft[c.key];
     delete chatImgs[c.key];
     if (ch === c) paintImgs();
@@ -1541,7 +1560,7 @@ function chatKey(e) {
     if (up && chatHistAt === -1) {
       const said = Object.values(ch.items || {}).filter((it) => it.k === 'you' && it.text.trim())
         .sort((x, y) => x.i - y.i).map((it) => it.text.trim());
-      chatHistList = [...chatHist.filter((t) => !said.includes(t)), ...said]
+      chatHistList = [...(chatHist[ch.key] || []).filter((t) => !said.includes(t)), ...said]
         .filter((t, n, all) => t !== all[n - 1]);
     }
     if (up ? !chatHistList.length || chatHistAt === 0 : chatHistAt === -1) return;
@@ -1710,7 +1729,7 @@ function drawBarAction(p, tab) {
   if (!R || !d || d.error) return;
   // the PR's state when it is not simply open, then GitHub, then the one next step
   R.innerHTML = (d.state === 'OPEN' && !d.isDraft ? '' : prChip(d)) + '<a class="ghbtn" href="' + escA(d.url) + '" target="_blank" rel="noopener" ' +
-    'title="Open the PR on GitHub">↗ GitHub</a>';
+    'title="Open PR #' + d.number + ' on GitHub">' + GITHUB_SVG + '&nbsp;#' + d.number + '</a>';
   // Files changed has no header with the plan's actions: the worktree in VS Code is here
   if (tab === 'files') {
     const vs = document.createElement('button');
