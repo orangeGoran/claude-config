@@ -32,7 +32,7 @@ Save its reply word for word in the report, under `## Reviewer report`. If the a
 For each revert check, before you run it:
 
 - Grep the file: `find` must occur **exactly once**. If not, skip the check as `INVALID (find not unique)`.
-- Make sure that `file` is production code from the diff, not a test file, a fixture or a migration. If not, skip the check as `INVALID (not production code)`.
+- Make sure that `file` is production code from the diff. These paths are not production code: a test file (`*.spec.*`, `*.test.*`, `*.e2e-spec.*`, a file under a test folder such as `test/`, `tests/` or `__tests__/`), a test helper, a fixture or seed file, a snapshot, a migration (a file in the migrations folder) and a generated file. If `file` is one of them, skip the check as `INVALID (not production code)`.
 
 Keep the first `--max-checks` valid checks. At most 3 of them may use a slow end-to-end test.
 

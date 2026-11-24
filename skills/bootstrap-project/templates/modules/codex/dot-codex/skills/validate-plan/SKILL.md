@@ -31,7 +31,7 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 ## How to work
 
 1. **Read the plan from start to end.** Note every file path, function, type, table, column, enum, endpoint, command and section reference it names.
-2. **Read the rules.** Read @@RULES_DOCS@@ in full, plus every `AGENTS.md` in the folders the plan touches and in their parent folders. List them with `git ls-files --cached --others --exclude-standard AGENTS.md '*/AGENTS.md'` (this also lists a new, uncommitted file). The plan must obey these rules.
+2. **Read the rules.** Read @@RULES_DOCS@@ in full, plus every `AGENTS.md` in the folders the plan touches and in their parent folders. List them with `git ls-files --cached --others --exclude-standard AGENTS.md '*/AGENTS.md'` (this also lists a new, uncommitted file). The plan must obey these rules. Read `@@PARENT_PLAN@@` as context. When the plan's header has `- **Parent**: <file>`, read that parent plan too: the plan must not contradict it or take its open decisions.
 3. **Check every claim against the real repository.** Do not trust the plan's description of existing code. Open it.
    - **References:** confirm that each file, function and type exists (read the file, `rg` for the symbol). Flag each path that does not exist and each signature the plan gets wrong.
    - **Reference implementation:** open the files of the plan's **Reference implementation** section. Confirm the plan mirrors them. Flag deviations the plan does not explain.
@@ -53,6 +53,7 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 @@VALIDATOR_HUNT@@
 - **Edge cases:** empty or missing input, two requests at the same time, retries and idempotency, pagination, permissions not granted.
 - **Duplicate side effects:** a new success or failure branch that can write a state change or send an event two times. Name the one owner of each state change.
+- **Owner decisions and open questions:** the plan decides by itself a question that `@@PARENT_PLAN@@`, the plan's own parent plan or a rules document lists as open. That decision belongs to the owner: the plan must ask it, or keep the steps that do not depend on it.
 - **Broken references:** dead paths, wrong function names, types or enum values that do not exist.
 - **Template gaps:** a missing or empty @@PLAN_GOAL@@, @@PLAN_CONTEXT@@, Hard rules, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, @@PLAN_STEPS@@, @@MIGRATIONS_GAP@@@@PLAN_TESTS@@ or @@PLAN_VERIFY@@ section (an empty section must say "None" or "No new wiring"); @@ENDPOINT_GAP@@a @@PLAN_TESTS@@ section without its Harness constraints; vague steps; a verify step that cannot fail.
 @@IF MOD_CHANGELOG@@

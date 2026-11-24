@@ -88,6 +88,7 @@ Steps 1, 1.5 and 2 all raise questions, and so do the open decisions this plan n
 
 - Propose 2–3 approaches. For each: what it does, pros, cons, size (low / medium / high).
 - Recommend one. Ask the owner to pick, as one question in the queue.
+- Go to Step 2 only after the owner agrees on an approach.
 
 ## Step 2 — Hard-rule check
 
@@ -270,6 +271,14 @@ Before you show the plan, check it. Fix the plan if any item fails.
 - [ ] The scope is one change that one PR can carry
 - [ ] No open decision is taken without the owner's answer in this session
 - [ ] The Hard rules section answers every rule
+@@IF MOD_CHANGELOG@@
+@@IF HAS_VERSION_BUMP@@
+- [ ] The last code step adds the release note and the version raise, or the plan says why `no-changelog` applies
+@@END@@
+@@IFNOT HAS_VERSION_BUMP@@
+- [ ] The last code step adds the release note, or the plan says why `no-changelog` applies
+@@END@@
+@@END@@
 @@IF HAS_HTTP_API@@
 - [ ] Every new or changed endpoint has an Endpoint access row (when the project has an HTTP API)
 @@END@@

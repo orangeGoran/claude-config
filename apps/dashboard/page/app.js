@@ -1362,8 +1362,10 @@ function chatState(st) {
   const short = (id) => String(id || '').slice(0, 8);
   // the first 8 characters of the session id tell the chats apart; the full id is in the tooltip
   byId('cwho').textContent = (st.live ? '● ' : '') + (st.session ? short(st.session) : '') +
+    (st.startedAt ? ' · started ' + chatTime(st.startedAt) : '') +
     (st.fork ? ' · next message: a copy' : st.current && st.current.copy ? ' · copy of ' + short(st.current.base) : '');
   byId('cwho').title = 'Session ' + (st.session || 'not started yet') + '. ' +
+    (st.startedAt ? 'Started ' + new Date(st.startedAt).toLocaleString() + '. ' : '') +
     (st.live ? 'The session is open. It closes after 15 minutes without a message.' : 'The next message opens the session.');
   byId('cnew').hidden = !(st.current && st.current.id !== st.latest);
   byId('cfork').disabled = !!st.fork;
