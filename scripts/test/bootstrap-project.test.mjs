@@ -622,3 +622,28 @@ test('rules.planSections renames the plan headings in the plan template, the ski
     assert.match(r.stderr, /rules\.planSections\.done is unknown/);
   } finally { rmSync(bad, { recursive: true, force: true }); }
 });
+
+test('the step gate checks only its own repo: a git -C commit in another repo passes, one into its own repo is checked', () => {
+  const { dir, repo } = bootstrapRepo();
+  const other = path.join(dir, 'other repo');
+  try {
+    mkdirSync(other);
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: other });
+    for (const r of [repo, other]) {
+      writeFileSync(path.join(r, 'feature.js'), 'export const x = 1;\n');
+      execFileSync('git', ['add', 'feature.js'], { cwd: r });
+    }
+    const guard = (command, cwd) => spawnSync('bash', [path.join(repo, '.claude/scripts/workflow-guard.sh')],
+      { cwd, input: JSON.stringify({ tool_input: { command } }), encoding: 'utf8' });
+    // a plain commit in the guard's repo without a finished plan is blocked
+    assert.equal(guard('git commit -m "feat: x"', repo).status, 2);
+    // a commit in another repo passes, also with a quoted path that has a space
+    assert.equal(guard(`git -C "${other}" commit -m "feat: x"`, repo).status, 0);
+    // a commit into the guard's repo from another folder is still checked
+    const into = guard(`git -C ${repo} commit -m "feat: x"`, other);
+    assert.equal(into.status, 2, into.stderr);
+    assert.match(into.stderr, /BLOCKED: This commit does not finish a plan/);
+    // not a commit: always passes
+    assert.equal(guard(`git -C "${other}" status`, repo).status, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

@@ -1,0 +1,12 @@
+kind: fixed
+audience: internal
+scope: bootstrap-project
+summary: |
+  The commit gate of a project no longer blocks a commit in another repo. A session in
+  one project can now commit in a second repo with `git -C <folder> commit`.
+internal: |
+  workflow-guard.sh (step-gate module) read the repo from the session's folder and ignored
+  `git -C`, so it checked the wrong index. The classifier now also prints the `-C` folder
+  (a quoted path with spaces works, `~` is expanded). The guard checks only the repo that
+  holds the script; a commit in another repo passes, and a `git -C` commit into its own
+  repo from another folder is still checked.
