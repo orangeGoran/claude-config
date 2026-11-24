@@ -78,6 +78,7 @@ The owner is not a template expert. Ask only what the owner alone can decide. Fi
 | Default run mode, extra run rules | `pipeline.*` | default `pr`; extra rules from docker compose and migration scripts |
 | Commands every run needs first | `pipeline.preflight[]` | a generator whose output is gitignored and that the checks or the browser test read (for example a `theme:generate` script that `predev` / `prebuild` runs, but `vite` alone does not). Never a command that changes tracked files (`generate:types` on committed types): the preflight stops when the tree is not clean |
 | The project's own checks per hard rule, the tests each rule needs, the validator's extra "never" limits | `rules.hard[].details`, `rules.hard[].tests`, `rules.validatorLimits` | In adopt and upgrade mode: copy them from the repo's existing `plan-validator.md`, `skill-1-plan`, `skill-3-test`, `skill-4-verify` and `apply-validation` (one short line each). Then the render keeps them, and no file needs a hand merge. `validatorLimits`: only what the generic validator limits lack (for example "load a page", "change a storage object"); never restate the generic lines, which stay in every validator |
+| The plan headings | `rules.planSections.{goal,context,steps,tests,verify}` | In adopt and upgrade mode: the `##` headings of the plan template in the repo's `skill-1-plan` (for example `Requirement`, `Implementation steps`, `Tests to write`, `Final verification`). Leave it out when they are the defaults (`Goal`, `Context`, `Steps`, `Tests`, `How to verify`). Without it, an upgrade renames the headings, and `plan-lanes.mjs` and the skills no longer find the sections of the existing plans |
 | Changelog languages, version file, validator and summary | `changelog.locales`, `changelog.versionFile`, `changelog.validateCmd`, `changelog.summary` | the existing `changelog.d/README.md` or validator (`LOCALES`), else the product's launch languages in the big plan or SoW, else `["en"]`. `versionFile`: the manifest when it has a `version` (`package.json`, `Cargo.toml`, `pyproject.toml`), else empty. `validateCmd`: the project's own validator when it has one (a `changelog:validate` script or similar in the manifest, or the command the current gate runs); else empty, and the render writes `.claude/scripts/changelog-validate.mjs`. `summary`: `true` when the project validator accepts a `summary` field (it is in its allowed-field list); leave it out without `validateCmd` |
 | Registrations | `registry.*` | dashboard yes; browser-usability-test yes when there is a web UI or an API. Check `~/.claude/browser-usability-test/projects/` for an existing profile of this repo (its `project.json` lists the repo path or remote): when its name differs from `project.name`, set `registry.browserTestProject` to it, so runs and `register.mjs` use that profile and no second one is made. A web UI with `browserTest` also gets the browser-test step, the ship gate and the run allow rules for the skill's scripts (full path and `QA_*=` forms, `curl -s -o /dev/null -w *`): the render adds them, never write them by hand. `appUrl` is the dev server the owner runs; how to start the new code beside it belongs in the profile's `notes.md` |
 | Ticket evidence and board | `git.tickets.*` | the old skills or scripts that comment on issues or move them on a project board (`gh issue comment`, `gh project item-edit`); else leave it out. `board.status` is the column `/skill-5-ship` sets. With a staging branch, ask whether QA tests only what is on staging: then `board.status` is the "waits for staging" column (for example "Next review") and `board.reviewStatus` is the QA column (for example "In review"); this adds `/staging-review` |
@@ -114,6 +115,56 @@ What I found (reply OK, or name what is wrong):
 | `claudemd` | tip | `CLAUDE.md` exists |
 
 Part 2 adds what the dashboard does not check, but a run needs: valid `--describe` JSON, the plan-lanes JSON, the fixed skill names, no deny rule over the "to PR" overlay, no push rule in the shared allow list, the `.gitignore` lines, executable bits, `bash -n`, `node --check`, no leftover placeholder, "bare commands" in every skill, the `CLAUDE.md` shims, a valid `bootstrap.json`, and (tips) the layout paths and env files of `bootstrap.json`, CONFIG blocks that differ from it, the tools, the push to `origin/<base>` and the registry entry.
+
+## Upgrade report
+
+Step 2 shows the result of an upgrade or adopt render in this format, in one fenced `text` block, then asks once. Use plain words. Never write "stage", "take the stage" or a status name from `render.mjs`.
+
+1. **Count line**: the total and each group, for example `Upgrade: 17 files → 1 add, 15 replace, 1 merge, 0 keep, 0 remove, 40 unchanged`.
+2. **What changes for you**: 2–6 lines about behavior (what a run, a review or a ship now does), not files. Say "before: …" when a step changes.
+3. **Groups**, in this order, each with its count. Leave out an empty group, except REMOVE, which always shows its count:
+   - `ADD`: `new` files. One line each: `+ <path>   <what it is for>`.
+   - `REPLACE with the template`: **Replace** recommendations (no project content is lost). The group title says so.
+   - `MERGE`: **Merge** recommendations, and `config` files with their differing CONFIG lines (`-` yours, `+` from the answers).
+   - `KEEP yours`: **Keep** recommendations, with the evidence that the template adds nothing.
+   - `REMOVE`: `orphan` files: which module is off. Ask; never delete.
+   - `.gitignore` lines (`merge` status) go under ADD as `+ .gitignore: <n> lines`.
+4. **One line per change under each file**, with one sign per line:
+   - `+` a template feature that moves in (section, step, flag, check, failure path)
+   - `-` something the repo file has that will be lost (write `- nothing lost` when that is the case)
+   - `=` project content that stays
+   - `~` the file as a whole is replaced, `±` merged (use these on the file line)
+5. **Reply line**: `Reply "all", or name the files to skip or handle differently.`
+
+Example:
+
+```text
+Upgrade: 4 files → 1 add, 1 replace, 1 merge, 0 keep, 1 remove, 40 unchanged
+
+WHAT CHANGES FOR YOU
+  + Each review round runs Claude, then Codex (before: Codex once at the end)
+  + Verify has a security pass with a checklist
+
+ADD (1)
+  + .claude/skills/skill-4-verify/security-checklist.md   checklists for the security pass
+
+REPLACE with the template (1, no project content lost)
+  ~ .claude/skills/skill-5-ship/SKILL.md
+      + commits the work before it merges the base branch
+      - nothing lost
+
+MERGE (1)
+  ± .claude/skills/skill-4-verify/SKILL.md
+      + Codex inside each review round
+      + security pass (audit row 14)
+      = your hard-rule rows
+      - nothing lost
+
+REMOVE (1)
+  - .claude/scripts/validate-changelog.mjs   the changelog module is off. Delete it?
+
+Reply "all", or name the files to skip or handle differently.
+```
 
 ## Hand-off
 

@@ -29,7 +29,7 @@ These rules apply to every summary, report section, PR body, comment and status 
 
 ## Step 0 — Scope
 
-- A plan file: read its **Tests** section (unit tests, end-to-end tests, harness constraints), its **Browser test** section and its **How to verify** section. That is the scope.
+- A plan file: read its **Tests** section (unit tests, end-to-end tests, harness constraints, AI output), its **Browser test** section and its **How to verify** section. That is the scope.
 - A pattern: test only the matching files.
 - `all`: every test command the repo has.
 - Nothing: use `git diff --name-only main...HEAD` and `git status --porcelain`. If the scope is still unclear, ask (interactive) or test the changed packages (unattended).
@@ -39,7 +39,7 @@ These rules apply to every summary, report section, PR body, comment and status 
 - `/skill-2-implement` writes the unit tests with each step. Here, compare the plan's **Tests** section with the test files, and write only the missing ones. Write the end-to-end tests here.
 - Put tests where the package's existing tests are. Follow their pattern. If the package has no tests yet, follow the pattern the plan names. Read the nested `AGENTS.md` of the test folder first, if it has one: it lists the traps of the test harness.
 - **End-to-end tests are mandatory for each new or changed endpoint** when the project has an HTTP API. Each endpoint gets tests for: success, a validation error, 401 and 403 for each role that the plan's access rules name, 404 for a missing or foreign resource, and, when the project is multi-tenant, a request from another tenant that gets no data. Use the shared test helpers that the existing end-to-end tests use. When the repo has no end-to-end command yet ("Test (end to end)" is "not available yet"), write the cases as an open question, not as skipped tests.
-- **Hard rules need a negative test.** When the change touches a hard rule in `AGENTS.md` (restart after dashboard changes, no npm dependencies, public repo: no private data, global rules affect every project, never stop processes by name, tests for logic changes, docs: current state only), add a test that fails when the rule breaks. A test that only checks the happy path is not enough.
+- **Hard rules need a negative test.** When the change touches a hard rule in `AGENTS.md` (Restart after dashboard changes; No npm dependencies; Public repo: no private data; Global rules affect every project; Never stop processes by name; Tests for logic changes; Docs: current state only), add a test that fails when the rule breaks. A test that only checks the happy path is not enough.
 - **The tests this project needs for its rules** (when the change touches the rule):
 - **Tests for logic changes:**
   - node --test on the matching apps/<app>/test/*.test.mjs or test/*.test.mjs file passes.
@@ -67,6 +67,16 @@ Run this loop when the scope has end-to-end tests (a new or changed endpoint, or
 2. All pass → 2c.
 3. A failure → the same diagnose → fix → run cycle as 2a.
 
+### 2b.1 — AI output
+
+Run it when the plan's **Tests** section has an **AI output** subsection that is not "None".
+
+1. Start the local services with the real AI, as the run notes or the profile notes say. A unit test with a mocked AI answer does not count here.
+2. Run the AI step at least 3 times on the reference case that the plan names (through the screen or the API, the same way a user starts it).
+3. Measure each run as the plan says (for example the words of each field, the language, internal values such as `snake_case` names or enum values), and write the table: field, old value, limit, run 1, run 2, run 3.
+4. A run over a limit or with an internal value is a defect inside the plan: fix it (the prompt, the output clean-up or the screen, in the repo that owns it), then run the 3 runs again. At most 3 rounds; after that it is an open point, and the line is not met.
+5. The real AI cannot run (no key, the service is down) → stop and report `BLOCKED — AI output (<reason>)`. "Not checked" is not a result.
+
 ### 2c — Lint and format
 
 1. Run the "Lint" and "Format" commands on the changed files (a command that fixes files is fine in this step). When the Commands table has a "Lint (check only)" row, run it after the fix: its exit code is the result.
@@ -80,7 +90,7 @@ Run it when the plan has a **Browser test** section that is not `None`. Unit tes
 
 Call the skill's scripts with the home folder written out, for example `node /Users/ana/.claude/skills/browser-usability-test/scripts/<file>.mjs` (not `~` and not `$HOME`; `QA_*=` variables in front when needed), as bare commands: the run's allow rules match that form. Click flows (a script you write in the scratchpad) run through the skill's runner, `node /Users/ana/.claude/skills/browser-usability-test/scripts/run.mjs <absolute path>/flow.mjs`, never as `node flow.mjs`. A headless run can click: "cannot click" is not a reason for `BLOCKED`. A refused command is, with the exact command quoted. Run scripts write only into `QA_DIR`, never into this tree.
 
-1. Read `~/.claude/browser-usability-test/projects/claude-config/notes.md`. It says how to start the new code next to the app on http://127.0.0.1:4899 (the old code), which accounts to use, and which test data writes are allowed.
+1. Read `~/.claude/browser-usability-test/projects/plans-dashboard/notes.md` (the profile is `plans-dashboard`). It says how to start the new code next to the app on http://127.0.0.1:4899 (the old code), which accounts to use, and which test data writes are allowed.
 2. Start the new code from this tree as the notes say, in the background. Name the helper before you wait for it. A temporary config file the notes add is deleted in step 6 and is never committed.
 3. Run the `browser-usability-test` skill on the routes and siblings of the plan's **Browser test** section: the old code on http://127.0.0.1:4899 and the new code, with the same account, width and data. Answer its questions from here, so it never stops:
 
@@ -93,6 +103,11 @@ Call the skill's scripts with the home folder written out, for example `node /Us
    | Post pictures on a ticket | No. This project posts no ticket evidence; the report page is the evidence |
    | Where the report page goes | Set `QA_RUN_SLUG=<plan slug>` when you run `compare.mjs`: one page per run, so parallel runs on the same route do not overwrite each other |
    | A design choice (siblings disagree) | Do not pick. Write it as an open question |
+
+   Rules for every run:
+   - **Real AI.** An AI request runs as it does for a user. Mock an AI answer only to force an error or an empty state (for example a "too large" answer); never for the normal answer.
+   - **Two widths.** Each changed screen at 1440 px and at 390 px with touch (phone). A text, a box or a button cut off or wider than the screen at 390 px is a finding.
+   - **Same in every place.** When the plan's **Browser test** section has a "Same in every place" table, make a new item in every place and in every way the table names, and fill each cell with what the screen and the API show. A cell that differs from the others is a finding.
 
 4. For each finding:
    - **Inside the plan:** fix it now, without asking. Add a unit test when one can catch it, run the scoped tests again, and retest that screen.
@@ -130,6 +145,7 @@ Call the skill's scripts with the home folder written out, for example `node /Us
 - **Tests written:** one line each, with what it proves.
 - **Fixes made:** file and what changed.
 - **Browser test:** rounds, the report page link, findings fixed, findings listed (sibling, backend, outside the plan), and test data made (accounts, tenants, records). `None — <reason>` only when the plan's section says `None`; otherwise a browser test that did not run is `BLOCKED — browser test (<reason>)`, never "skipped".
+- **AI output:** the table of Step 2b.1 (field, old value, limit, run 1, run 2, run 3), or "None" when the plan has no AI output lines.
 - **Open questions:** "none", or each one in ASD-STE100 (the facts, one example step by step, Option A (recommended) and Option B, why A).
 
 Next: `/skill-4-verify`.

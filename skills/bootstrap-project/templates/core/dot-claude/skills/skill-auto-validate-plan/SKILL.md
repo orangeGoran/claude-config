@@ -18,7 +18,10 @@ This skill runs `/skill-validate-plan` (Claude), the Codex `validate-plan` skill
 This skill runs `/skill-validate-plan` + `/apply-validation` in a loop until the plan is clean. It edits **only** the plan file and `.plans/.validations/` files, never code, and it never commits. There is no Codex validator in this project, so a READY plan was checked by the Claude `plan-validator` agent only.
 @@END@@
 
-Run every shell command bare: one command per call, no pipes, `&&`, redirection or heredocs. Headless runs auto-deny compound commands.
+Run every shell command bare: one command per call, no pipes, `&&`, `||`, redirection or heredocs. Headless runs auto-deny compound commands.
+@@IF MOD_CODEX@@
+The Codex command in step b is the one exception: it keeps its `</dev/null`.
+@@END@@
 
 ## Step 0 — Resolve the plan and preflight
 
@@ -66,7 +69,7 @@ You wrote these edits, so read them the hardest. Each hunk must do what its find
 
 1. **Citations.** Open each `file:line` and section reference in or next to an edited hunk again.
 2. **Cross-references.** If a step was added, removed or renumbered, find each `step <n>` in the plan and confirm it still points at the right step.
-3. **Propagation.** For each fix, find each place the plan mentions that subject (Goal, Hard rules, Endpoint access, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, Steps, Migrations, Tests, How to verify, and any doc-update step) and confirm the fix reached all of them.
+3. **Propagation.** For each fix, find each place the plan mentions that subject (@@PLAN_GOAL@@, Hard rules, Endpoint access, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, @@PLAN_STEPS@@, Migrations, @@PLAN_TESTS@@, @@PLAN_VERIFY@@, and any doc-update step) and confirm the fix reached all of them.
 
 Tag each problem `REGRESSION` in this round's decision log. If a round's edits are a net loss, restore its snapshot instead of patching forward: `cp .plans/.validations/<plan-base>-pre-round-<n>.md <plan-file>`.
 
@@ -98,14 +101,14 @@ The agent fails or gives no path → run it again once. A second failure → sto
 @@IF MOD_CODEX@@
 Read the raw reports you have (`-codex-raw-<n>.md` and `-validation-<n>.md`). Process each finding from each report as `/apply-validation` says: number it, check it against the repo, `AGENTS.md` and `@@PARENT_PLAN@@`, classify it VALID / PARTIALLY VALID / INVALID with evidence, and apply the valid fixes **to the plan file**.
 
-Write one decision log with the Write tool at `.plans/.validations/<plan-base>-round-<n>.md`: the round header (each validator `ON` or `OFF (<reason>)`), the findings table with the validator that raised each finding, and the regressions from step a. Record the findings that only one validator found: that difference is the reason to run two.
+Write one decision log with the Write tool at `.plans/.validations/<plan-base>-round-<n>.md`: the round header (each validator `ON` or `OFF (<reason>)`), the findings table with the validator that raised each finding, the regressions from step a, and the "## Validation response" block of `/apply-validation`. Record the findings that only one validator found: that difference is the reason to run two.
 
 Never put one validator's findings into a file named after the other validator (for example Codex findings in `-validation-<n>.md`). The raw reports stay as they were written: without them, nobody can check that the decision log is faithful.
 @@END@@
 @@IFNOT MOD_CODEX@@
 Process each finding as `/apply-validation` says: number it, check it against the repo, `AGENTS.md` and `@@PARENT_PLAN@@`, classify it VALID / PARTIALLY VALID / INVALID with evidence, and apply the valid fixes **to the plan file**.
 
-Write one decision log with the Write tool at `.plans/.validations/<plan-base>-round-<n>.md`: the round header, the findings table, and the regressions from step a.
+Write one decision log with the Write tool at `.plans/.validations/<plan-base>-round-<n>.md`: the round header, the findings table, the regressions from step a, and the "## Validation response" block of `/apply-validation`.
 @@END@@
 
 **Owner decisions:** never apply a finding that needs a scope or design decision, or that takes an open decision of `@@PARENT_PLAN@@`. Collect them, then ask the owner in chat with the "Question queue" and "Decision question format" from `/skill-1-plan`: show the numbered list of questions first, then one question per message with the heading `## Question N of M: <title>`. Never use AskUserQuestion for these questions. Accept a plain-text reply. List a decision under Open items if the owner defers it.
@@ -118,7 +121,7 @@ Write one decision log with the Write tool at `.plans/.validations/<plan-base>-r
 @@IFNOT MOD_CODEX@@
 - The plan was not edited this round, no `REGRESSION` is open, and the verdict is APPROVE or every finding was rejected with evidence → **READY**, stop.
 @@END@@
-- The round edited the plan and `n` < 4 → run round `n+1`. A later round validates every fix.
+- The round edited the plan and `n` < 4 → run round `n+1`. A later round validates every fix; never finish on edits that no round validated while a round remains.
 - Round 4 is still not clean → stop with status `OPEN ITEMS`. Never run a fifth round.
 
 ## Final report
@@ -143,7 +146,7 @@ Write one decision log with the Write tool at `.plans/.validations/<plan-base>-r
 
 ## Rules
 
-- Never weaken or delete a rule in `AGENTS.md` or `@@PARENT_PLAN@@` because a validator disliked it. Reject the finding with the reference.
+- Never weaken or delete a rule in @@RULES_DOCS@@ because a validator disliked it. Reject the finding with the reference.
 - Never edit anything except the plan file and `.plans/.validations/` files.
 - Never invent fields or shapes to satisfy a finding. That is an owner decision.
 - Never run `git add`, `git commit` or `git push` in this skill. Rollback uses the snapshots, not git.

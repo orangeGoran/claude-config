@@ -36,7 +36,7 @@ Extract every distinct finding with its severity as given (Blocking / Should fix
   - **PARTIALLY VALID:** part of it is true, but the proposed fix or scope is wrong. Say what the correct fix is.
   - **INVALID:** the reviewer misread the code, missed a rule, or the case is already handled. Cite the `file:line` or the rule that proves it.
 - Give the top priority to **destructive-migration** findings: a dropped table or column, a rename written as drop and add, an enum rebuild that loses values, a cleanup `DELETE`, a `NOT NULL` column without a default or a backfill. Data loss in production cannot be undone.
-- Give the same priority to findings about the hard rules in `AGENTS.md` (restart after dashboard changes, no npm dependencies, public repo: no private data, global rules affect every project, never stop processes by name, tests for logic changes, docs: current state only) and about secrets. A reviewer's "fine" is INVALID when the code misses one of these checks:
+- Give the same priority to findings about the hard rules in `AGENTS.md` (Restart after dashboard changes; No npm dependencies; Public repo: no private data; Global rules affect every project; Never stop processes by name; Tests for logic changes; Docs: current state only) and about secrets. A reviewer's "fine" is INVALID when the code misses one of these checks:
 
 ### 4. Apply the valid fixes
 
@@ -96,6 +96,6 @@ State the file path on its own line in your reply.
 
 ## Rules
 
-- Never weaken or delete a rule in `AGENTS.md` or `docs/roadmap.md` because a reviewer disliked it. Reject the finding with the reference.
+- Never weaken or delete a rule in `AGENTS.md`, `docs/roadmap.md`, `docs/plans-dashboard.md` because a reviewer disliked it. Reject the finding with the reference.
 - Never run `git add` or `git commit`. The owner commits.
 - If a finding needs a scope or design decision, or takes an open decision of the parent plan, do not expand the scope silently. List it under "Needs owner decision" in both the table and the copyable reply.

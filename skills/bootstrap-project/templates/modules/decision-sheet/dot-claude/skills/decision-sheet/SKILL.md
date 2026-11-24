@@ -22,7 +22,7 @@ The reader opens this on a PR and has about two minutes. The reader does not rea
 - `--out` (default `.plans/.decision-sheets/<branch-with-slashes-as-dashes>.md`). Run `mkdir -p .plans/.decision-sheets` when you use the default.
 @@IF MOD_CODEX@@
 - `--no-codex`: skip Step 2. `--fix`: fix the VALID Codex findings (Step 2, item 4).
-- `--codex-report <path>`: the last Codex report that `/skill-4-verify` (Step 1, one per round: `-codex-round-<n>.md`) wrote for this branch. Do not run Codex again (Step 2, item 0).
+- `--codex-report <path>`: the Codex report that `/skill-4-verify` (Step 1) wrote for this branch: `.plans/.code-reviews/<branch-with-slashes-as-dashes>-codex.md`, which each round overwrites, so it holds the last round. Do not run Codex again (Step 2, item 0).
 @@END@@
 
 Run every shell command bare: one command per call, no pipes, `&&`, redirection or heredocs. Headless runs auto-deny compound commands. Run the commands in this session, never in a subagent.

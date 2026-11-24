@@ -1,0 +1,17 @@
+kind: changed
+audience: internal
+scope: claude
+summary: |
+  This repo's own workflow now uses the current templates. Verify runs Claude and then Codex
+  in each review round and adds a secrets scan and a security pass. Ship commits the work
+  before it merges main. The bootstrap check no longer fails on old changelog entries that
+  name template placeholders.
+internal: |
+  Re-rendered with /bootstrap-project --upgrade: skill-1-plan, skill-3-test, skill-4-verify
+  (+ security-checklist.md), skill-5-ship, skill-auto-pipeline, skill-auto-validate-plan,
+  apply-validation, decision-sheet, changelog-entry, plans-parallel, test-reviewer,
+  auto-pipeline.sh (INSTALL_PREWARM_CMD empty), plan-lanes.mjs, AGENTS.md, changelog.d docs.
+  skill-3-test now reads the plans-dashboard browser-test profile (it named claude-config).
+  README keeps its own text and gains the dev commands table. verify.mjs scans only the
+  changelog.d/*.md docs for placeholders, not the *.yaml entries (test in
+  scripts/test/bootstrap-project.test.mjs).

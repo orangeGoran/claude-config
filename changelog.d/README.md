@@ -31,7 +31,7 @@ customer:
 | `pr` | no | The PR number, a positive number. |
 | `summary` | yes | One short paragraph in plain words for the team: what changed and why it matters. Read this one first; it replaces reading the `internal` note. |
 | `internal` | yes | The developer note: endpoints, fields, error codes, migrations, anything surprising. |
-| `customer` | with `customer` or `both` | The text customers see, in each language: `en`. Left out for `internal`. |
+| `customer` | with `customer` or `both` | The text customers see, in each language: `en`. Must be absent when `audience` is `internal` (no empty key). |
 
 Check it locally: `node .claude/scripts/changelog-validate.mjs --base origin/main` must print `PASS`.
 
