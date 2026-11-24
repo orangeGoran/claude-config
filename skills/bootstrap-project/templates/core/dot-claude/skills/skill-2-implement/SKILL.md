@@ -25,12 +25,12 @@ You run the **Implement** step: `/skill-1-plan` → `/skill-2-implement` → `/s
 
 ## Step 3: Implement, one step at a time
 
-Do the plan's **Steps** in order. Change only what the plan asks for. **Run shell commands bare:** one command per call, no pipes, `&&`, redirection or heredocs. Headless runs auto-deny compound commands.
+Do the plan's **@@PLAN_STEPS@@** in order. Change only what the plan asks for. **Run shell commands bare:** one command per call, no pipes, `&&`, redirection or heredocs. Headless runs auto-deny compound commands.
 
 For each step, do this loop, then go to the next step:
 
 1. **Code.** Write the production code of the step.
-2. **Unit test.** Write the unit tests for that code, for the cases in the plan's **Tests** section. Follow the specs next to it.
+2. **Unit test.** Write the unit tests for that code, for the cases in the plan's **@@PLAN_TESTS@@** section. Follow the specs next to it.
 3. **Scoped run.** Run only the tests of this step (AGENTS.md, **Commands**, "Test (one file)"; when that row is "not available yet", say so once and run "Test (full)" at the end of the plan instead). Never run the full suite here. A failure → fix it before the next step.
 
 **What gets unit tests:** code with logic — services and use cases, data access with queries, request handlers and controllers, models with validation or mapping, and UI components and hooks with logic.
@@ -62,7 +62,7 @@ Some files are lists that many plans append to: a registry of models or modules,
 1. **Lint.** After all code changes, run the "Lint" and "Format" commands (AGENTS.md, **Commands**) on the changed files, @@LINT_CHECK_STEP@@ **Judge by the exit code and the error count, never by the last lines of the output**; search a long output with the Grep tool for the error marker of the linter. Fix lint errors in the code, never in the lint config. After a lint fix, run the scoped tests of the touched files again.
 2. Run the other checks related to the change (type check, build), from `AGENTS.md`, **Commands**, and @@MANIFESTS@@.
 3. If a check has no command yet ("not available yet"), say so. Do not invent one.
-4. Run every command in the plan's **How to verify** section that this step can run, and record the result.
+4. Run every command in the plan's **@@PLAN_VERIFY@@** section that this step can run, and record the result.
 @@IF MOD_STEP_GATE@@
 5. **Step gate.** When the plan's steps are done and the related checks pass, run `bash .claude/scripts/workflow-complete-step.sh <plan-basename> implement` (`<plan-basename>` without `.md`). The commit guard (`workflow-guard.sh`) reads this mark.
 @@END@@

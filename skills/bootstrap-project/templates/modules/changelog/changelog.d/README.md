@@ -35,10 +35,10 @@ customer:
 | `summary` | yes | One short paragraph in plain words for the team: what changed and why it matters. Read this one first; it replaces reading the `internal` note. |
 @@END@@
 | `internal` | yes | The developer note: endpoints, fields, error codes, migrations, anything surprising. |
-| `customer` | with `customer` or `both` | The text customers see, in each language: @@CHANGELOG_LOCALES@@. Left out for `internal`. |
+| `customer` | with `customer` or `both` | The text customers see, in each language: @@CHANGELOG_LOCALES@@. Must be absent when `audience` is `internal` (no empty key). |
 
 @@IF HAS_VERSION_BUMP@@
-Then raise `version` in `@@CHANGELOG_VERSION_FILE@@` by exactly one step: **patch** for a fix, **minor** for a feature, **major** for a breaking change (a removed or renamed endpoint or field, a new required request field, a changed status code, a stricter access rule). A new optional field is minor.
+Then raise `version` in `@@CHANGELOG_VERSION_FILE@@` by exactly one step: **patch** for a fix, **minor** for a feature, **major** for a breaking change (a removed or renamed endpoint or field, a new required request field, a changed status code, a stricter access rule). A new optional field is minor. While the version is `0.x`, a breaking change raises **minor** (`0.7.3` → `0.8.0`), never `1.0.0`, and its `internal` note starts with `BREAKING:`.
 
 @@END@@
 Check it locally: `@@CHANGELOG_VALIDATE@@` must print `PASS`.

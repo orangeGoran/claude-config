@@ -51,7 +51,7 @@ After you edit, and before you report, run these three checks. They catch the de
 
 - **Citations you moved.** Open again each `file:line` and section in or next to a hunk you edited.
 - **Cross-references after a renumber.** If steps were added, removed or reordered, search for `step <n>` and confirm each one still points at the step it means.
-- **Each fix reached everywhere.** For each fix, find every other place the target mentions that subject (Hard rules, Endpoint access, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, Steps, Migrations, Tests, How to verify, and any doc-update step) and confirm none still states the old version.
+- **Each fix reached everywhere.** For each fix, find every other place the target mentions that subject (Hard rules, Endpoint access, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, @@PLAN_STEPS@@, Migrations, @@PLAN_TESTS@@, @@PLAN_VERIFY@@, and any doc-update step) and confirm none still states the old version.
 
 ### 5. Report and copyable reply
 

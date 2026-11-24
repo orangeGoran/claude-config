@@ -69,7 +69,7 @@ You wrote these edits, so read them the hardest. Each hunk must do what its find
 
 1. **Citations.** Open each `file:line` and section reference in or next to an edited hunk again.
 2. **Cross-references.** If a step was added, removed or renumbered, find each `step <n>` in the plan and confirm it still points at the right step.
-3. **Propagation.** For each fix, find each place the plan mentions that subject (Goal, Hard rules, Endpoint access, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, Steps, Migrations, Tests, How to verify, and any doc-update step) and confirm the fix reached all of them.
+3. **Propagation.** For each fix, find each place the plan mentions that subject (@@PLAN_GOAL@@, Hard rules, Endpoint access, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, @@PLAN_STEPS@@, Migrations, @@PLAN_TESTS@@, @@PLAN_VERIFY@@, and any doc-update step) and confirm the fix reached all of them.
 
 Tag each problem `REGRESSION` in this round's decision log. If a round's edits are a net loss, restore its snapshot instead of patching forward: `cp .plans/.validations/<plan-base>-pre-round-<n>.md <plan-file>`.
 

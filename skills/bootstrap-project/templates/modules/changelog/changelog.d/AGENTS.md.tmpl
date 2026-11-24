@@ -9,8 +9,10 @@ Rules for `changelog.d/`. Read this file before you change files here. The entry
 @@IFNOT CHANGELOG_SUMMARY@@
 - Every entry has `internal` (the developer note). An entry that customers see also has `customer` in @@CHANGELOG_LOCALES@@.
 @@END@@
+- An entry with `audience: internal` has no `customer` key.
 @@IF HAS_VERSION_BUMP@@
 - Each PR with an entry raises `version` in `@@CHANGELOG_VERSION_FILE@@` by one step.
+- While the version is `0.x`, a breaking change raises minor, never `1.0.0`, and its `internal` note starts with `BREAKING:`.
 @@END@@
 - `@@CHANGELOG_VALIDATE@@` must print `PASS`.
 - Never edit or delete an entry of another PR. Add a new file.
