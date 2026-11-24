@@ -116,6 +116,56 @@ What I found (reply OK, or name what is wrong):
 
 Part 2 adds what the dashboard does not check, but a run needs: valid `--describe` JSON, the plan-lanes JSON, the fixed skill names, no deny rule over the "to PR" overlay, no push rule in the shared allow list, the `.gitignore` lines, executable bits, `bash -n`, `node --check`, no leftover placeholder, "bare commands" in every skill, the `CLAUDE.md` shims, a valid `bootstrap.json`, and (tips) the layout paths and env files of `bootstrap.json`, CONFIG blocks that differ from it, the tools, the push to `origin/<base>` and the registry entry.
 
+## Upgrade report
+
+Step 2 shows the result of an upgrade or adopt render in this format, in one fenced `text` block, then asks once. Use plain words. Never write "stage", "take the stage" or a status name from `render.mjs`.
+
+1. **Count line**: the total and each group, for example `Upgrade: 17 files → 1 add, 15 replace, 1 merge, 0 keep, 0 remove, 40 unchanged`.
+2. **What changes for you**: 2–6 lines about behavior (what a run, a review or a ship now does), not files. Say "before: …" when a step changes.
+3. **Groups**, in this order, each with its count. Leave out an empty group, except REMOVE, which always shows its count:
+   - `ADD`: `new` files. One line each: `+ <path>   <what it is for>`.
+   - `REPLACE with the template`: **Replace** recommendations (no project content is lost). The group title says so.
+   - `MERGE`: **Merge** recommendations, and `config` files with their differing CONFIG lines (`-` yours, `+` from the answers).
+   - `KEEP yours`: **Keep** recommendations, with the evidence that the template adds nothing.
+   - `REMOVE`: `orphan` files: which module is off. Ask; never delete.
+   - `.gitignore` lines (`merge` status) go under ADD as `+ .gitignore: <n> lines`.
+4. **One line per change under each file**, with one sign per line:
+   - `+` a template feature that moves in (section, step, flag, check, failure path)
+   - `-` something the repo file has that will be lost (write `- nothing lost` when that is the case)
+   - `=` project content that stays
+   - `~` the file as a whole is replaced, `±` merged (use these on the file line)
+5. **Reply line**: `Reply "all", or name the files to skip or handle differently.`
+
+Example:
+
+```text
+Upgrade: 4 files → 1 add, 1 replace, 1 merge, 0 keep, 1 remove, 40 unchanged
+
+WHAT CHANGES FOR YOU
+  + Each review round runs Claude, then Codex (before: Codex once at the end)
+  + Verify has a security pass with a checklist
+
+ADD (1)
+  + .claude/skills/skill-4-verify/security-checklist.md   checklists for the security pass
+
+REPLACE with the template (1, no project content lost)
+  ~ .claude/skills/skill-5-ship/SKILL.md
+      + commits the work before it merges the base branch
+      - nothing lost
+
+MERGE (1)
+  ± .claude/skills/skill-4-verify/SKILL.md
+      + Codex inside each review round
+      + security pass (audit row 14)
+      = your hard-rule rows
+      - nothing lost
+
+REMOVE (1)
+  - .claude/scripts/validate-changelog.mjs   the changelog module is off. Delete it?
+
+Reply "all", or name the files to skip or handle differently.
+```
+
 ## Hand-off
 
 Write the hand-off in this order. Use real paths and values.
