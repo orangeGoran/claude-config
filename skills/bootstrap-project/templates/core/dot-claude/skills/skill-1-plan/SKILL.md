@@ -20,6 +20,9 @@ Run shell commands bare: one command per call, no pipes, `&&`, redirection or he
 
 - Explore the real repo: files, `git log`, existing patterns, the scripts in @@MANIFESTS@@. Never describe the repo from memory.
 - **Scope.** One plan is one change that one PR can carry. If `$ARGUMENTS` is bigger, split it into ordered plans without asking: list them, put first the part the owner can try soonest and that the others build on, and write only that plan now. Before that plan, write the split into a new parent plan `.plans/<YYYYMMDD-HHMMSS>-<slug>-parent.md` (local time now): it starts with `> **Master plan.** This file holds no implementation steps.`, then one entry per plan, in order, with its scope, the owner's decisions for it and its open decisions. Add one line that links it to `@@PARENT_PLAN@@`. So the later plans start from the parent plan and not from the chat. The first plan does not fill the parent plan in a later step. Ask only when the order itself is a real tradeoff.
+@@IF HAS_TICKETS@@
+- **Read each ticket in full.** `gh issue view <n> --comments` for each ticket the work covers, and for each ticket its body or comments name as a follow-up or a part (for example a backend ticket). The body is not enough: owner decisions, QA reviews ("NOK", "Expected", "Actual") and added "Done when" lines are often only in comments. Every such decision and every failed review point becomes a line of the plan's **Done when** section, with its source (body, or the comment date and author). A later comment wins over an earlier one; write the one that wins.
+@@END@@
 - If the requirement is unclear, ask. Do not guess. Use the **Question queue** below.
 
 ## Question queue — one question at a time
@@ -137,6 +140,16 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 ## Goal
 
 <What this plan delivers and why. Name the part of the parent plan it serves.>
+@@IF HAS_TICKETS@@
+
+## Done when
+
+| # | Ticket | Line | Source | Other repo part |
+| --- | --- | --- | --- | --- |
+| 1 | #<n> | <the "Done when" line, a decision or a failed review point, in the ticket's words> | <body, or comment <date> <author>> | <the PR or ticket in another repo that this line needs, or "none"> |
+
+> One row per "Done when" line of the body and per decision or failed review point in the comments (Step 1). Each row is a step or a test of this plan, or names the ticket or PR that carries it. A row with an "Other repo part" is met only when that part is merged.
+@@END@@
 
 ## Context
 
@@ -224,6 +237,10 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 
 <What the end-to-end tests cannot assert for this feature (a service the harness replaces with a double, a header that only the real server sets, a second process), and where each such assertion goes instead. Take it from the nested `AGENTS.md` of the test folder. "None" when the harness covers everything.>
 
+### AI output
+
+<When a line is about text an AI model writes (length, language, words, no raw values): the real AI runs, never a mocked answer. At least 3 runs on the reference case that the line or its review names, and what is measured in each run: words per field against the limit, the language of the case, no internal values (`snake_case` names, enum values, English words in a case of another language). The results go into the evidence as a table (field, old value, limit, run 1, run 2, run 3). A run over a limit means the line is not met. "None" when no line is about AI text.>
+
 > For every test ask: would it still pass if the feature were not built? If yes, rewrite it.
 @@IF HAS_BROWSER_TEST@@
 
@@ -231,6 +248,8 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 
 - Routes: <the screens to open, for example `/orders/:id`>
 - Siblings: <other screens that use the same component or flow, to check for the same defect>
+- Same in every place: <when a line says the same behavior holds in several places (every module, method, screen or tool): a table with one row per place and one column per way the item is made there (a user action, made by the app itself, an import, an AI step). Each cell says what the test checks, for example the first status, owner and dates of a new item. The browser test fills every cell. "None" when no line says so.>
+- Widths: 1440 px and 390 px with touch, for every changed screen.
 - Account and data: <role, and the test data to make, as the browser-test profile notes allow>
 - What to compare: <the old app on @@APP_URL@@ against the new code, step by step, with what must differ>
 
@@ -267,15 +286,18 @@ Before you show the plan, check it. Fix the plan if any item fails.
 @@END@@
 - [ ] The Tests section has a Harness constraints subsection: what the end-to-end tests cannot assert, and where it goes instead
 - [ ] No test would still pass with the feature not built
+- [ ] The AI output subsection is filled (real AI, 3 runs, what is measured), or says "None"
 - [ ] Every symbol, path and section was opened in this session, and every signature the plan calls was checked against the source (it would compile)
 - [ ] No `:line` citation is left that you did not open again after the last edit to the plan
 - [ ] Every number has the command that measured it
 - [ ] No step that edits `.claude/` or `.vscode/` lacks the "(owner, by hand)" mark
 @@IF HAS_BROWSER_TEST@@
 - [ ] The Browser test section names real routes and siblings, or says `None` with a reason
+- [ ] A line that says "the same in every place" has a table in the Browser test section with a row per place and a column per way the item is made
 @@END@@
 @@IF HAS_TICKETS@@
 - [ ] The Tickets line lists each ticket the plan works on, and each "Done when" line of those tickets is a step or a test
+- [ ] Each ticket was read with all its comments, and the Done when section has a row for each decision and failed review point in them
 @@END@@
 - [ ] Every "How to verify" command exists when it runs, and can fail
 - [ ] No "TBD" or "decide later" is left; each one was raised in the queue

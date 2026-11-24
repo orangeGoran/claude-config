@@ -35,6 +35,7 @@ F. Accessibility
 
 G. Responsive
    - 390, 1100, 1440, 2555 px → no sideways scroll, readable text, nothing clipped
+   - 390 px with touch on each changed flow → taps work, boxes and popovers fit the screen
 
 H. Console / network
    - No console errors, no failed or duplicate requests, no unexpected 4xx/5xx
@@ -51,4 +52,5 @@ AI features (add when the page talks to an AI)
    - Wrong refusals → answers what it should, refuses what it should
    - Latency → time to first token / full answer
    - Follow-up question → keeps context of the previous turn
+   - Generated text (drafts, summaries, explanations) → real AI, 3 runs: words per field within the limit, the case language only, no internal values (snake_case names, enum values, English words in a case of another language)
 ```
