@@ -4,7 +4,7 @@
 //
 //   node verify.mjs <repo> [--registry <file>] [--json]
 //
-// Part 1 copies projectHealth() in claude-config scripts/plans-dashboard.mjs (pipeline
+// Part 1 copies projectHealth() in claude-config apps/dashboard/server.mjs (pipeline
 // mode). Keep the two in step: references/contracts.md, "Dashboard readiness checks".
 // Part 2 checks what the dashboard does not: --describe JSON, plan-lanes JSON, the fixed
 // skill names, deny vs the "to PR" overlay, .gitignore, executable bits, bash -n,
@@ -81,7 +81,7 @@ check('claudemd', 'dash-tip', 'CLAUDE.md', existsSync(R('CLAUDE.md')));
 // ---------------------------------------------------------------------------
 // Part 2: what a first run needs
 // ---------------------------------------------------------------------------
-// --describe must be valid JSON in the shape the dashboard accepts (plans-dashboard.mjs, pipelineModes)
+// --describe must be valid JSON in the shape the dashboard accepts (apps/dashboard/server.mjs, pipelineModes)
 {
   const r = existsSync(pipeline) ? run('bash', [pipeline, '--describe'], { timeout: 5000 }) : { ok: false, err: 'no script' };
   let ok = false, detail = r.err || '';
@@ -96,7 +96,7 @@ check('claudemd', 'dash-tip', 'CLAUDE.md', existsSync(R('CLAUDE.md')));
   }
   check('describe', 'required', 'auto-pipeline.sh --describe gives valid JSON', ok, detail);
 }
-// plan-lanes: "⚡ All" refuses until every project has it; the JSON contract is in plans-dashboard.mjs (lanesFixPrompt)
+// plan-lanes: "⚡ All" refuses until every project has it; the JSON contract is in apps/dashboard/server.mjs (lanesFixPrompt)
 {
   const f = R('.claude', 'scripts', 'plan-lanes.mjs');
   let ok = false, detail = 'missing';

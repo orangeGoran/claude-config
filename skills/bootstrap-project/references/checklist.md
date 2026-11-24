@@ -101,7 +101,7 @@ What I found (reply OK, or name what is wrong):
 
 ## Dashboard readiness checks
 
-`verify.mjs` part 1 copies `projectHealth()` of `scripts/plans-dashboard.mjs` (pipeline mode). The dashboard level is red when a required check fails, amber when only tips fail, and green when all pass. A bootstrapped repo must be green.
+`verify.mjs` part 1 copies `projectHealth()` of `apps/dashboard/server.mjs` (pipeline mode). The dashboard level is red when a required check fails, amber when only tips fail, and green when all pass. A bootstrapped repo must be green.
 
 | id | Required (dashboard) | Pass when |
 | --- | --- | --- |

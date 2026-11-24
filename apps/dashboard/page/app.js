@@ -4101,7 +4101,7 @@ let boardF = { project: '', tag: '', archived: false };
 try { boardF = { ...boardF, ...JSON.parse(localStorage.getItem('dash-board-f') || '{}') }; } catch {}
 const saveBoardF = () => { try { localStorage.setItem('dash-board-f', JSON.stringify(boardF)); } catch {} };
 const BOARD_COLS = [
-  ['proposed', 'Proposed', 'Found by the scout (scripts/scout.mjs). Confirm starts /skill-1-plan in a new chat; Dismiss archives it.'],
+  ['proposed', 'Proposed', 'Found by the scout (apps/scout/scout.mjs). Confirm starts /skill-1-plan in a new chat; Dismiss archives it.'],
   ['backlog', 'Backlog', 'Not ready yet: no validation round, or its status says in refinement, waiting or parked.'],
   ['ready', 'Ready', 'Validated and not started. Tick queue, then ▶ Launch queued.'],
   ['running', 'Running', 'Starting, running now, or launched and still in progress.'],

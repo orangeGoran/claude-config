@@ -44,8 +44,8 @@ Production text is written into the repo and sent to the Anthropic API for the s
 1. The project must be on the dashboard (`~/.claude/pipeline-projects.json`).
 2. Copy [`scripts/scout.example.json`](../scripts/scout.example.json) to `~/.claude/scout.json`. Key each project by its dashboard name. Remove the `aws` block and the two log checks if the project has no CloudWatch logs.
 3. For the log checks, give the scout its own read-only AWS access (below).
-4. Try it: `node scripts/scout.mjs --dry-run`. It prints the findings and writes nothing.
-5. Run it every day at 07:00: `node scripts/scout.mjs --install` (macOS). When the Mac sleeps at 07:00, it runs when the Mac wakes. The log is `~/.claude/pipeline-dashboard/logs/scout.log`.
+4. Try it: `node apps/scout/scout.mjs --dry-run`. It prints the findings and writes nothing.
+5. Run it every day at 07:00: `node apps/scout/scout.mjs --install` (macOS). When the Mac sleeps at 07:00, it runs when the Mac wakes. The log is `~/.claude/pipeline-dashboard/logs/scout.log`.
 
 The **🔭 Scout** button in the dashboard header shows the run: while it runs, each step with what it checks, why, what it found and how long it took; after it, the proposals it wrote and the ones that resolved on their own. A click on a step opens the Board filtered to that check's proposals. The last 60 runs per project are kept (`state/<project>/scout-runs.json`), a page at a time. Below them: each setup step on this Mac (✓ done, or the command to copy), **▶ Run now**, and the raw log, which the scout trims to its last 256 KB once it passes 1 MB. The button shows ○ while a setup step is missing and ⚠ when a check failed in the last run.
 

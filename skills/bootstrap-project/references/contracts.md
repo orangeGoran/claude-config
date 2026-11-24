@@ -1,17 +1,17 @@
 # Contracts
 
-TLDR: the plans dashboard (`scripts/plans-dashboard.mjs` in claude-config) and the files this skill writes depend on each other through fixed names, file paths and text formats. This file lists each one. A template change that breaks a row here breaks the dashboard for every new repo. Line numbers are from 2026-11-11 and move with each dashboard change: search for the quoted text.
+TLDR: the plans dashboard (`apps/dashboard/server.mjs` in claude-config) and the files this skill writes depend on each other through fixed names, file paths and text formats. This file lists each one. A template change that breaks a row here breaks the dashboard for every new repo. Line numbers are from 2026-11-11 and move with each dashboard change: search for the quoted text.
 
 ## Fixed names
 
 | Name | Where the dashboard or a script needs it | What breaks when it differs |
 | --- | --- | --- |
-| skill `skill-auto-pipeline`, prompt `/skill-auto-pipeline <slug>.md …` | `plans-dashboard.mjs` `pipelineLive` (≈ line 389): `pgrep -f "skill-auto-pipeline <slug>.md"`; `vscode-session-copy.mjs`: `'/skill-auto-pipeline '` | A live run shows as not running; headless sessions do not show in VS Code |
-| skill `skill-auto-validate-plan` | `plans-dashboard.mjs` `lanesHtml` (≈ line 6199) copies `/skill-auto-validate-plan <file>` | The copied command fails |
+| skill `skill-auto-pipeline`, prompt `/skill-auto-pipeline <slug>.md …` | `apps/dashboard/server.mjs` `pipelineLive` (≈ line 389): `pgrep -f "skill-auto-pipeline <slug>.md"`; `vscode-session-copy.mjs`: `'/skill-auto-pipeline '` | A live run shows as not running; headless sessions do not show in VS Code |
+| skill `skill-auto-validate-plan` | `apps/dashboard/server.mjs` `lanesHtml` (≈ line 6199) copies `/skill-auto-validate-plan <file>` | The copied command fails |
 | `.claude/skills/skill-auto-pipeline/SKILL.md` on `origin/<base>` | `auto-pipeline.sh` launch preflight | The launch refuses: "push the pipeline system first" |
-| `implement` (launcher) | `plans-dashboard.mjs` `WRAPPER_LAUNCHER` (≈ line 850) and its fix prompts (≈ 925, 946) | Only for generic mode. The `run-skill` module maps `implement` to `skill-2-implement` |
-| branch `auto/<slug>` | `plans-dashboard.mjs` (≈ 312, 488, 1369): PR detection | The PR button does not appear. A plan can override it with `- **Branch**: <name>` |
-| worktree `<parent>/worktrees/<repo>/<slug>` | `plans-dashboard.mjs` `worktreeOf` | The dashboard does not find the run |
+| `implement` (launcher) | `apps/dashboard/server.mjs` `WRAPPER_LAUNCHER` (≈ line 850) and its fix prompts (≈ 925, 946) | Only for generic mode. The `run-skill` module maps `implement` to `skill-2-implement` |
+| branch `auto/<slug>` | `apps/dashboard/server.mjs` (≈ 312, 488, 1369): PR detection | The PR button does not appear. A plan can override it with `- **Branch**: <name>` |
+| worktree `<parent>/worktrees/<repo>/<slug>` | `apps/dashboard/server.mjs` `worktreeOf` | The dashboard does not find the run |
 | `.plans/`, `.plans/done/`, `.plans/auto-runs/`, `.plans/.validations/<base>-validation-<n>.md` | registry `plansDir` default; `validationRounds` (≈ 314) | `auto-pipeline.sh` and `plan-lanes.mjs` use `.plans` as fixed text: keep `plansDir` at `<root>/.plans` |
 | `/merge-parent <base>` | dashboard conflict button | Global skill; nothing to write |
 

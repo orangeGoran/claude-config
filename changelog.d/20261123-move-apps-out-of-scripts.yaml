@@ -1,0 +1,13 @@
+kind: changed
+audience: both
+scope: dashboard
+summary: |
+  The dashboard and the scout moved from scripts/ to apps/dashboard/ and apps/scout/, and scripts/ now holds only setup and helper scripts. The login service still points at the old path, and until it is updated the running dashboard cannot open a new chat or run the scout (both files moved). So right after the pull do this on each Mac, in this order: 1) run pgrep -fl chat-relay.mjs; 2) only when the live chats run under the relay (or there are no live chats), run scripts/setup-macos.sh --domain <the domain of this Mac> (it keeps the port of the installed service), then npm run restart; 3) do not run npm run restart before the setup: it refuses and names the missing script; 4) only where ~/.claude/scout.json exists, run node apps/scout/scout.mjs --install (the 🔭 Scout drawer shows this step until the daily job points at the new path).
+internal: |
+  Moves: scripts/plans-dashboard.mjs -> apps/dashboard/server.mjs, scripts/plans-dashboard/ -> apps/dashboard/page/, scripts/chat-relay.mjs -> apps/dashboard/chat-relay.mjs, scripts/restart-dashboard.mjs -> apps/dashboard/restart.mjs, scripts/scout.mjs -> apps/scout/scout.mjs. Tests: apps/dashboard/test/, apps/scout/test/ and the root test/ (skills and the new old-paths check); npm test runs them all.
+  The server finds the repo two folders up (DASH_REPO) and imports scripts/artifact-copies.mjs and scripts/page-versions.mjs, which stay in scripts/. The scout reads its launchd template through the new plistTemplate() export. scripts/setup-macos.sh writes apps/dashboard/server.mjs into the login service plist. apps/dashboard/restart.mjs exports plistScript() and refuses to kickstart a service whose plist starts a missing script; the Scout drawer counts the daily job as installed only while the script of its plist exists.
+  scripts/docs-media.mjs has a new copyDashboard(dest) export (apps/, scripts/, skills/, docs/ without test folders or node_modules) and runs only as a command (IS_MAIN), so the throwaway dashboard of the screenshots starts again.
+  scripts/setup-macos.sh keeps the installed DASH_PORT when --port is not given, and fills the plist with plutil instead of sed, so a repo path with & or | gives a valid plist; scout --install escapes its values as XML text (renderPlist); npm run restart waits on the DASH_PORT of the plist (plistPort) when DASH_PORT is not set.
+  The paths other repos use do not change: scripts/artifact-copies.mjs and scripts/launcher-template.sh.
+customer:
+  en: The dashboard and the scout now live in the apps folder. After you update, run the setup script again on each Mac, then restart the dashboard, so the dashboard starts at login again.

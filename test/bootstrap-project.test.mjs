@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SKILL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../skills/bootstrap-project');
+const SKILL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../skills/bootstrap-project');
 const EXAMPLE = path.join(SKILL, 'references/bootstrap.example.json');
 const node = (script, args, cwd) => spawnSync(process.execPath, [path.join(SKILL, 'scripts', script), ...args], { cwd, encoding: 'utf8' });
 

@@ -1,10 +1,10 @@
-// Tests for scout.mjs. The end-to-end runs use a throwaway HOME and fake gh, aws and claude
+// Tests for apps/scout/scout.mjs. The end-to-end runs use a throwaway HOME and fake gh, aws and claude
 // commands, so no test talks to GitHub, AWS or the Anthropic API.
 //
-//   node --test 'scripts/test/*.test.mjs'
+//   npm test
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, renameSync, rmSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,12 +12,36 @@ import { fileURLToPath } from 'node:url';
 import {
   normalizeRoute, redact, errorKey, mergeRoutes, slowRoutes, errorSpikes,
   ciRedFindings, flakyFindings, stuckPrFindings, securityFindings, decide, proposalText, learn, outcomeOf,
+  plistTemplate, renderPlist,
 } from '../scout.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scout.mjs');
 const DAY = 864e5;
 const NOW = Date.parse('2026-11-20T07:00:00Z');
 const iso = (msAgo) => new Date(NOW - msAgo).toISOString();
+
+test('--install reads the launchd template from scripts/launchd/ of this checkout', () => {
+  assert.match(plistTemplate(), /\/scripts\/launchd\/com\.plans-dashboard\.scout\.plist\.template$/);
+  assert.ok(existsSync(plistTemplate()), `${plistTemplate()} exists`);
+});
+
+test('--install writes a valid plist when a path has & or < in it', () => {
+  const script = '/Users/ana/R&D <x>|y/apps/scout/scout.mjs';
+  const xml = renderPlist(readFileSync(plistTemplate(), 'utf8'), { NODE: '/usr/local/bin/node', SCRIPT: script, LOG: '/tmp/a&b.log', PATH: '/usr/bin:/bin' });
+  assert.doesNotMatch(xml, /__[A-Z]+__/, 'every placeholder is filled');
+  assert.ok(xml.includes('<string>/Users/ana/R&amp;D &lt;x&gt;|y/apps/scout/scout.mjs</string>'));
+  if (process.platform !== 'darwin') return;
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'scout-plist-'));
+  try {
+    const f = path.join(dir, 'scout.plist');
+    writeFileSync(f, xml);
+    assert.equal(spawnSync('plutil', ['-lint', f]).status, 0, 'plutil reads the plist');
+    const args = JSON.parse(spawnSync('plutil', ['-extract', 'ProgramArguments', 'json', '-o', '-', f], { encoding: 'utf8' }).stdout);
+    assert.equal(args[1], script);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('routes lose their ids, so one endpoint is one row', () => {
   assert.equal(normalizeRoute('/v1/cases/3f2a1b4c-1111-2222-3333-444455556666/report?x=1'), '/v1/cases/:id/report');

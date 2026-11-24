@@ -13,22 +13,22 @@ A single-file, dependency-free Node server that lists the `*.md` plan files of e
 
 | I want to… | How |
 | --- | --- |
-| Try it without installing | `node scripts/plans-dashboard.mjs` → http://127.0.0.1:4899 |
+| Try it without installing | `node apps/dashboard/server.mjs` → http://127.0.0.1:4899 |
 | Add a project | follow [Add a project to the dashboard](add-project.md) |
 | Run it at login on https://plans.test | `scripts/setup-macos.sh` — see [Install](#install-it-to-run-at-login-macos) |
 | **Apply my code changes to plans.test** | `npm run restart` in this repo — see [After editing](#after-editing-the-dashboard-code) |
 | Read the logs | `~/.claude/pipeline-dashboard/server.log` |
-| Run the tests | `node --test 'scripts/test/*.test.mjs'` |
+| Run the tests | `npm test` |
 | Uninstall | see [Uninstall](#uninstall) |
 
 ## Start it
 
 ```bash
 # Start the dashboard, then open http://127.0.0.1:4899
-node scripts/plans-dashboard.mjs
+node apps/dashboard/server.mjs
 
 # Show the options and where the dashboard keeps its files
-node scripts/plans-dashboard.mjs --help
+node apps/dashboard/server.mjs --help
 ```
 
 Requires Node 18+ (developed on 24).
@@ -44,19 +44,19 @@ scripts/setup-macos.sh
 
 Then open **https://plans.test**. The script installs [Caddy](https://caddyserver.com) if missing, a launchd agent that keeps the dashboard running on `127.0.0.1:4899`, and a Caddy site that serves it over HTTPS and drops requests from other machines. It adds the domain to `/etc/hosts` and trusts Caddy's certificate (both ask for your password). HTTPS is what lets the browser use the clipboard and notifications; if Firefox still warns, set `security.enterprise_roots.enabled` in `about:config`.
 
-Re-run it only to change the domain or port, or after switching Node versions with nvm (the agent stores Node's full path). A re-run with unchanged settings leaves the running dashboard and Caddy alone.
+Re-run it to change the domain or port, after switching Node versions with nvm (the agent stores Node's full path), or when the login service does not start after a `git pull` or a move of the repo (the agent stores the server's full path; `npm run restart` refuses and says so when that path does not exist). A re-run without `--port` keeps the port of the installed service; a re-run with unchanged settings leaves the running dashboard and Caddy alone. `npm run restart` waits for the port that the service uses.
 
 ## After editing the dashboard code
 
 > [!IMPORTANT]
-> plans.test does **not** pick up edits by itself. The agent runs `scripts/plans-dashboard.mjs` straight from this repo but reads it, and the page files in `scripts/plans-dashboard/` (`page.html`, `app.css`, `app.js`), only at startup. After every change, restart it:
+> plans.test does **not** pick up edits by itself. The agent runs `apps/dashboard/server.mjs` straight from this repo but reads it, and the page files in `apps/dashboard/page/` (`page.html`, `app.css`, `app.js`), only at startup. After every change, restart it:
 >
 > ```bash
 > # Restart the dashboard so it loads your changes
 > npm run restart
 > ```
 >
-> It restarts the service (`launchctl kickstart -k gui/$(id -u)/com.plans-dashboard`) and checks that the server is back. Chats keep working through it: each chat's `claude` runs under `scripts/chat-relay.mjs` in its own process group, and the new server connects to it again and shows the turn that is running, including a pending permission question.
+> It restarts the service (`launchctl kickstart -k gui/$(id -u)/com.plans-dashboard`) and checks that the server is back. Chats keep working through it: each chat's `claude` runs under `apps/dashboard/chat-relay.mjs` in its own process group, and the new server connects to it again and shows the turn that is running, including a pending permission question.
 
 Then hard-refresh the page (Cmd+Shift+R). Nothing needs committing; the agent runs the working tree as it is. Plan runs and chats already in progress keep going through the restart. If the page does not come back, the reason (usually a syntax error) is in `~/.claude/pipeline-dashboard/server.log`.
 
@@ -241,13 +241,13 @@ It deinitialises submodules first (they block `git worktree remove`) and refuses
 > [!WARNING]
 > Summaries are produced by calling the `claude` CLI, which **sends plan text to the Anthropic API**. Set `DASH_NO_SUMMARY=1` for repos whose contents must not leave the machine.
 
-Summaries are written in ASD-STE100 Simplified Technical English. If you change the summary prompt in `scripts/plans-dashboard.mjs`, increase `SUMMARY_STYLE` next to it. The dashboard then remakes every existing summary in the background.
+Summaries are written in ASD-STE100 Simplified Technical English. If you change the summary prompt in `apps/dashboard/server.mjs`, increase `SUMMARY_STYLE` next to it. The dashboard then remakes every existing summary in the background.
 
 ## Tests
 
 ```bash
-# Run all dashboard tests
-node --test 'scripts/test/*.test.mjs'
+# Run all tests: the dashboard, the scout and the skills
+npm test
 ```
 
 They run against a throwaway `HOME` and a throwaway repo — the real registry is untouched.

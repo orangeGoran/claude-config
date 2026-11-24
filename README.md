@@ -22,7 +22,7 @@ Claude Code is good at implementing a well-written plan. Three things got in the
 
 The three commands below download this repo and set it up. Setup asks which parts you want: the global rules and skills, the dashboard, or both. It asks again before each change, so nothing happens without your yes.
 
-You need [Claude Code](https://claude.ai/code), git and Node 18 or newer. The dashboard part also needs macOS and [Homebrew](https://brew.sh). On Linux, you can still run the dashboard by hand: `node scripts/plans-dashboard.mjs`.
+You need [Claude Code](https://claude.ai/code), git and Node 18 or newer. The dashboard part also needs macOS and [Homebrew](https://brew.sh). On Linux, you can still run the dashboard by hand: `node apps/dashboard/server.mjs`.
 
 ```bash
 # Download this repo to ~/Workspace/claude-config
@@ -44,7 +44,7 @@ That's it. Setup opens your dashboard in the browser at **[https://plans.test](h
 3. **Launch it.** Open the plan and click **▶ Launch now**. Come back to a finished diff.
 4. **Use the skills.** In Claude Code, in any project, type `/commit-message`, `/pr`, `/hand-review`, `/merge-review`, `/merge-parent`, `/browser-usability-test` or `/bootstrap-project`.
 
-Skipped the dashboard part? Run `node scripts/plans-dashboard.mjs` and open [http://127.0.0.1:4899](http://127.0.0.1:4899).
+Skipped the dashboard part? Run `node apps/dashboard/server.mjs` and open [http://127.0.0.1:4899](http://127.0.0.1:4899).
 
 To change your choices later, run `scripts/setup.sh` again. Every question it asks: [docs/setup.md](docs/setup.md).
 

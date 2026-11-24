@@ -25,13 +25,14 @@ while [ $# -gt 0 ]; do
 done
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$HERE/.." && pwd)"
 LABELS=("Claude Code config — CLAUDE.md, skills, settings"
         "Plans dashboard — runs at login on https://${DOMAIN:-plans.test}")
 PICKED=(1 1)
 # the dashboard's login agent, Caddy and /etc/hosts are macOS-only
 if [ "$(uname)" != Darwin ]; then
   PICKED[1]=0
-  LABELS[1]="Plans dashboard — macOS only; run node scripts/plans-dashboard.mjs instead"
+  LABELS[1]="Plans dashboard — macOS only; run node apps/dashboard/server.mjs instead"
 fi
 
 if [ "$YES" = 0 ]; then
@@ -74,12 +75,12 @@ if [ "${PICKED[1]}" = 1 ]; then
   if [ -f "$HOME/.claude/scout.json" ]; then
     ans=y
     [ "$YES" = 1 ] || read -r -p "Run the scout every day at 07:00 (~/.claude/scout.json found)? [Y/n] " ans
-    case "${ans:-y}" in [Nn]*) ;; *) node "$HERE/scout.mjs" --install ;; esac
+    case "${ans:-y}" in [Nn]*) ;; *) node "$REPO/apps/scout/scout.mjs" --install ;; esac
   else
     printf '\nScout: not set up on this Mac. The 🔭 Scout button on the dashboard lists the steps (docs/scout.md).\n'
   fi
   printf '\nDone. Opening %s — the guide there helps you add your repos.\n' "$url"
   open "$url" 2>/dev/null || true
 else
-  printf '\nDone. To try the dashboard: node %s/plans-dashboard.mjs\n' "$HERE"
+  printf '\nDone. To try the dashboard: node %s/apps/dashboard/server.mjs\n' "$REPO"
 fi

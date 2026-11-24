@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "restart": "node scripts/restart-dashboard.mjs",
-    "test": "node --test 'scripts/test/*.test.mjs'"
+    "restart": "node apps/dashboard/restart.mjs",
+    "test": "node --test apps/*/test/*.test.mjs test/*.test.mjs"
   }
 }
