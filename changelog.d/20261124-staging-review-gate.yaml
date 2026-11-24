@@ -1,0 +1,20 @@
+kind: added
+audience: internal
+scope: bootstrap-project
+summary: |
+  QA now gets a ticket only when all its work is on staging. A new optional board
+  column ("Next review") holds complete tickets until the staging release, and a new
+  /staging-review skill moves them to the QA column with the staging versions. Plans
+  read every ticket comment, AI text is checked with the real AI over 3 runs, and
+  browser tests also run at 390 px with touch.
+internal: |
+  New answer `git.tickets.board.reviewStatus` (needs `git.staging` and `project.remote`,
+  must differ from `status`). With it, `/skill-5-ship` Step 6.5 sets `board.status` only
+  for "To be closed after staging QA" tickets and leaves "Refs" tickets as they are, and
+  the render adds `.claude/skills/staging-review` (PRs from the issue timeline and from
+  links in the body and comments, `compare/<staging>...<merge commit>`, version from
+  package.json on staging). Without it, nothing changes. skill-1-plan: read tickets with
+  `--comments`, a "Done when" table with sources, an "AI output" test subsection, a
+  "Same in every place" table and two widths. skill-3-test: Step 2b.1 AI output (real AI,
+  3 runs, measured table) and real-AI, 390 px touch and sibling-table rules for the
+  browser test. browser-usability-test: never mock the normal AI answer; touch at 390 px.

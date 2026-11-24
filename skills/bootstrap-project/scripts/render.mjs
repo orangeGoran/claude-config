@@ -155,6 +155,12 @@ export function checkParams(p) {
   if (board !== undefined && (!str(board.owner) || !/^\d+$/.test(String(board.number ?? '')) || !str(board.status))) {
     errs.push('git.tickets.board needs "owner", a numeric "number" and "status"');
   }
+  if (board !== undefined && board.reviewStatus !== undefined) {
+    if (!str(board.reviewStatus)) errs.push('git.tickets.board.reviewStatus must be a column name, for example "In review"');
+    else if (str(board.reviewStatus) === str(board.status)) errs.push('git.tickets.board.reviewStatus must differ from "status" (for example "Next review" and "In review")');
+    if (!str(p.git?.staging)) errs.push('git.tickets.board.reviewStatus needs git.staging: a ticket moves to it only when its work is on staging');
+    if (!str(p.project?.remote)) errs.push('git.tickets.board.reviewStatus needs project.remote (owner/repo): /staging-review reads the PRs on GitHub');
+  }
   return errs;
 }
 
@@ -601,6 +607,9 @@ export function buildVars(p, now = new Date()) {
     BOARD_OWNER: board ? str(board.owner) : '',
     BOARD_NUMBER: board ? String(board.number) : '',
     BOARD_STATUS: board ? str(board.status) : '',
+    // the staging gate: ship sets BOARD_STATUS, /staging-review moves a ticket on to BOARD_REVIEW_STATUS
+    HAS_REVIEW_GATE: Boolean(board && str(board.reviewStatus) && staging && pr.remote),
+    BOARD_REVIEW_STATUS: board ? str(board.reviewStatus) : '',
     PREFLIGHT_BASH: bashWords(preflight),
     CHANGELOG_LOCALES: clLocales.map(code).join(', '),
     CHANGELOG_LOCALES_JS: jsList(clLocales),
@@ -691,6 +700,11 @@ export function renderAll(params, { upgrade = false, now = new Date(), repo = nu
     if (p === '.claude/scripts/changelog-validate.mjs' && vars.HAS_CHANGELOG_CMD) {
       // the project has its own validator (changelog.validateCmd): no second one
       files.set(p, { path: p, content: '', kind: 'orphan', note: 'changelog.validateCmd is set, so this script is unused; delete by hand' });
+      continue;
+    }
+    if (p === '.claude/skills/staging-review/SKILL.md' && !vars.HAS_REVIEW_GATE) {
+      // only with git.tickets.board.reviewStatus and git.staging
+      files.set(p, { path: p, content: '', kind: 'orphan', note: 'git.tickets.board.reviewStatus is not set, so this skill is unused; delete by hand' });
       continue;
     }
     if (p === '.plans/first-plan.md') {

@@ -454,3 +454,50 @@ test('a split gets its own dated parent plan in .plans/, and child plans name it
     assert.match(read('.claude/skills/skill-2-implement/SKILL.md'), /the parent plan named in its `- \*\*Parent\*\*:` line/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a board with reviewStatus and a staging branch gets the staging gate and /staging-review', () => {
+  const { dir, repo } = bootstrapRepo((p) => ({ ...p, git: { ...p.git, staging: 'staging', tickets: { ...p.git.tickets, board: { owner: 'acme-co', number: 1, status: 'Next review', reviewStatus: 'In review' } } } }));
+  try {
+    const read = (f) => readFileSync(path.join(repo, f), 'utf8');
+    const review = read('.claude/skills/staging-review/SKILL.md');
+    assert.match(review, /^name: staging-review$/m);
+    assert.match(review, /Status "Next review"/);
+    assert.match(review, /compare\/staging\.\.\./);
+    const ship = read('.claude/skills/skill-5-ship/SKILL.md');
+    assert.match(ship, /Never set "In review" here/);
+    assert.match(ship, /`Refs #<n>` tickets: do not change the Status/);
+    assert.doesNotMatch(ship, /both the `To be closed after staging QA: #<n>` and the `Refs #<n>` lines/);
+    assert.match(read('AGENTS.md'), /`\/staging-review` moves each ticket/);
+    const v = node('verify.mjs', ['.', '--registry', path.join(dir, 'none.json'), '--json'], repo);
+    assert.deepEqual(JSON.parse(v.stdout).failed, [], v.stdout);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a board without reviewStatus keeps the old ship step and gets no /staging-review', () => {
+  const { dir, repo } = bootstrapRepo();
+  try {
+    assert.ok(!existsSync(path.join(repo, '.claude/skills/staging-review/SKILL.md')));
+    const ship = readFileSync(path.join(repo, '.claude/skills/skill-5-ship/SKILL.md'), 'utf8');
+    assert.match(ship, /both the `To be closed after staging QA: #<n>` and the `Refs #<n>` lines/);
+    assert.doesNotMatch(readFileSync(path.join(repo, 'AGENTS.md'), 'utf8'), /staging-review/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('render rejects a reviewStatus without a staging branch or equal to status', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'bootstrap-test-'));
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: dir });
+    for (const [board, staging, msg] of [
+      [{ owner: 'acme-co', number: 1, status: 'Next review', reviewStatus: 'In review' }, '', /needs git\.staging/],
+      [{ owner: 'acme-co', number: 1, status: 'In review', reviewStatus: 'In review' }, 'staging', /must differ from "status"/],
+    ]) {
+      const p = JSON.parse(readFileSync(EXAMPLE, 'utf8'));
+      p.git.staging = staging;
+      p.git.tickets.board = board;
+      writeFileSync(path.join(dir, 'answers.json'), JSON.stringify(p));
+      const r = node('render.mjs', ['.', '--params', 'answers.json', '--stage', path.join(dir, 'stage')], dir);
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, msg);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
