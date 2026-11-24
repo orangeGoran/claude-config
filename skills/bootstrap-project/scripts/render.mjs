@@ -429,8 +429,9 @@ export function buildVars(p, now = new Date()) {
   const tickets = g.tickets || {};
   const hasTickets = tickets.evidence === true || Boolean(tickets.board);
   const board = tickets.board || null;
-  if (hasTickets) runExtra.push('Bash(gh issue view*)', 'Bash(gh issue comment*)');
-  if (board) runExtra.push('Bash(gh project field-list*)', 'Bash(gh project item-list*)', 'Bash(gh project item-edit*)', 'Bash(gh project view*)');
+  // the evidence step reads its comment back (gh api); the board step reopens a closed ticket
+  if (hasTickets) runExtra.push('Bash(gh issue view*)', 'Bash(gh issue comment*)', 'Bash(gh api repos/*/issues/comments/*)');
+  if (board) runExtra.push('Bash(gh issue reopen*)', 'Bash(gh project field-list*)', 'Bash(gh project item-list*)', 'Bash(gh project item-edit*)', 'Bash(gh project view*)');
 
   // hard-rule blocks
   const hardMd = hard.map((h) => `- **${h.title}.** ${h.rule}` + sub(h.details)).join('\n');
