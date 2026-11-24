@@ -446,7 +446,9 @@ function renderList() {
   rs.innerHTML = sh;
   rs.querySelectorAll('[data-go]').forEach((el) => {
     if (el.dataset.go === selected) { el.classList.add('sel'); el.setAttribute('aria-current', 'true'); }
-    el.addEventListener('click', () => { selected = el.dataset.go; renderList(); renderDetail(true); });
+    el.addEventListener('click', () => {
+      selected = el.dataset.go; revealInSide(selected); renderList(); renderDetail(true); scrollToSelected();
+    });
   });
   rs.querySelectorAll('[data-why]').forEach((el) =>
     el.addEventListener('click', (e) => { e.stopPropagation(); showLaunchError(find(el.dataset.why)); }));
@@ -1363,8 +1365,10 @@ function chatState(st) {
   const short = (id) => String(id || '').slice(0, 8);
   // the first 8 characters of the session id tell the chats apart; the full id is in the tooltip
   byId('cwho').textContent = (st.live ? '● ' : '') + (st.session ? short(st.session) : '') +
+    (st.startedAt ? ' · started ' + chatTime(st.startedAt) : '') +
     (st.fork ? ' · next message: a copy' : st.current && st.current.copy ? ' · copy of ' + short(st.current.base) : '');
   byId('cwho').title = 'Session ' + (st.session || 'not started yet') + '. ' +
+    (st.startedAt ? 'Started ' + new Date(st.startedAt).toLocaleString() + '. ' : '') +
     (st.live ? 'The session is open. It closes after 15 minutes without a message.' : 'The next message opens the session.');
   byId('cnew').hidden = !(st.current && st.current.id !== st.latest);
   byId('cfork').disabled = !!st.fork;
@@ -3913,7 +3917,22 @@ async function ringsHere(key) {
 function openFromAlert(key, tab) {
   selected = key;
   if (tab === 'chat') { chatOn = false; toggleChat(true); } else if (tab) prTab[key] = tab;
+  revealInSide(key);
   lastPrDraw = null; renderList(); renderDetail(true);
+  scrollToSelected();
+}
+// Make the plan's row show in the side list: open its project section, and clear a search
+// that hides the plan. Call renderList after it.
+function revealInSide(key) {
+  const p = plans.find((x) => x.key === key);
+  if (!p) return;
+  if (collapsedProjects.has(p.project)) { collapsedProjects.delete(p.project); saveCollapsed(); }
+  const q = byId('q').value.toLowerCase();
+  if (q && !matchesQ(p, q)) byId('q').value = '';
+}
+// Scroll the side list so the open plan's row is on screen.
+function scrollToSelected() {
+  byId('side').querySelector('.item.sel')?.scrollIntoView({ block: 'nearest' });
 }
 // A card in the page for each alert, so you see it while you read another plan, without the 🔔
 // and without leaving what you do. A card stays open until you hide it with the – button; it never

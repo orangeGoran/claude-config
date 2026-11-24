@@ -2638,7 +2638,14 @@ const chatState = (proj, slug) => {
     partial: ch ? ch.partial : '', landing: ch ? ch.landing : [], last: ch ? ch.last : null, error: chatNotes.get(key) || '',
     context: chatContext(proj, slug, ch, a),
     idleFrom: chatIdleFrom(proj, slug),
+    startedAt: chatStartedAt(proj, slug),
   };
+};
+// when the session began: the time of the first item in its transcript (a copy keeps its base's start)
+const chatStartedAt = (proj, slug) => {
+  const tr = chatTranscript(proj, slug);
+  if (!tr) return null;
+  try { return (readTranscript(tr.file, tr.wtPath).items.find((it) => it.at) || {}).at || null; } catch { return null; }
 };
 // when the session last wrote to its transcript: the composer counts the idle time from it,
 // because the prompt cache usually expires after an hour without a request
