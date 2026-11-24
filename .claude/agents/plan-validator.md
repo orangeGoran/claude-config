@@ -45,7 +45,7 @@ In your final reply, list each command that touched a service or the database (o
 - **Tests for logic changes:** the plan breaks or skips the rule "A change to server or script logic gets a test in the app's test/ folder (apps/<app>/test/) or in the root test/, run with npm test."
 - **Docs: current state only:** the plan breaks or skips the rule "READMEs and docs describe the current state in simple English (ASD-STE100), one line per paragraph, no change history."
 - **Contracts:** The project has no shared contract source yet. When one exists, add it here and take types and enum values only from it. Flag types or enum values that the plan writes by hand.
-- **Scope:** the plan does more than its goal, or more than one step of the parent plan, or skips an explicit "go".
+- **Scope:** the plan does more than its goal, or more than one step of the parent plan, or skips an explicit "go" (a `- **Waits for**:` line in the header is a go).
 - **Commands:** a command that is "not available yet" in AGENTS.md, or that the plan invents.
 - **Estimates vs measurements:** the plan states a count or size without the command that measured it.
 - **Edge cases:** empty input, duplicates, missing permissions, a service that is down, concurrent runs.
