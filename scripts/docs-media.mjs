@@ -217,7 +217,8 @@ let nextPort = 4970;
 async function startDashboard(world) {
   const port = nextPort++;
   const c = spawn(process.execPath, [world.script], {
-    env: { ...process.env, HOME: world.home, DASH_PORT: String(port), DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1' },
+    env: { ...process.env, HOME: world.home, DASH_PORT: String(port), DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1',
+           DASH_WATCH_MS: '0', DASH_NO_NOTIFY: '1' },
     stdio: 'ignore',
   });
   children.push(c);

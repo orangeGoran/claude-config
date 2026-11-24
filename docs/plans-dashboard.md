@@ -189,6 +189,8 @@ Known limits:
 
 **🔔** in the header turns on a short sound when a run stops (needs you, failed or finished) the chat agent finishes an answer, or the chat agent asks for permission. When the dashboard tab is not in front, a desktop notification comes too; clicking it opens that plan. The browser asks once for permission to show notifications. The setting is remembered in this browser, and alerts need the dashboard open in a tab (a background tab can be up to a minute late).
 
+The dashboard server also sends macOS notifications, with no page open: when it starts a plan by itself, when such a start fails, when a `Waits for:` line has an error that you must fix, and when a run of a pipeline project (with `.claude/scripts/auto-pipeline.sh`) needs you or failed. A click opens that plan; this needs `terminal-notifier` (`brew install terminal-notifier`), because an `osascript` notification opens Script Editor. With 🔔 on and the page open, a run that stops gives two notifications: one from the page and one from the server. `DASH_NO_NOTIFY=1` turns the server's notifications off.
+
 ## Pull requests
 
 When a plan's branch `auto/<slug>` has a PR on GitHub, the plan shows a `PR #n` chip, and its panel gets two more tabs. The [chat](#chat-with-the-agent) opens beside both. The plan tab itself opens on the summary and the buttons; status, tags and session history are under **⋯ more**, and the plan text is under **Show the full plan**. **Open PR** opens the Pull request tab.
@@ -252,6 +254,50 @@ scripts/worktree-run.sh --repo <repo> --cleanup <slug>
 
 It deinitialises submodules first (they block `git worktree remove`) and refuses to discard uncommitted work or delete an unmerged branch.
 
+## Waits for and the event watcher
+
+The dashboard server checks every project once a minute, also when no page is open. It reads the PRs on GitHub and the run reports, writes what changed as events, and starts a plan when the condition of its `- **Waits for**:` line becomes true.
+
+Write one or more `- **Waits for**:` lines in the plan header (the lines before the first `## ` heading, outside code blocks). A line in the body, or in a code block, is only an example and does nothing. All lines must be true. The three conditions:
+
+| Condition | True when |
+| --- | --- |
+| `api PR #7 merged` | PR #7 of the project `api` is merged. The project is a registry `name`, or a `short` that only one project has. The dashboard reads that PR directly. |
+| `api plan 20261123-100000-contracts merged` | the newest PR on the branch of that plan of `api` is merged: the branch its `- **Branch**:` line names, else `auto/<slug>`. The dashboard looks in the newest 200 PRs of `api`. A slug with no plan file in `api` and no PR on `auto/<slug>` is the error "unknown plan". |
+| `submodule contracts contains 1a2b3c4` | the submodule pointer at `contracts` on `origin/<base>` of this plan's own project contains commit `1a2b3c4` (7 to 40 hex characters). `<base>` is the plan's `- **Base**:` line. The submodule must be initialized in the main checkout. |
+
+A `Waits for:` line is the owner's "go": when all its conditions are true, the dashboard starts the plan by itself in the project's "to PR" mode (`pr`), or in the project's default mode when the project has no such mode. Only pipeline projects (with `.claude/scripts/auto-pipeline.sh`) can start a plan by itself. While the plan waits, its row and its board card show `⏳ waits`; hover the chip to see each condition with ✓ or ✗ and the reason when a condition cannot be checked.
+
+The dashboard does not start a plan by itself when:
+
+- 4 plans of the project run already. A plan runs when its run is live, when it is starting, or when its report says it is running and changed in the last 30 minutes. A manual ▶ Launch counts toward the 4, but the dashboard never refuses it.
+- the plan's chat is working, or it asks you for a permission. The start comes when the chat stops.
+- its status is `parked` or `proposed`.
+- it has a run, a run report or a worktree already.
+- you launched it by hand and that launch failed (the plan shows "didn’t start"). The dashboard keeps that state until it restarts; launch the plan again from the page.
+
+The dashboard starts a plan by itself only once. When that start fails (for example, the launcher prints `SKIP:`), the dashboard says why in an event and a notification, and does not try again: launch the plan again from the page. A plan that you archive and put back does not start again.
+
+After a merge on GitHub, the dashboard runs `git pull --ff-only` in the main checkout of that repo, when the checkout is on the PR's base branch. It never pulls the dashboard's own repo: pull it and restart the dashboard by hand (see `AGENTS.md`). A PR that you merge with the dashboard's merge button is pulled by the button, not again by the watcher. A failed pull is not tried again: use **📥 Pull**. When a second dashboard with the same HOME merges a PR, two pulls can meet; the slower one then says "Pull by hand". Worktrees stay after a merge until you click **Clean up run**.
+
+The dashboard reads at most 10 pages of 100 updated PRs per check. After a very long time with the dashboard off, older updates make no event. A PR merged before the dashboard first saw the project makes no event.
+
+Events are written at most once: a crash can lose an event, but never repeats one or starts a plan twice. `GET /api/events?project=<name>&limit=<n>` gives `{ events: [...] }`, oldest first, the last `limit` (default 200, at most 1000). The events are in `~/.claude/pipeline-dashboard/state/<project>/events.jsonl` (the last 5000 lines):
+
+| Type | Fields |
+| --- | --- |
+| `pr-opened`, `pr-closed` | `number`, `title`, `url`, `branch`, `base` |
+| `pr-merged` | the same, and `pull`: what the pull did, or why there was no pull |
+| `run-outcome` | `slug`, `outcome`, `status`, `previous` |
+| `wait-met` | `slug`, `conditions` |
+| `wait-error` | `slug`, `text`, `reason` |
+| `auto-launch` | `slug`, `mode` |
+| `auto-launch-failed` | `slug`, `output` |
+
+Text that comes from a command (`gh`, `git`, the launcher) has its secrets removed and is cut to 500 characters.
+
+Only one dashboard per HOME runs the watcher (`~/.claude/pipeline-dashboard/watcher.lock`). Another dashboard with the same HOME logs "another dashboard runs the watcher" and takes over when the first one stops. Start a test dashboard by hand with `DASH_WATCH_MS=0` when it uses your real HOME.
+
 ## Environment
 
 | Variable | Effect |
@@ -263,6 +309,9 @@ It deinitialises submodules first (they block `git worktree remove`) and refuses
 | `QA_REPORTS_PORT` | port of the read-only server for browser-usability-test report pages (default `4898`): `http://localhost:4898/<project>/<file>.html`, so a link in the VS Code chat opens them, and the list of all reports at `http://localhost:4898/` (**QA reports ↗** in the header). If you change it, set the same value where Claude runs, so the skill links the right port |
 | `QA_HOME` | where those reports live (default `~/.claude/browser-usability-test/projects`). Each project folder has `reports/` (the skill's report pages) and `artifacts/` (single-file pages written by `node scripts/artifact-copies.mjs --save <page.html>`, and Claude artifacts downloaded from claude.ai); `_other/artifacts/` holds pages of no project. Saving a page again keeps its link and moves the old page to `.versions/<page>/v<n>.html` in the same folder; a version menu on the page opens it (`?v=<n>`) |
 | `CLAUDE_TMP` | Claude Code's session temp folders (default `/private/tmp/claude-<uid>`); HTML in their scratchpads is listed as unpublished drafts |
+| `DASH_WATCH_MS` | how often the [event watcher](#waits-for-and-the-event-watcher) runs, in milliseconds (default `60000`); `0` turns it off |
+| `DASH_NO_NOTIFY=1` | the watcher sends no macOS notifications |
+| `DASH_NOTIFIER` | the notifier program the watcher calls with `-title`, `-message`, `-open` and `-group` (default `terminal-notifier` when it is installed, else `osascript`) |
 
 > [!WARNING]
 > Summaries are produced by calling the `claude` CLI, which **sends plan text to the Anthropic API**. Set `DASH_NO_SUMMARY=1` for repos whose contents must not leave the machine.

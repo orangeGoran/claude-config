@@ -114,7 +114,7 @@
       },
       {
         "label": "Run a test dashboard by hand",
-        "cmd": "DASH_PORT=4911 DASH_NO_OPEN=1 node apps/dashboard/server.mjs",
+        "cmd": "DASH_PORT=4911 DASH_NO_OPEN=1 DASH_WATCH_MS=0 node apps/dashboard/server.mjs",
         "note": "(stop it by its PID)"
       }
     ],

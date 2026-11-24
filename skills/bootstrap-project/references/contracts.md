@@ -11,6 +11,7 @@ TLDR: the plans dashboard (`apps/dashboard/server.mjs` in claude-config) and the
 | `.claude/skills/skill-auto-pipeline/SKILL.md` on `origin/<base>` | `auto-pipeline.sh` launch preflight | The launch refuses: "push the pipeline system first" |
 | `implement` (launcher) | `apps/dashboard/server.mjs` `WRAPPER_LAUNCHER` (≈ line 850) and its fix prompts (≈ 925, 946) | Only for generic mode. The `run-skill` module maps `implement` to `skill-2-implement` |
 | branch `auto/<slug>` | `apps/dashboard/server.mjs` (≈ 312, 488, 1369): PR detection | The PR button does not appear. A plan can override it with `- **Branch**: <name>` |
+| plan header line `- **Base**: <branch>` (skill-1-plan template) | `apps/dashboard/server.mjs` `planBase`: the `submodule … contains …` condition of a `- **Waits for**:` line | That condition gets the error "no Base line" and the plan never starts by itself |
 | worktree `<parent>/worktrees/<repo>/<slug>` | `apps/dashboard/server.mjs` `worktreeOf` | The dashboard does not find the run |
 | `.plans/`, `.plans/done/`, `.plans/auto-runs/`, `.plans/.validations/<base>-validation-<n>.md` | registry `plansDir` default; `validationRounds` (≈ 314) | `auto-pipeline.sh` and `plan-lanes.mjs` use `.plans` as fixed text: keep `plansDir` at `<root>/.plans` |
 | `/merge-parent <base>` | dashboard conflict button | Global skill; nothing to write |

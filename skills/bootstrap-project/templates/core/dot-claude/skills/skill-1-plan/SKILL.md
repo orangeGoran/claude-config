@@ -341,5 +341,5 @@ Run `/skill-auto-validate-plan` on the saved plan yourself. Do not ask first.
 
 - Then a copy-paste commit message: `docs(plans): add <slug> plan`.
 - Do not run `git add`, `git commit` or `git push`. Push only when the owner says "push".
-- Tell the owner the next step: push the plan to `@@BASE_BRANCH@@`, then launch it in the plans dashboard (mode "to PR" for a draft PR). The work starts only after the owner's explicit "go".
+- Tell the owner the next step: push the plan to `@@BASE_BRANCH@@`, then launch it in the plans dashboard (mode "to PR" for a draft PR). The work starts only after the owner's explicit "go", or by itself when the plan has a `- **Waits for**:` line and its condition becomes true.
 - **Stop.** Do not write product code or tests in this step.

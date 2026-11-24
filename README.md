@@ -81,7 +81,7 @@ This repo uses its own plan pipeline. The rules for each change are in [AGENTS.m
 | Test (full) | `npm test` |
 | Test (one file) | `node --test <file>` |
 | Restart the dashboard service | `npm run restart` (check `pgrep -fl chat-relay.mjs` first) |
-| Run a test dashboard by hand | `DASH_PORT=4911 DASH_NO_OPEN=1 node apps/dashboard/server.mjs` (stop it by its PID) |
+| Run a test dashboard by hand | `DASH_PORT=4911 DASH_NO_OPEN=1 DASH_WATCH_MS=0 node apps/dashboard/server.mjs` (stop it by its PID) |
 
 `AGENTS.md`, section **Commands**, has the full list.
 

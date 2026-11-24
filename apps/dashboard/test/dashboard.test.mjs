@@ -152,7 +152,9 @@ const start = async () => {
   const child = spawn(process.execPath, [SCRIPT], {
     env: { ...process.env, HOME: home, DASH_PORT: String(port), DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1',
            QA_REPORTS_PORT: String(qaPort), QA_HOME: '', CLAUDE_TMP: path.join(tmp, 'claude-tmp'),
-           PATH: path.join(ghDir, 'bin') + ':' + process.env.PATH, FAKE_GH_DIR: ghDir, SCOUT_NO_NOTIFY: '1' },
+           PATH: path.join(ghDir, 'bin') + ':' + process.env.PATH, FAKE_GH_DIR: ghDir, SCOUT_NO_NOTIFY: '1',
+           // the watcher has its own test (watcher.test.mjs): its gh calls would change the counts here
+           DASH_WATCH_MS: '0', DASH_NO_NOTIFY: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let err = '';
@@ -1576,7 +1578,8 @@ test('docs-media copies a dashboard that starts and serves the page, without the
     const copyPort = await freePort(), copyQaPort = await freePort();
     child = spawn(process.execPath, [script], {
       env: { ...process.env, HOME: copyHome, DASH_PORT: String(copyPort), QA_REPORTS_PORT: String(copyQaPort),
-             DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1', CLAUDE_TMP: path.join(box, 'claude-tmp'), QA_HOME: '' },
+             DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1', CLAUDE_TMP: path.join(box, 'claude-tmp'), QA_HOME: '',
+             DASH_WATCH_MS: '0', DASH_NO_NOTIFY: '1' },
       stdio: ['ignore', 'ignore', 'pipe'],
     });
     let err = '';
