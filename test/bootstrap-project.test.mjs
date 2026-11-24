@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, realpathSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -320,9 +320,29 @@ test('registry.browserTestProject names the browser-test profile in auto-pipelin
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('codex on: verify runs the Codex code review, the sheet reuses it, and the code-reviews folder is ignored; codex off: none of it', () => {
+test('codex on by default: Codex checks the plan and runs in the decision sheet, not in verify', () => {
   const read = (r, f) => readFileSync(path.join(r, f), 'utf8');
-  const on = bootstrapRepo();
+  const def = bootstrapRepo();
+  try {
+    const v = read(def.repo, '.claude/skills/skill-4-verify/SKILL.md');
+    assert.doesNotMatch(v, /Codex/);
+    assert.doesNotMatch(v, /@@/);
+    assert.match(v, /^## Step 1 — Bug hunt \(code-review loop, max 2 rounds\)$/m);
+    const pipe = read(def.repo, '.claude/skills/skill-auto-pipeline/SKILL.md');
+    assert.doesNotMatch(pipe, /codex-report/);
+    assert.doesNotMatch(pipe, /Codex OFF \(missing/);
+    const sheet = read(def.repo, '.claude/skills/decision-sheet/SKILL.md');
+    assert.match(sheet, /^## Step 2 — Codex review/m);
+    assert.doesNotMatch(sheet, /Verify already ran Codex/);
+    assert.doesNotMatch(sheet, /--codex-report/);
+    assert.match(read(def.repo, '.claude/skills/skill-auto-validate-plan/SKILL.md'), /Codex/);
+    assert.doesNotMatch(read(def.repo, 'AGENTS.md'), /--no-codex/);
+  } finally { rmSync(def.dir, { recursive: true, force: true }); }
+});
+
+test('codexInVerify: verify runs the Codex code review, the sheet reuses it, and the code-reviews folder is ignored; codex off: none of it', () => {
+  const read = (r, f) => readFileSync(path.join(r, f), 'utf8');
+  const on = bootstrapRepo((p) => { p.pipeline.codexInVerify = true; return p; });
   const off = bootstrapRepo((p) => { p.modules.codex = false; return p; });
   try {
     const v = read(on.repo, '.claude/skills/skill-4-verify/SKILL.md');
@@ -659,4 +679,234 @@ test('the step gate checks only its own repo: a git -C commit in another repo pa
     // not a commit: always passes
     assert.equal(guard(`git -C "${other}" status`, repo).status, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---------------------------------------------------------------------------
+// pipeline diet: fewer repeated checks on the same tree, Codex out of verify by default
+// ---------------------------------------------------------------------------
+const readF = (r, f) => readFileSync(path.join(r, f), 'utf8');
+const skillOf = (r, s) => readF(r, `.claude/skills/${s}/SKILL.md`);
+const civOn = (p) => { p.pipeline.codexInVerify = true; return p; };
+const between = (text, from, to) => {
+  const a = text.indexOf(from);
+  assert.ok(a >= 0, `missing ${from}`);
+  const b = text.indexOf(to, a + from.length);
+  assert.ok(b > a, `missing ${to} after ${from}`);
+  return text.slice(a, b);
+};
+
+test('render rejects a codexInVerify that is not a boolean, or that is on while the codex module is off', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'bootstrap-test-'));
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: dir });
+    const run = (edit) => {
+      const p = edit(JSON.parse(readFileSync(EXAMPLE, 'utf8')));
+      writeFileSync(path.join(dir, 'answers.json'), JSON.stringify(p));
+      return node('render.mjs', ['.', '--params', 'answers.json', '--stage', path.join(dir, 'stage')], dir);
+    };
+    const notBool = run((p) => { p.pipeline.codexInVerify = 'yes'; return p; });
+    assert.equal(notBool.status, 1);
+    assert.match(notBool.stderr, /pipeline\.codexInVerify must be true or false/);
+    const noModule = run((p) => { p.pipeline.codexInVerify = true; p.modules.codex = false; return p; });
+    assert.equal(noModule.status, 1);
+    assert.match(noModule.stderr, /pipeline\.codexInVerify needs modules\.codex/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the diet texts: one lint and drift check after the loop, a third stop rule, no re-read of nested AGENTS.md, one full run per tree', () => {
+  const def = bootstrapRepo();
+  const civ = bootstrapRepo(civOn);
+  try {
+    const v = skillOf(def.repo, 'skill-4-verify');
+    for (const want of ['--max-checks 3', '**No behaviour fix:**', 'do not read it again', 'no behaviour fix, hit the cap']) assert.ok(v.includes(want), want);
+    const step1 = between(v, '## Step 1', '## Step 2');
+    assert.doesNotMatch(step1, /check-only lint/);
+    assert.doesNotMatch(step1, /migration drift check/);
+    assert.match(v, /^\| \d+ \| Migration drift \|/m);
+    for (const s of ['skill-2-implement', 'skill-3-test', 'skill-4-verify']) {
+      const t = skillOf(def.repo, s);
+      for (const bad of ['Read every nested', 'Read the nested', 'Read `test/AGENTS.md`']) assert.ok(!t.includes(bad), `${s}: ${bad}`);
+    }
+    const t3 = skillOf(def.repo, 'skill-3-test');
+    for (const want of ['once per tree state', 'ECONNREFUSED', 'SIGSEGV', 'retried alone', 'lists end-to-end tests', 'only infra failures that item 2a cleared']) assert.ok(t3.includes(want), want);
+    const t2 = skillOf(def.repo, 'skill-2-implement');
+    assert.ok(t2.includes('skip the full "Test (full)"'));
+    assert.ok(t2.includes('With `--unattended`'));
+    assert.match(t2, /argument-hint: "<plan file> \[--unattended\]"/);
+    assert.ok(skillOf(def.repo, 'test-review').includes('(Step 3), when one exists'));
+    const pipe = skillOf(def.repo, 'skill-auto-pipeline');
+    assert.ok(pipe.includes('this run counts for it'));
+    // the regression gate comes before "Run every command", which skips a "Test (full)" the gate ran
+    const gate = pipe.indexOf('If its review loop (with the lint run after it) or its test review changed a file');
+    const runAll = pipe.indexOf('Run every command in the plan');
+    assert.ok(gate >= 0 && runAll > gate, `${gate} ${runAll}`);
+    assert.ok(pipe.includes('(except a "Test (full)" command that the regression gate already ran on the same tree)'));
+    // the verify audit lint row uses the lint run after the loop; the test red flag; the hand-off text
+    assert.ok(v.includes('use the output of the lint run after the Step 1 loop'));
+    assert.ok(t3.includes('A partial run reported as the full run'));
+    assert.ok(pipe.includes('/skill-2-implement <plan-file> --unattended'));
+    assert.match(readF(def.repo, 'AGENTS.md'), /round 2 only after a behaviour fix/);
+    // decision 2A: the Codex variant has the same stop rule
+    const cv = skillOf(civ.repo, 'skill-4-verify');
+    assert.match(cv, /^## Step 1 — Bug hunt \(max 2 rounds; each round is one Claude review, then one Codex review\)$/m);
+    assert.ok(cv.includes('**No behaviour fix:**'));
+    assert.ok(cv.includes('no behaviour fix, hit the cap'));
+    assert.doesNotMatch(between(cv, '## Step 1', '## Step 2'), /check-only lint/);
+  } finally {
+    rmSync(def.dir, { recursive: true, force: true });
+    rmSync(civ.dir, { recursive: true, force: true });
+  }
+});
+
+test('the "after the PR opened" rule renders only into the skills that run after a PR opened', () => {
+  const { dir, repo } = bootstrapRepo();
+  try {
+    for (const s of ['skill-3-test', 'skill-4-verify']) assert.doesNotMatch(skillOf(repo, s), /after the PR opened/, s);
+    for (const s of ['skill-5-ship', 'decision-sheet', 'pr-feedback']) assert.match(skillOf(repo, s), /When the evidence changes after the PR opened/, s);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('without a check-only lint, verify runs the fixing lint once after the loop; the audit lint row stays', () => {
+  const noCheck = bootstrapRepo((p) => { p.stack.commands.lintCheck = ''; return p; });
+  const def = bootstrapRepo();
+  try {
+    assert.ok(skillOf(noCheck.repo, 'skill-4-verify').includes('**After the loop:**'));
+    assert.ok(!skillOf(def.repo, 'skill-4-verify').includes('**After the loop:**'));
+    for (const r of [noCheck.repo, def.repo]) assert.match(skillOf(r, 'skill-4-verify'), /^\| 2 \| Lint and format \|/m);
+  } finally {
+    rmSync(noCheck.dir, { recursive: true, force: true });
+    rmSync(def.dir, { recursive: true, force: true });
+  }
+});
+
+test('render --vars lists CODEX_IN_VERIFY and REPORTING_RULES_AFTER_PR', () => {
+  const r = node('render.mjs', ['--vars']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /\bCODEX_IN_VERIFY\b/);
+  assert.match(r.stdout, /\bREPORTING_RULES_AFTER_PR\b/);
+});
+
+test('the decision sheet lists each fixed Codex finding; "ran in verify" only with codexInVerify', () => {
+  const def = bootstrapRepo();
+  const civ = bootstrapRepo(civOn);
+  try {
+    const sheet = skillOf(def.repo, 'decision-sheet');
+    assert.doesNotMatch(sheet, /ran in verify/);
+    assert.ok(sheet.includes('A fixed finding is not a question'));
+    assert.ok(sheet.includes('findings fixed (<file:line> — <one-line gist>, …)'));
+    assert.match(skillOf(civ.repo, 'decision-sheet'), /ran in verify/);
+  } finally {
+    rmSync(def.dir, { recursive: true, force: true });
+    rmSync(civ.dir, { recursive: true, force: true });
+  }
+});
+
+test('decision 3B: in "to PR" mode the decision sheet runs before the one commit, with --fix and a test gate', () => {
+  const def = bootstrapRepo();
+  const noCodex = bootstrapRepo((p) => { p.modules.codex = false; return p; });
+  const noSheet = bootstrapRepo((p) => { p.modules['decision-sheet'] = false; return p; });
+  try {
+    const pipe = skillOf(def.repo, 'skill-auto-pipeline');
+    const i5 = pipe.indexOf('5. **Decision sheet**'), i6 = pipe.indexOf('6. **Commit**');
+    assert.ok(i5 >= 0 && i6 >= 0 && i5 < i6, `${i5} ${i6}`);
+    const item5 = pipe.slice(i5, i6);
+    for (const want of ['--fix', 'decision sheet: done', 'tree: <mark>', 'decision sheet: gate failed', 'FAILED: decision sheet', 'do not commit',
+      'git log --format=%s <base>..HEAD', '**After the commit**', 'without `--fix`', 'DOCUMENTED', 'COMMITTED — READY TO PUSH', '- HH:MM:SS — ']) {
+      assert.ok(item5.includes(want), want);
+    }
+    const commit = between(pipe, '6. **Commit**', '**commit mode:**');
+    assert.ok(commit.includes('do item 5.2 (Which case)'));
+    // a resume after the commit skips a sheet that is done; the sub-items never read as the Commit or Ship item
+    assert.match(item5, /lists the plan's commit, and a Timeline entry, after its `- HH:MM:SS — ` prefix, starts with `decision sheet: done` → done; go to the Ship item/);
+    for (const want of ['item 5.6 (After the commit)', 'item 5.7 (After a failed gate)', 'item 5.5 (Test gate)', 'the sheet names no file that its fixes touched', 'take the tree mark again']) {
+      assert.ok(item5.includes(want), want);
+    }
+    assert.doesNotMatch(item5, /→ item [367] \(/);
+    // the tree mark follows file contents (an edit inside an untracked file changes it), not only line counts
+    assert.ok(item5.includes('git hash-object -- <path> <path> …'));
+    // a new folder lists each file, so an edit inside it changes the mark
+    assert.ok(item5.includes('git status --porcelain --untracked-files=all'));
+    assert.ok(item5.includes('git hash-object <report dir>/<slug>-tree.txt'));
+    assert.doesNotMatch(item5, /shortstat/);
+    assert.ok(commit.includes("the decision sheet's fixes"));
+    assert.ok(between(pipe, '**Resume:**', '## Report protocol').includes('Which case → After the commit'));
+    assert.ok(readF(def.repo, '.codex/skills/validate-implementation/SKILL.md').includes('git ls-files --others --exclude-standard'));
+    assert.match(readF(def.repo, 'AGENTS.md'), /`\/decision-sheet` \("to PR" mode\) → one commit for the whole plan/);
+    assert.ok(readF(def.repo, 'AGENTS.md').includes('In "to PR" mode the pipeline runs it before the commit'));
+    // codex off: the sheet runs without --fix
+    assert.ok(!between(skillOf(noCodex.repo, 'skill-auto-pipeline'), '**Before the commit.**', '**No change**').includes('--fix'));
+    // decision sheet off: no sheet text, the numbers stay
+    const off = skillOf(noSheet.repo, 'skill-auto-pipeline');
+    for (const bad of ['Decision sheet', 'decision sheet: done', "decision sheet's fixes", 'decision sheet']) assert.ok(!off.includes(bad), bad);
+    assert.ok(off.includes('6. **Commit**'));
+    assert.ok(off.includes('7. **Ship**'));
+  } finally {
+    for (const r of [def, noCodex, noSheet]) rmSync(r.dir, { recursive: true, force: true });
+  }
+});
+
+test('the skill-5-ship browser-test rebuild of the sheet runs no second Codex review', () => {
+  const { dir, repo } = bootstrapRepo(webUi);
+  try {
+    assert.match(skillOf(repo, 'skill-5-ship'), /build the sheet again first: read `\.claude\/skills\/decision-sheet\/SKILL\.md` and follow it with the same `--out` and `--no-codex`, and copy the Codex line and the Codex questions from the old sheet into the new one/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('run-usage.mjs ships as a core script: executable, its self-test passes, a Commands row and allow rules', () => {
+  const { dir, repo } = bootstrapRepo();
+  try {
+    for (const f of ['run-usage.mjs', 'run-usage.selftest.mjs']) {
+      const p = path.join(repo, '.claude/scripts', f);
+      assert.ok(existsSync(p), f);
+      assert.ok(statSync(p).mode & 0o100, `${f} is not executable`);
+    }
+    const env = { ...process.env };
+    delete env.NODE_TEST_CONTEXT;
+    const t = spawnSync(process.execPath, ['--test', '--test-reporter=tap', path.join(repo, '.claude/scripts/run-usage.selftest.mjs')], { encoding: 'utf8', env });
+    assert.equal(t.status, 0, t.stdout + t.stderr);
+    assert.match(t.stdout, /^# fail 0$/m);
+    assert.ok(Number(t.stdout.match(/^# pass (\d+)$/m)?.[1]) > 0, t.stdout);
+    for (const f of ['AGENTS.md', 'README.md']) {
+      assert.ok(readF(repo, f).includes('| Run usage (one pipeline run) | `node .claude/scripts/run-usage.mjs <run .log>` |'), f);
+      assert.ok(readF(repo, f).includes('| Test run-usage.mjs | `node --test .claude/scripts/run-usage.selftest.mjs` |'), f);
+    }
+    const allow = JSON.parse(readF(repo, '.claude/settings.json')).permissions.allow;
+    assert.ok(allow.includes('Bash(node .claude/scripts/run-usage.mjs *)'));
+    assert.ok(allow.includes('Bash(node --test .claude/scripts/run-usage.selftest.mjs)'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('plan validation runs max 2 rounds, with and without Codex', () => {
+  const def = bootstrapRepo();
+  const noCodex = bootstrapRepo((p) => { p.modules.codex = false; return p; });
+  try {
+    for (const r of [def.repo, noCodex.repo]) {
+      const v = skillOf(r, 'skill-auto-validate-plan');
+      assert.match(v, /^## Rounds \(max 2\)$/m);
+      assert.ok(v.includes('Never run a third round'));
+      assert.doesNotMatch(v, /max 4/i);
+      assert.doesNotMatch(v, /fifth round/);
+      assert.ok(skillOf(r, 'skill-1-plan').includes('all rounds (max 2)'));
+      const agents = readF(r, 'AGENTS.md');
+      assert.ok(agents.includes('(max 2 rounds)'));
+      assert.ok(!agents.includes('(max 4 rounds)'));
+    }
+  } finally {
+    rmSync(def.dir, { recursive: true, force: true });
+    rmSync(noCodex.dir, { recursive: true, force: true });
+  }
+});
+
+test('unusedParts offers codexInVerify only while the codex module is on and the setting is off', async () => {
+  const { unusedParts } = await import('../skills/bootstrap-project/scripts/render.mjs');
+  const base = () => JSON.parse(readFileSync(EXAMPLE, 'utf8'));
+  const keys = (p) => unusedParts(p).map((i) => `${i.group}:${i.key}`);
+  assert.ok(keys(base()).includes('setting:codexInVerify'));
+  const noCodex = base();
+  noCodex.modules.codex = false;
+  assert.match(unusedParts(noCodex).find((i) => i.key === 'codex').what, /the finished code once in the decision sheet/);
+  assert.ok(!keys(civOn(base())).includes('setting:codexInVerify'));
+  const off = base();
+  off.modules.codex = false;
+  assert.ok(!keys(off).includes('setting:codexInVerify'));
 });

@@ -1,10 +1,10 @@
 ---
 name: skill-auto-validate-plan
 @@IF MOD_CODEX@@
-description: Automated validation loop for a .plans/ file — runs the Claude plan-validator agent and the repo's Codex validate-plan skill (through codex exec) in parallel, checks all findings against the repo and @@PARENT_PLAN@@, applies the valid fixes to the plan, and validates again. When one validator is not available, it continues with the other and says so. Each round leaves the raw reports and one decision log. Max 4 rounds. Ends with READY + a commit message, or a list of open items. /skill-1-plan runs it after saving a plan.
+description: Automated validation loop for a .plans/ file — runs the Claude plan-validator agent and the repo's Codex validate-plan skill (through codex exec) in parallel, checks all findings against the repo and @@PARENT_PLAN@@, applies the valid fixes to the plan, and validates again. When one validator is not available, it continues with the other and says so. Each round leaves the raw reports and one decision log. Max 2 rounds. Ends with READY + a commit message, or a list of open items. /skill-1-plan runs it after saving a plan.
 @@END@@
 @@IFNOT MOD_CODEX@@
-description: Automated validation loop for a .plans/ file — runs the plan-validator agent, checks its findings against the repo and @@PARENT_PLAN@@, applies the valid fixes to the plan, and validates again. Each round leaves the raw report and one decision log. Max 4 rounds. Ends with READY + a commit message, or a list of open items. /skill-1-plan runs it after saving a plan.
+description: Automated validation loop for a .plans/ file — runs the plan-validator agent, checks its findings against the repo and @@PARENT_PLAN@@, applies the valid fixes to the plan, and validates again. Each round leaves the raw report and one decision log. Max 2 rounds. Ends with READY + a commit message, or a list of open items. /skill-1-plan runs it after saving a plan.
 @@END@@
 argument-hint: "[plan file]"
 ---
@@ -47,7 +47,7 @@ Either validator can be unavailable: Codex (CLI missing, not logged in, network,
 - Both OFF in the same round → stop with status `BLOCKED` and the two reasons.
 @@END@@
 
-## Rounds (max 4)
+## Rounds (max 2)
 
 For round `n` = 1, then each next round only if the previous round changed the plan:
 
@@ -121,8 +121,8 @@ Write one decision log with the Write tool at `.plans/.validations/<plan-base>-r
 @@IFNOT MOD_CODEX@@
 - The plan was not edited this round, no `REGRESSION` is open, and the verdict is APPROVE or every finding was rejected with evidence → **READY**, stop.
 @@END@@
-- The round edited the plan and `n` < 4 → run round `n+1`. A later round validates every fix; never finish on edits that no round validated while a round remains.
-- Round 4 is still not clean → stop with status `OPEN ITEMS`. Never run a fifth round.
+- The round edited the plan and `n` < 2 → run round `n+1`. A later round validates every fix; never finish on edits that no round validated while a round remains.
+- Round 2 is still not clean → stop with status `OPEN ITEMS`. Never run a third round.
 
 ## Final report
 

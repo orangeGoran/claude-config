@@ -138,6 +138,7 @@
   },
   "pipeline": {
     "defaultMode": "pr",
+    "codexInVerify": false,
     "runAllow": [],
     "preflight": [],
     "services": [

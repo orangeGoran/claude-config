@@ -117,6 +117,9 @@ export function checkParams(p) {
   if (!str(r.parentPlan)) errs.push('rules.parentPlan is required (for example ".plans/20261109-205757-parent.md" or "docs/PLAN.md")');
   const mode = p.pipeline?.defaultMode ?? 'pr';
   if (!MODES.includes(mode)) errs.push(`pipeline.defaultMode must be one of ${MODES.join(', ')}`);
+  const civ = p.pipeline?.codexInVerify;
+  if (civ !== undefined && typeof civ !== 'boolean') errs.push('pipeline.codexInVerify must be true or false');
+  else if (civ === true && p.modules?.codex === false) errs.push('pipeline.codexInVerify needs modules.codex');
   for (const k of Object.keys(p.modules || {})) {
     if (!MODULES.includes(k)) errs.push(`modules.${k} is not a known module (${MODULES.join(', ')})`);
   }
@@ -186,7 +189,7 @@ export const moduleOn = (p, m) => p.modules?.[m] !== false;
 
 // What each module does for the owner, in plain words (the "not used" list of the hand-off)
 const MODULE_INFO = {
-  codex: 'Codex checks the plan and the finished code a second time, with another AI (.codex/skills/validate-plan, validate-implementation)',
+  codex: 'Codex checks the plan a second time with another AI, and the finished code once in the decision sheet (.codex/skills/validate-plan, validate-implementation)',
   changelog: 'a changelog entry for each PR, the changelog-entry skill and a GitHub check that blocks a PR without an entry (changelog.d/)',
   'decision-sheet': 'a PR decision sheet: at most 5 yes/no questions only a person can answer, plus what the machines already checked',
   'test-review': 'an independent review of the tests of a change, with revert checks (test-review skill, test-reviewer agent)',
@@ -228,6 +231,9 @@ export function unusedParts(p, repo = null) {
   }
   const t = p.git?.tickets || {};
   if (t.evidence !== true) out.push({ group: 'setting', key: 'tickets.evidence', what: 'a comment with the run evidence on the GitHub issue of each PR', turnOn: 'git.tickets.evidence = true' });
+  if (moduleOn(p, 'codex') && p.pipeline?.codexInVerify !== true) {
+    out.push({ group: 'setting', key: 'codexInVerify', what: 'a Codex review in each verify round, next to the Claude code review (more tokens per run)', turnOn: 'pipeline.codexInVerify = true' });
+  }
   if (!t.board) out.push({ group: 'setting', key: 'tickets.board', what: 'move the issue to a status on a GitHub project board when the PR opens', turnOn: 'git.tickets.board = {owner, number, status}' });
   if (!arr(p.pipeline?.services).length) out.push({ group: 'setting', key: 'services', what: 'check that the services a run needs (API, database container) are up before it starts', turnOn: 'pipeline.services = [{name, url | container}]' });
   if (!arr(p.pipeline?.preflight).length) out.push({ group: 'setting', key: 'preflight', what: 'commands every run needs first (for example a generator whose output is gitignored)', turnOn: 'pipeline.preflight = ["<command>"]' });
@@ -354,8 +360,11 @@ export function buildVars(p, now = new Date()) {
   ];
   // the repo's own rows (dev server, services, contract export), kept on every upgrade
   const extraRows = arr(st.extraCommands).map((x) => `| ${str(x.label)} | ${code(str(x.cmd))}${str(x.note) ? ' ' + str(x.note) : ''} |`);
+  // the core run-usage script: fixed rows, not project commands
+  const usageRows = ['| Run usage (one pipeline run) | `node .claude/scripts/run-usage.mjs <run .log>` |',
+    '| Test run-usage.mjs | `node --test .claude/scripts/run-usage.selftest.mjs` |'];
   const commandsMd = '| What | Command |\n| --- | --- |\n' +
-    [...commandRows.map(([k, v]) => `| ${k} | ${str(v) ? code(str(v)) : NA} |`), ...extraRows].join('\n');
+    [...commandRows.map(([k, v]) => `| ${k} | ${str(v) ? code(str(v)) : NA} |`), ...usageRows, ...extraRows].join('\n');
 
   // allow rules: one prefix rule per real command
   const allowCmds = [...new Set([st.installCmd, ...Object.values(cmd)].map((c) => str(c)).filter(Boolean)
@@ -370,6 +379,7 @@ export function buildVars(p, now = new Date()) {
     'Bash(git hash-object*)',
     'Bash(grep *)', 'Bash(ls *)', 'Bash(diff *)', 'Bash(cp .plans/*)', 'Bash(mkdir -p .plans/*)',
     'Bash(gh issue view*)', 'Bash(gh run view*)',
+    'Bash(node .claude/scripts/run-usage.mjs *)', 'Bash(node --test .claude/scripts/run-usage.selftest.mjs)',
     ...allowCmds.map((c) => `Bash(${c}*)`),
     ...(moduleOn(p, 'codex') ? CODEX_ALLOW : []),
     ...(moduleOn(p, 'step-gate') ? ['Bash(bash .claude/scripts/workflow-complete-step.sh*)'] : []),
@@ -519,8 +529,9 @@ export function buildVars(p, now = new Date()) {
   // the pipeline order in AGENTS.md: the same as skill-auto-pipeline
   const chain = ['`/skill-2-implement`', '`/skill-3-test`',
     `\`/skill-4-verify\` (\`/code-review\` loop + rule audit${moduleOn(p, 'test-review') ? ', then `/test-review --fix`' : ''})`,
-    'plan to `.plans/done/` and one commit for the whole plan',
-    ...(moduleOn(p, 'decision-sheet') ? ['`/decision-sheet`'] : []), '`/skill-5-ship` (draft PR)'].join(' → ');
+    'plan to `.plans/done/`',
+    ...(moduleOn(p, 'decision-sheet') ? ['`/decision-sheet` ("to PR" mode)'] : []),
+    'one commit for the whole plan', '`/skill-5-ship` (draft PR)'].join(' → ');
 
   // a migration that a generator writes has no file name in the plan: these words count too
   const migrationHints = arr(ly.migrationHints).length ? arr(ly.migrationHints).map((x) => str(x)).filter(Boolean) : ['migration:generate'];
@@ -647,6 +658,8 @@ export function buildVars(p, now = new Date()) {
     HAS_CONTRACTS: Boolean(contractSource),
     CONTRACT_IN_RULES: contractInRules,
     MOD_CODEX: moduleOn(p, 'codex'),
+    // Codex in the verify bug hunt; plan validation and the decision sheet use MOD_CODEX
+    CODEX_IN_VERIFY: moduleOn(p, 'codex') && p.pipeline?.codexInVerify === true,
     MOD_CHANGELOG: moduleOn(p, 'changelog'),
     // the rendered validator always accepts `summary`; a project validator
     // (changelog.validateCmd) has its own field list, so it says so with changelog.summary
@@ -682,6 +695,9 @@ export function buildVars(p, now = new Date()) {
   // one shared block for every skill that reports (templates/partials/reporting-rules.md)
   vars.REPORTING_RULES = renderText(readFileSync(path.join(TEMPLATES, 'partials', 'reporting-rules.md'), 'utf8'),
     vars, 'templates/partials/reporting-rules.md').replace(/\n+$/, '');
+  // the "after the PR opened" rules: only for the skills that run after a PR opened
+  vars.REPORTING_RULES_AFTER_PR = renderText(readFileSync(path.join(TEMPLATES, 'partials', 'reporting-rules-after-pr.md'), 'utf8'),
+    vars, 'templates/partials/reporting-rules-after-pr.md').replace(/\n+$/, '');
   return vars;
 }
 

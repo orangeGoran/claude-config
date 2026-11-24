@@ -30,10 +30,10 @@ You run the **Test** step: `/skill-1-plan` → `/skill-2-implement` → `/skill-
 
 - `/skill-2-implement` writes the unit tests with each step. Here, compare the plan's **@@PLAN_TESTS@@** section with the test files, and write only the missing ones. Write the end-to-end tests here.
 @@IF HAS_TEST_HARNESS_DOC@@
-- Put tests where the package's existing tests are. Follow their pattern. If the package has no tests yet, follow the pattern the plan names. Read `@@TEST_HARNESS_DOC@@` before you write or debug an end-to-end test, and the nested `AGENTS.md` of any other test folder: they list the traps of the test harness.
+- Put tests where the package's existing tests are. Follow their pattern. If the package has no tests yet, follow the pattern the plan names. `@@TEST_HARNESS_DOC@@` lists the traps of the test harness. It loads by itself when you read a file in its folder and a `CLAUDE.md` with `@AGENTS.md` sits next to it: before you write or debug an end-to-end test, read one file in that folder. When no such `CLAUDE.md` sits next to it, or the folder has no other file, read `@@TEST_HARNESS_DOC@@` itself.
 @@END@@
 @@IFNOT HAS_TEST_HARNESS_DOC@@
-- Put tests where the package's existing tests are. Follow their pattern. If the package has no tests yet, follow the pattern the plan names. Read the nested `AGENTS.md` of the test folder first, if it has one: it lists the traps of the test harness.
+- Put tests where the package's existing tests are. Follow their pattern. If the package has no tests yet, follow the pattern the plan names. A nested `AGENTS.md` of the test folder, if there is one, lists the traps of the test harness. It loads by itself when you read a file in its folder and a `CLAUDE.md` with `@AGENTS.md` sits next to it: before you create a test file there, read one file in that folder. When no such `CLAUDE.md` sits next to it, or the folder has no other file, read the `AGENTS.md` itself.
 @@END@@
 @@IF HAS_HTTP_API@@
 - **End-to-end tests are mandatory for each new or changed endpoint** when the project has an HTTP API. Each endpoint gets tests for: success, a validation error, 401 and 403 for each role that the plan's access rules name, 404 for a missing or foreign resource, and, when the project is multi-tenant, a request from another tenant that gets no data. Use the shared test helpers that the existing end-to-end tests use. When the repo has no end-to-end command yet ("Test (end to end)" is "not available yet"), write the cases as an open question, not as skipped tests.
@@ -87,7 +87,7 @@ Run it when the plan's **@@PLAN_TESTS@@** section has an **AI output** subsectio
 @@END@@
 2. **Judge by the exit code and the error count, never by the tail of the output.** A long output can bury an error under many warnings. Search it with the Grep tool for the error marker of the linter. Exit 0 → go on.
 3. Lint errors (not only warnings) → read them from that output, fix the code (never the lint config), and run the lint command again.
-4. **After any lint fix, run the scoped tests of 2a and 2b again once.** A lint fix can break a test. A failure → back to that loop.
+4. **After any lint fix, run the scoped tests of 2a and 2b again once.** A lint fix can break a test. A failure → back to that loop. Step 3 runs the full suites.
 @@IF HAS_BROWSER_TEST@@
 
 ## Step 2.5 — Browser test
@@ -138,9 +138,10 @@ Call the skill's scripts with the home folder written out, for example `node /Us
 
 **No claim without a fresh run.**
 
-1. Run each full test command once, not scoped (AGENTS.md, **Commands**, "Test (full)", and "Test (end to end)" when the scope has end-to-end tests). A row that is "not available yet" is reported as such.
+1. Run each full test command once per tree state, not scoped (AGENTS.md, **Commands**, "Test (full)", and "Test (end to end)" when the plan's **@@PLAN_TESTS@@** section lists end-to-end tests, the plan's **@@PLAN_VERIFY@@** lists the command, or the change adds or changes an end-to-end test or an entry point that one covers). A row that is "not available yet" is reported as such.
 2. Read every failure from that output; do not run the suite again to find them. Search a long output with the Grep tool for the failure markers: ` FAIL ` and `✗` or `×` lines (Vitest, Jest), `✘` and `<n> failed` lines (Playwright), `FAILED` and `ERROR` lines (pytest).
-3. Read the result counts per command: passed, failed, skipped. Check for 0 failed, and that the count of tests that ran is not 0.
+   2a. A fix in this step changes the tree: after it, run the full commands of item 1 again. A failed full run stays in the evidence: write its counts. A failed suite gets one retry alone (its file with "Test (one file)", or with the file filter of "Test (end to end)") in three cases only: (1) every failing test in it shows a connection sign (`ECONNREFUSED`, `ECONNRESET`, `socket hang up`, a timeout while it connects to a service), and none shows an assertion failure (`expect(`, `Expected`, `Received`, `AssertionError`); (2) the suite crashed with a signal (`SIGSEGV`, `SIGKILL`) before it reported any test; (3) in the same full run, the suite failed after a suite of case 1, with the same connection sign and no assertion failure. Any other failure gets no retry. The gate passes only when each failed suite qualified and its retry passed; write `full run: <counts>; infra: <suite> (<sign>), retried alone: <counts>`. Any other failure, a failed retry, or a retry that cannot start keeps the gate failed: fix it (or report it as open), then run the full command again. Take the counts from the saved output (search it with the Grep tool). Never run a suite again only to read its counts.
+3. Read the result counts per command: passed, failed, skipped. Check for 0 failed (or only infra failures that item 2a cleared), and that the count of tests that ran is not 0.
 4. Only then report. A skipped test is not a pass. Results from an earlier run do not count.
 @@IF MOD_STEP_GATE@@
 5. When all tests pass, run `bash .claude/scripts/workflow-complete-step.sh <plan-basename> test` (`<plan-basename>` without `.md`).
@@ -155,6 +156,7 @@ Call the skill's scripts with the home folder written out, for example `node /Us
 - Only the unit tests ran, but the scope also needs the end-to-end tests.
 - An existing test was changed to make it pass, and the plan does not change that behavior.
 - A test that would still pass if the feature were not built.
+- A partial run reported as the full run (a retry under item 2a is not a partial run; it adds to the full run).
 
 ## Step 4 — Summary
 

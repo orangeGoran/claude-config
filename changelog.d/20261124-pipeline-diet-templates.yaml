@@ -1,0 +1,24 @@
+kind: changed
+audience: internal
+scope: bootstrap-project
+summary: |
+  Unattended pipeline runs in bootstrapped projects use fewer tokens and less time. The
+  skills no longer repeat the same full test run, lint run or file read on the same tree,
+  the verify review loop runs a second round only after a fix that changes behaviour, and
+  Codex leaves the verify step by default (it still checks the plan and reviews the code
+  once in the decision sheet, which now runs before the one commit and fixes what it
+  finds). Plan validation runs at most 2 rounds. A new script, run-usage.mjs, shows the
+  tokens, cost and minutes of each phase of one run.
+internal: |
+  New answer `pipeline.codexInVerify` (boolean, default false, needs `modules.codex`) and
+  switch `CODEX_IN_VERIFY`; `/skill-4-verify` and the pipeline's Codex blocks use it. New
+  partial `reporting-rules-after-pr.md` (`@@REPORTING_RULES_AFTER_PR@@`) for skill-5-ship,
+  decision-sheet and pr-feedback only. skill-4-verify: no lint or drift re-run per round,
+  a "No behaviour fix" stop rule, one fixing lint after the loop without a check-only
+  command, `--max-checks 3` for the test review. skill-3-test: one full run per tree state
+  and one retry alone for a suite with only connection or crash signs. skill-2-implement:
+  `--unattended` skips the full runs. skill-auto-pipeline: the regression gate counts for
+  the plan's "Test (full)", and in "to PR" mode the decision sheet runs with `--fix` before
+  the commit (tree mark, test gate, `FAILED: decision sheet`). validate-implementation reads
+  untracked files. New core scripts `.claude/scripts/run-usage.mjs` and
+  `run-usage.selftest.mjs`, with Commands rows and allow rules.
