@@ -104,6 +104,6 @@ State the file path on its own line in your reply.
 
 ## Rules
 
-- Never weaken or delete a rule in `AGENTS.md` or `@@PARENT_PLAN@@` because a reviewer disliked it. Reject the finding with the reference.
+- Never weaken or delete a rule in @@RULES_DOCS@@ because a reviewer disliked it. Reject the finding with the reference.
 - Never run `git add` or `git commit`. The owner commits.
 - If a finding needs a scope or design decision, or takes an open decision of the parent plan, do not expand the scope silently. List it under "Needs owner decision" in both the table and the copyable reply.

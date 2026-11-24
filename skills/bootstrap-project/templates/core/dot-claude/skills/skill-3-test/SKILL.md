@@ -96,7 +96,7 @@ Run it when the plan has a **Browser test** section that is not `None`. Unit tes
 
 Call the skill's scripts with the home folder written out, for example `node /Users/ana/.claude/skills/browser-usability-test/scripts/<file>.mjs` (not `~` and not `$HOME`; `QA_*=` variables in front when needed), as bare commands: the run's allow rules match that form. Click flows (a script you write in the scratchpad) run through the skill's runner, `node /Users/ana/.claude/skills/browser-usability-test/scripts/run.mjs <absolute path>/flow.mjs`, never as `node flow.mjs`. A headless run can click: "cannot click" is not a reason for `BLOCKED`. A refused command is, with the exact command quoted. Run scripts write only into `QA_DIR`, never into this tree.
 
-1. Read `~/.claude/browser-usability-test/projects/@@PROJECT_NAME@@/notes.md`. It says how to start the new code next to the app on @@APP_URL@@ (the old code), which accounts to use, and which test data writes are allowed.
+1. Read `~/.claude/browser-usability-test/projects/@@BROWSER_TEST_PROJECT@@/notes.md` (the profile is `@@BROWSER_TEST_PROJECT@@`). It says how to start the new code next to the app on @@APP_URL@@ (the old code), which accounts to use, and which test data writes are allowed.
 2. Start the new code from this tree as the notes say, in the background. Name the helper before you wait for it. A temporary config file the notes add is deleted in step 6 and is never committed.
 3. Run the `browser-usability-test` skill on the routes and siblings of the plan's **Browser test** section: the old code on @@APP_URL@@ and the new code, with the same account, width and data. Answer its questions from here, so it never stops:
 
