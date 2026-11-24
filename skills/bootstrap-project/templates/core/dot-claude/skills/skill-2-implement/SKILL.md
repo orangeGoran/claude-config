@@ -12,6 +12,7 @@ You run the **Implement** step: `/skill-1-plan` → `/skill-2-implement` → `/s
 
 - The first argument is the plan file path. If it is only a name, look for it in `.plans/`.
 - If no plan matches, or the plan is in `.plans/done/`, stop and say so. Do not pick another plan.
+- If `$ARGUMENTS` is empty and the session is interactive, list the plans in `.plans/` (not `.plans/done/`) and let the owner pick one with AskUserQuestion (a trivial pick). No plan exists → tell the owner to run `/skill-1-plan <feature>` first, and stop. A headless run with no argument stops and says so.
 
 ## Step 1: Read the rules
 
@@ -42,6 +43,7 @@ Also:
 - Follow existing patterns. @@CONTRACTS_RULE@@
 - Write doc comments for new public functions as `AGENTS.md` says.
 - After each fix, search sibling code for the same defect, and fix it or report it.
+- Do not change an existing test file unless the plan changes that behavior. If a change is necessary and the plan does not cover it, write it as an open question (Step 6) with what must change and why.
 - Install packages with the package manager at their latest version. Never type a version by hand.
 - If you find something the plan does not cover, do not deviate. Write it as an open question (Step 6) and continue with the steps that do not depend on it.
 

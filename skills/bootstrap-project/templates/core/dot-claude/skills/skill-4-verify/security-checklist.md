@@ -72,7 +72,7 @@ Use it when the change touches sign-in, sessions, tokens, cookies, an access che
 - A token is verified for signature, type and expiry before its claims are used.
 - Sign-out, a password change and a disabled account revoke the tokens and sessions of that user.
 - Invite, reset and one-time tokens are random, bound to one user and one action, expire, and work one time. They are stored as a hash.
-- A state change that a cookie authenticates checks a CSRF token.
+- A state change that a cookie authenticates checks a CSRF token. When the CSRF check lives in the shared HTTP setup, a route or a test app that skips that setup also skips the check: a test that passes there proves nothing about CSRF.
 - A link in an email comes from config, never from a `Host`, `X-Forwarded-*` or `Origin` header or a body field that an attacker can choose.
 - A limit per IP address depends on the proxy setup. The real proxy count is outside the repo, so a claim about it is `needs_validation`.
 

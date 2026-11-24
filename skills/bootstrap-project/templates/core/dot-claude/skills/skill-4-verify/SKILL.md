@@ -46,6 +46,9 @@ The rule audit (Step 2) checks compliance, not logic. Run the bug hunt yourself;
 
 1. **Claude.** Invoke the code-review skill: `Skill(skill: "code-review", args: "high --fix")`. You wrote this code, so do not review it inline yourself.
 2. **Re-test Claude's fixes.** They are not checked yet. List the files it touched (`git diff --name-only`). For each one, run the scoped tests (AGENTS.md, **Commands**, "Test (one file)") and the check-only lint and format commands again. When it touched an entry point that an end-to-end test covers (a route, a handler, a public interface), also run the matching end-to-end test ("Test (end to end)"). A command that is "not available yet" is skipped with that reason. Fix a failure before the Codex part.
+@@IF HAS_MIGRATIONS@@
+   When the fixes touched a model or an entity that maps to a table, also run the migration drift check (AGENTS.md, **Commands**) again, and carry its result into the **Migration drift** row.
+@@END@@
 3. **Record Claude's part:** findings fixed, findings deferred, files touched, re-test result. Number each finding `F1`, `F2`, … in the order found.
 4. **Codex** (skip with `--no-codex`, or when Codex is OFF for the run):
    1. **Find the CLI (round 1 only).** `command -v codex`, else `test -x ~/.local/bin/codex` (the Bash tool does not load `~/.zshrc`). Use the one you found as `<codex>`. Write the path exactly as `codex` or `~/.local/bin/codex` (with the `~`, not the expanded home folder): the allow rules match that text. Then run `<codex> login status`. Missing or not logged in → **Codex OFF for the run** ("Codex not available"; the fix for the owner: `npm install -g @openai/codex`, then `codex login`). A command that the session refuses ("requires approval") is not a missing CLI: record `permission denied: <command>`.
@@ -80,6 +83,9 @@ The rule audit (Step 2) checks compliance, not logic. Run the bug hunt yourself;
 
 1. Invoke the code-review skill: `Skill(skill: "code-review", args: "high --fix")`. You wrote this code, so do not review it inline yourself.
 2. The fixes it applied are not checked yet. List the files it touched (`git diff --name-only`). For each one, run the scoped tests (AGENTS.md, **Commands**, "Test (one file)") and the check-only lint and format commands again. When it touched an entry point that an end-to-end test covers (a route, a handler, a public interface), also run the matching end-to-end test ("Test (end to end)"). A command that is "not available yet" is skipped with that reason. Fix a failure before the next round.
+@@IF HAS_MIGRATIONS@@
+   When the fixes touched a model or an entity that maps to a table, also run the migration drift check (AGENTS.md, **Commands**) again, and carry its result into the **Migration drift** row.
+@@END@@
 3. Record the round: findings fixed, findings deferred, files touched, re-test result. Number each finding `F1`, `F2`, … in the order found.
 
 **Stop the loop** as soon as one of these is true. An early stop is the normal result:

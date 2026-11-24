@@ -27,6 +27,8 @@ A reviewer (the `plan-validator` agent, Codex, another Claude session, a person)
 
 Extract every distinct finding with its severity as given (Blocking / Should fix / Nice to have / suggestion). Number them F1, F2, … Keep a short quote of the reviewer's words.
 
+A Claude `APPROVE` with zero findings needs no work. Say so in the report, and do not invent findings to fill it.
+
 ### 3. Check each finding against the repo
 
 - Read the exact files, lines and sections the finding names. If it names a symbol, search for it.
@@ -49,9 +51,9 @@ Extract every distinct finding with its severity as given (Blocking / Should fix
 
 After you edit, and before you report, run these three checks. They catch the defects that a reconciliation round most often adds:
 
-- **Citations you moved.** Open again each `file:line` and section in or next to a hunk you edited.
+- **Citations you moved.** Open again each `file:line` and section in or next to a hunk you edited. Edits move anchors: a line number that was right before the edit can be wrong after it.
 - **Cross-references after a renumber.** If steps were added, removed or reordered, search for `step <n>` and confirm each one still points at the step it means.
-- **Each fix reached everywhere.** For each fix, find every other place the target mentions that subject (Hard rules, Endpoint access, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, @@PLAN_STEPS@@, Migrations, @@PLAN_TESTS@@, @@PLAN_VERIFY@@, and any doc-update step) and confirm none still states the old version.
+- **Each fix reached everywhere.** For each fix, find every other place the target mentions that subject (@@PLAN_GOAL@@, @@PLAN_CONTEXT@@, Hard rules, Endpoint access, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, @@PLAN_STEPS@@, Migrations, @@PLAN_TESTS@@, Browser test (when the plan has one), @@PLAN_VERIFY@@, and any doc-update step) and confirm none still states the old version.
 
 ### 5. Report and copyable reply
 
