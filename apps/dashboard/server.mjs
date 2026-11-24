@@ -26,7 +26,7 @@ import net from 'node:net';
 import { EventEmitter } from 'node:events';
 import {
   readFileSync, readdirSync, existsSync, openSync, mkdirSync, unlinkSync,
-  writeFileSync, renameSync, statSync, closeSync, readSync, realpathSync,
+  writeFileSync, renameSync, statSync, closeSync, readSync, realpathSync, appendFileSync, linkSync,
 } from 'node:fs';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -36,6 +36,8 @@ import { fileURLToPath } from 'node:url';
 import { OTHER, inlineHtml, findIssues, readMeta } from '../../scripts/artifact-copies.mjs';
 import { olderVersions } from '../../scripts/page-versions.mjs';
 import { plistScript } from './restart.mjs';
+import { parseWaitsFor, prMap, prEvents, outcomeEvents, runningCount, canAutoLaunch, capLines, redact } from './watch.mjs';
+import { NOTIFIERS } from '../scout/scout.mjs';
 
 const VERSION = '1.0.0';
 const HOME = os.homedir();
@@ -77,6 +79,11 @@ Environment
   DASH_SUMMARY_MODEL=<m>
                       model the claude CLI uses for summaries (default haiku),
                       e.g. sonnet or claude-opus-5-5
+  DASH_WATCH_MS=<n>   how often the event watcher runs, in ms (default 60000;
+                      0 turns it off — set it for a test dashboard with the real HOME)
+  DASH_NO_NOTIFY=1    the watcher sends no macOS notifications
+  DASH_NOTIFIER=<f>   the notifier program the watcher calls (default
+                      terminal-notifier when installed, else osascript)
   QA_REPORTS_PORT=<n> port for the browser-usability-test report pages
                       (default 4898, http://localhost:<n>/<project>/<file>.html)
   QA_HOME=<dir>       where those reports live (default
@@ -303,6 +310,12 @@ const planBranch = (content) => {
   const m = content.match(/^\s*[-*]\s*\*\*Branch\*\*:\s*`?([\w./-]+)`?\s*$/m);
   return m ? m[1] : null;
 };
+// The base branch a plan names ("- **Base**: main"). A value that starts with "-" does not
+// match, so it can never reach `git fetch` as an option.
+const planBase = (content) => {
+  const m = content.match(/^\s*[-*]\s*\*\*Base\*\*:\s*`?([\w./][\w./-]*)`?\s*$/m);
+  return m ? m[1] : null;
+};
 const planBranches = {};   // root -> { slug: branch named in the plan }
 // the branch a plan names, when it is not the pipeline's own auto/<slug>
 const ownBranch = (proj, slug) => {
@@ -497,7 +510,10 @@ const listPlans = async (proj) => {
         run = pipelineRunInfo(proj, slug);
         live = await pipelineLive(proj, slug);
       } else ({ run, live } = genericRunInfo(proj, slug));
+      let reportAt = null;
+      try { reportAt = statSync(proj.hasPipeline ? path.join(proj.autoRunsDir, slug + '.md') : runReportFile(proj, slug)).mtimeMs; } catch {}
       return {
+        reportAt, waits: planWaits(key, content),
         slug, file: f, key,
         title: planTitle(content) || slug,
         summary: summaries[slug] || null,
@@ -533,7 +549,7 @@ const listPlans = async (proj) => {
         slug, file: slug + '.md', key, title,
         summary: summaries[slug] || null, summarizing: false,
         validations: validationRounds(proj, slug),
-        run: null, live: false, worktree: false, archived: true,
+        run: null, live: false, worktree: false, archived: true, reportAt: null, waits: null,
         status: meta[slug]?.status || null, tags: meta[slug]?.tags || [],
         ...planSessions(proj, slug),
         asked: existsSync(chatFile(proj, slug)),
@@ -1584,8 +1600,11 @@ const runPrAction = async (proj, b) => {
     if (!['merge', 'squash', 'rebase'].includes(b.method)) return { ok: false, output: 'Unknown merge method.' };
     if (!/^[0-9a-f]{40}$/.test(String(b.head))) return { ok: false, output: 'Bad head commit.' };
     // GitHub refuses when someone pushed after the page loaded, so what you reviewed is what merges
+    // marked before the merge: the watcher then leaves the pull to this button (no two pulls at once)
+    const mark = proj.root + '#' + n;
+    buttonMerged.set(mark, Date.now());
     const m = await gh(proj, ['pr', 'merge', n, '--' + b.method, '--match-head-commit', b.head, ...(b.admin ? ['--admin'] : [])]);
-    if (!m.ok) return m;
+    if (!m.ok) { buttonMerged.delete(mark); return m; }
     const v = await gh(proj, ['api', 'repos/{owner}/{repo}/pulls/' + n, '--jq', '{baseRefName: .base.ref, headRefName: .head.ref}']);
     const { baseRefName: base, headRefName: head } = v.ok ? JSON.parse(v.out) : {};
     const notes = [];
@@ -1611,6 +1630,402 @@ const runPrAction = async (proj, b) => {
     return gh(proj, ['pr', 'edit', n, '--body-file', '-'], lines.join('\n'));
   }
   return { ok: false, output: 'Unknown action.' };
+};
+
+// ---------- event watcher ----------
+// Every WATCH_MS, with no page open, the server reads the PRs and the runs of each project,
+// writes what changed as events (<stateDir>/events.jsonl), starts a plan when the
+// `- **Waits for**:` lines of its header became true, pulls the main checkout after a merge
+// on GitHub, and sends a macOS notification when something needs the owner. One server per
+// HOME runs it (watcher.lock). Guide: docs/plans-dashboard.md, "Waits for and the event watcher".
+const WATCH_MS = process.env.DASH_WATCH_MS == null ? 60000 : +process.env.DASH_WATCH_MS;   // 0: off
+const WATCH_LIMIT = 4;                     // runs at the same time per project (orchestrator parent plan, Q6)
+const STALE_RUN_MS = 30 * 60 * 1000;       // a "running" report older than this and no process: a dead run
+const WATCH_LOCK = path.join(CENTRAL, 'watcher.lock');
+const EVENTS_KEPT = 5000;
+const PENDING_MS = 10 * 60 * 1000;         // an auto-start that shows no run after this has failed
+const BUTTON_MARK_MS = 60 * 60 * 1000;
+// PR_JQ plus the times the watcher compares
+const WATCH_PR_JQ = PR_JQ.replace(/\}\]$/, ', createdAt: .created_at, closedAt: .closed_at, updatedAt: .updated_at}]');
+const OWN_REPO_NOTE = "Not pulled: this is the dashboard's own repo. Pull and restart by hand (AGENTS.md).";
+const waitStatus = new Map();     // plan key -> [{ text, met, error }] of the last tick
+const launchedNow = new Map();    // plan key -> its `launched` record in watch.json
+const buttonMerged = new Map();   // "<root>#<number>" -> when the merge button merged it
+
+const watchFile = (proj) => path.join(proj.stateDir, 'watch.json');
+const eventsFile = (proj) => path.join(proj.stateDir, 'events.jsonl');
+const loadWatch = (proj) => {
+  const w = loadJson(watchFile(proj), null);
+  const blank = { prs: null, outcomes: null, launched: {}, met: {}, errors: {}, since: new Date().toISOString(), checkedAt: null };
+  return w && typeof w === 'object' ? { ...blank, ...w, since: w.since || blank.since } : blank;
+};
+
+// The lock: one JSON file that names the server that runs the watcher. Each side effect of a
+// tick checks it first (fence), so a server that lost the lock stops at once.
+const LOST_LOCK = new Error('lost the watcher lock');
+const psCommand = (pid) => {
+  try { return execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 5000 }).trim(); }
+  catch { return null; }
+};
+let ownCommand = null;
+const holdsLock = () => { try { return JSON.parse(readFileSync(WATCH_LOCK, 'utf8')).pid === process.pid; } catch { return false; } };
+const fence = () => { if (!holdsLock()) throw LOST_LOCK; };
+// link() fails when the file exists, so only one server gets it, and the lock is never half written
+const linkLock = () => {
+  const tmp = WATCH_LOCK + '.' + process.pid;
+  ownCommand ??= psCommand(process.pid);
+  // a lock with no command line could be judged stale by a server whose ps works: try next tick
+  if (!ownCommand) return false;
+  writeFileSync(tmp, JSON.stringify({ pid: process.pid, port: PORT, startedAt: new Date().toISOString(), cmd: ownCommand }));
+  try { linkSync(tmp, WATCH_LOCK); return true; } catch { return false; } finally { try { unlinkSync(tmp); } catch {} }
+};
+// stale: unreadable and older than 10 s, a dead PID, or a PID that another program has now
+const lockState = () => {
+  let raw;
+  try { raw = readFileSync(WATCH_LOCK, 'utf8'); } catch { return { gone: true }; }
+  let l = null;
+  try { l = JSON.parse(raw); } catch {}
+  if (!l || typeof l !== 'object') {
+    try { return { stale: Date.now() - statSync(WATCH_LOCK).mtimeMs > 10000, pid: null }; } catch { return { gone: true }; }
+  }
+  const pid = l.pid ?? null;
+  if (!pid || !pidAlive(pid)) return { stale: true, pid };
+  // a ps call that fails (load, timeout) says nothing: a live holder is never judged stale on it
+  const cmd = psCommand(pid);
+  if (cmd != null && cmd !== l.cmd) return { stale: true, pid };
+  return { stale: false };
+};
+/** Takes the watcher lock when it is free or stale. Returns true when this server holds it now. */
+const takeLock = () => {
+  mkdirSync(CENTRAL, { recursive: true });
+  if (linkLock()) return true;
+  const s = lockState();
+  if (s.gone) return linkLock();
+  if (!s.stale) return false;
+  // only one server can move the stale file away; the others get ENOENT and stop
+  const moved = WATCH_LOCK + '.stale.' + process.pid;
+  try { renameSync(WATCH_LOCK, moved); } catch { return false; }
+  let m = null;
+  try { m = JSON.parse(readFileSync(moved, 'utf8')); } catch {}
+  const movedPid = m && typeof m === 'object' ? m.pid ?? null : null;
+  if (movedPid !== s.pid) {   // another server replaced the lock in between: put it back
+    try { linkSync(moved, WATCH_LOCK); } catch {}
+    try { unlinkSync(moved); } catch {}
+    return false;
+  }
+  try { unlinkSync(moved); } catch {}
+  return linkLock();
+};
+const saveWatch = (proj, w) => {
+  fence();
+  mkdirSync(proj.stateDir, { recursive: true });
+  const f = watchFile(proj);
+  writeFileSync(f + '.tmp', JSON.stringify(w, null, 2) + '\n');
+  renameSync(f + '.tmp', f);
+};
+/** Appends events to the project's events.jsonl, one JSON line each. The file keeps its last 5000 lines. */
+const addEvents = (proj, list) => {
+  if (!list.length) return;
+  fence();
+  mkdirSync(proj.stateDir, { recursive: true });
+  const f = eventsFile(proj), at = new Date().toISOString();
+  appendFileSync(f, list.map((e) => JSON.stringify({ at, project: proj.name, ...e }) + '\n').join(''));
+  let t = '';
+  try { t = readFileSync(f, 'utf8'); } catch {}
+  if (t.split('\n').length - 1 > EVENTS_KEPT) {
+    writeFileSync(f + '.tmp', capLines(t, EVENTS_KEPT));
+    renameSync(f + '.tmp', f);
+  }
+};
+// the address a click opens: the domain setup-macos.sh gave Caddy, else the local port (the scout's dashUrl)
+const dashUrl = () => {
+  let host = '';
+  try { host = (readFileSync(path.join(CENTRAL, 'caddy-site.caddy'), 'utf8').match(/^([^\s{]+)\s*\{/m) || [])[1] || ''; } catch {}
+  return host ? 'https://' + host : 'http://127.0.0.1:' + PORT;
+};
+/** Shows a macOS notification. A click opens `query` on the dashboard (needs terminal-notifier). */
+const notifyMac = (title, text, query) => {
+  if (process.env.DASH_NO_NOTIFY) return;
+  const custom = process.env.DASH_NOTIFIER;
+  if (!custom && process.platform !== 'darwin') return;
+  fence();
+  const tn = custom || NOTIFIERS.find((f) => existsSync(f));
+  const msg = redact(text);
+  if (tn) execFile(tn, ['-title', title, '-message', msg, '-open', dashUrl() + '/' + query, '-group', 'plans-' + query], () => {});
+  else execFile('osascript', ['-e', `display notification ${JSON.stringify(msg)} with title ${JSON.stringify(title)}`], () => {});
+};
+const selQuery = (proj, slug) => '?sel=' + encodeURIComponent(proj.name + '/' + slug);
+
+// a condition names its project by `name`, else by a `short` that only one project has
+const findProject = (ref, projects) => {
+  const named = projects.find((p) => p.name === ref);
+  if (named) return { proj: named };
+  const shorts = projects.filter((p) => p.short && p.short === ref);
+  if (shorts.length === 1) return { proj: shorts[0] };
+  return { reason: shorts.length ? 'two projects have this short name' : 'unknown project' };
+};
+// one git or gh call per key per tick, shared by every plan that asks
+const once = (cache, key, fn) => { if (!cache.has(key)) cache.set(key, fn()); return cache.get(key); };
+/**
+ * Checks one `Waits for:` condition of a plan. Returns `{ met, error, fix }`: `error` is a short,
+ * redacted reason or null; `fix` is true when the owner must change something.
+ */
+const checkCondition = async (proj, planText, cond, cache, projects) => {
+  const fail = (error, fix) => ({ met: false, error: redact(error), fix });
+  if (cond.kind === 'bad') return fail('cannot read this condition', true);
+  if (cond.kind === 'pr' || cond.kind === 'plan') {
+    const f = findProject(cond.project, projects);
+    if (!f.proj) return fail(f.reason, true);
+    const other = f.proj;
+    if (cond.kind === 'pr') {
+      const r = await once(cache, 'pr ' + other.root + ' ' + cond.number,
+        () => gh(other, ['api', 'repos/{owner}/{repo}/pulls/' + cond.number, '--jq', '{merged_at}']));
+      if (!r.ok) return fail(ghProblem(r.output), false);
+      try { return { met: !!JSON.parse(r.out).merged_at, error: null }; } catch { return fail('gh gave no PR data', false); }
+    }
+    let branch = null, found = false;
+    for (const d of [other.plansDir, other.doneDir])
+      try { branch = planBranch(readFileSync(path.join(d, cond.slug + '.md'), 'utf8')); found = true; break; } catch {}
+    const list = prLists[other.root] || {};
+    if (list.error) return fail(list.error, false);
+    const pr = (list.allByBranch || {})[branch || 'auto/' + cond.slug];
+    // a slug with a typo has no plan file and no PR: say so, or the plan waits for ever in silence
+    if (!found && !pr) return fail('unknown plan', true);
+    return { met: !!pr && pr.state === 'MERGED', error: null };
+  }
+  // submodule <path> contains <sha>: the pointer on origin/<base> of this plan's own project
+  const base = planBase(planText);
+  if (!base) return fail('no Base line', true);
+  const sub = path.join(proj.root, cond.path);
+  if (!existsSync(path.join(sub, '.git'))) return fail('submodule not initialized in the main checkout', true);
+  if (!(await once(cache, 'fetch ' + proj.root + ' ' + base, () => gitIn(proj.root, ['fetch', '-q', 'origin', base]))).ok)
+    return fail('cannot fetch origin/' + base, false);
+  const tree = await gitIn(proj.root, ['ls-tree', 'origin/' + base, '--', cond.path]);
+  const ptr = (tree.out.match(/^160000 commit ([0-9a-f]{40})\t/) || [])[1];
+  if (!tree.ok || !ptr) return fail('not a submodule', true);
+  if (!(await once(cache, 'subfetch ' + sub, () => gitIn(sub, ['fetch', '-q', 'origin']))).ok)
+    return fail('cannot fetch the submodule', false);
+  if (!(await gitIn(sub, ['cat-file', '-e', cond.sha + '^{commit}'])).ok) return fail('commit not found (unknown or ambiguous)', true);
+  const r = await gitRaw(sub, ['merge-base', '--is-ancestor', cond.sha, ptr]);
+  if (r.code === 0) return { met: true, error: null };
+  if (r.code === 1) return { met: false, error: null };
+  return fail('cannot compare the commits', false);
+};
+// an auto-start only merges with the owner: "to PR" when the project has it, else its default mode
+const autoMode = (proj) => {
+  const modes = pipelineModes(proj);
+  return modes.some((m) => m.id === 'pr') ? 'pr' : (modes.find((m) => m.default) || modes[0] || {}).id;
+};
+// the watcher never pulls the checkout it runs from: that needs the restart check of AGENTS.md.
+// A dashboard that runs from a worktree of its repo shares the main checkout's git folder
+// (--git-common-dir), so it does not pull the main checkout (the service's code) either.
+const gitCommonDir = (dir) => {
+  try {
+    const out = execFileSync('git', ['-C', dir, 'rev-parse', '--git-common-dir'],
+      { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return out ? realpathSync(path.resolve(dir, out)) : null;
+  } catch { return null; }
+};
+const ownRepo = (proj) => {
+  try {
+    if (realpathSync(proj.root) === realpathSync(DASH_REPO)) return true;
+  } catch { return true; }
+  const own = gitCommonDir(DASH_REPO);
+  return own != null && own === gitCommonDir(proj.root);
+};
+// the PRs updated since the last tick, newest update first (a merge updates a PR, also an old one)
+const readUpdatedPrs = async (proj, saved) => {
+  const floor = Date.parse(saved.checkedAt || saved.since) - 2 * 60 * 1000;
+  const rows = [], seen = new Set();
+  for (let page = 1; page <= 10; page++) {
+    const r = await gh(proj, ['api', 'repos/{owner}/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=100&page=' + page,
+      '--jq', WATCH_PR_JQ]);
+    if (!r.ok) return null;
+    let list;
+    try { list = JSON.parse(r.out); } catch { return null; }
+    if (!Array.isArray(list)) return null;
+    for (const x of list) if (x && !seen.has(x.number)) { seen.add(x.number); rows.push(x); }
+    if (list.length < 100 || Date.parse((list.at(-1) || {}).updatedAt) < floor) break;
+  }
+  return rows;
+};
+const isRunning = (p, now) => runningCount([p], now, STALE_RUN_MS) === 1;
+/** One watcher tick for one project: PR events, run outcomes, waits and auto-starts. */
+const watchProject = async (proj, projects, cache) => {
+  const tickAt = new Date().toISOString();
+  const saved = loadWatch(proj);
+  const next = { ...saved, launched: { ...saved.launched }, met: { ...saved.met }, errors: { ...saved.errors } };
+  const events = [];
+  // 1. PRs: saved before any pull, so a crash never pulls twice
+  const rows = await readUpdatedPrs(proj, saved);
+  if (rows) {
+    const prEv = prEvents(saved.prs, rows, saved.since);
+    next.prs = prMap(rows, saved.prs);
+    next.checkedAt = tickAt;
+    saveWatch(proj, next);
+    for (const e of prEv) {
+      if (e.type === 'pr-merged') {
+        const mark = proj.root + '#' + e.number;
+        if (buttonMerged.has(mark)) { buttonMerged.delete(mark); e.pull = 'Pull left to the merge button.'; }
+        else if (ownRepo(proj)) e.pull = OWN_REPO_NOTE;
+        else { fence(); e.pull = redact(await pullRoot(proj, e.base)); }
+      }
+      events.push(e);
+    }
+    // written now: the PR state is saved already, so an error in a later step must not lose them
+    addEvents(proj, events.splice(0));
+  }
+  // 2. plans, 3. run outcomes
+  const plans = (await listPlans(proj)).filter((p) => !p.archived);
+  const bySlug = new Map(plans.map((p) => [p.slug, p]));
+  if (proj.hasPipeline) {
+    next.outcomes = Object.fromEntries(plans.filter((p) => p.run).map((p) => [p.slug, { outcome: p.run.outcome, status: p.run.status }]));
+    events.push(...outcomeEvents(saved.outcomes ?? null, next.outcomes));
+  }
+  // 4. what became of the plans the watcher started
+  for (const [slug, rec] of Object.entries(next.launched)) {
+    const inPlans = existsSync(path.join(proj.plansDir, slug + '.md')), inDone = existsSync(path.join(proj.doneDir, slug + '.md'));
+    if (!inPlans && !inDone) { delete next.launched[slug]; continue; }
+    if (rec.state !== 'pending') continue;
+    const p = bySlug.get(slug);
+    if (!p) { if (inDone) next.launched[slug] = { ...rec, state: 'started' }; continue; }
+    if (p.run || p.live) next.launched[slug] = { ...rec, state: 'started' };
+    else if (p.launch && p.launch.state === 'failed') {
+      next.launched[slug] = { ...rec, state: 'failed' };
+      events.push({ type: 'auto-launch-failed', slug, output: redact(p.launch.output || 'the launcher failed') });
+    } else if (!p.launch && Date.now() - Date.parse(rec.at) > PENDING_MS) {
+      next.launched[slug] = { ...rec, state: 'failed' };
+      events.push({ type: 'auto-launch-failed', slug, output: 'no run started' });
+    }
+  }
+  for (const slug of Object.keys(next.met)) if (!bySlug.has(slug)) delete next.met[slug];
+  // 5. waits
+  const waitsOf = new Map(), errorsNow = new Set(), newErrors = [];
+  for (const p of plans) {
+    const key = proj.name + '/' + p.slug;
+    let text = '';
+    try { text = readFileSync(path.join(proj.plansDir, p.file), 'utf8'); } catch { continue; }
+    const conds = parseWaitsFor(text);
+    if (!conds) { waitStatus.delete(key); continue; }
+    if (next.launched[p.slug] || p.run) continue;   // started: not checked again
+    const waits = [];
+    for (const c of conds) {
+      const r = proj.hasPipeline ? await checkCondition(proj, text, c, cache, projects)
+        : { met: false, error: 'auto-start needs .claude/scripts/auto-pipeline.sh', fix: true };
+      waits.push({ text: c.text, met: !r.error && !!r.met, error: r.error || null });
+      if (!r.error) continue;
+      const ek = p.slug + '\n' + c.text;
+      errorsNow.add(ek);
+      if (next.errors[ek]) continue;
+      next.errors[ek] = { reason: r.error, fix: !!r.fix };
+      events.push({ type: 'wait-error', slug: p.slug, text: c.text, reason: r.error });
+      if (r.fix) newErrors.push({ slug: p.slug, reason: r.error });
+    }
+    waitStatus.set(key, waits);
+    waitsOf.set(p.slug, waits);
+    if (waits.every((w) => w.met) && !next.met[p.slug]) {
+      next.met[p.slug] = true;
+      events.push({ type: 'wait-met', slug: p.slug, conditions: waits.map((w) => w.text) });
+    }
+  }
+  for (const ek of Object.keys(next.errors)) if (!errorsNow.has(ek)) delete next.errors[ek];
+  // 6. auto-starts, at most WATCH_LIMIT runs at the same time
+  if (proj.hasPipeline) {
+    const now = Date.now(), running = runningCount(plans, now, STALE_RUN_MS), startedNow = new Set();
+    for (const p of plans) {
+      if (!canAutoLaunch(p, waitsOf.get(p.slug), next.launched, running + startedNow.size, WATCH_LIMIT)) continue;
+      if (await pipelineLive(proj, p.slug)) continue;
+      // from here to the launch no await: no request handler can start the plan in between
+      fence();
+      const key = proj.name + '/' + p.slug, ch = chats.get(key);
+      if (launches.get(key) || (ch && (ch.busy || ch.waits.size))) continue;
+      // the owner may have parked the plan or changed its Waits for lines during the awaits
+      let nowText;
+      try { nowText = readFileSync(path.join(proj.plansDir, p.file), 'utf8'); } catch { continue; }
+      const nowConds = parseWaitsFor(nowText), checked = waitsOf.get(p.slug);
+      if (!nowConds || nowConds.length !== checked.length || nowConds.some((c, i) => c.text !== checked[i].text)) continue;
+      if (['parked', 'proposed'].includes(loadMeta(proj)[p.slug]?.status)) continue;
+      if (!existsSync(path.join(proj.plansDir, p.file))) continue;
+      if (existsSync(path.join(proj.autoRunsDir, p.slug + '.md')) || existsSync(worktreeOf(proj, p.slug))) continue;
+      // manual launches that started during the awaits of this tick
+      const manualNew = [...launches].filter(([k, l]) => {
+        if (l.state !== 'starting' || !k.startsWith(proj.name + '/')) return false;
+        const s = k.slice(proj.name.length + 1), snap = bySlug.get(s);
+        return !startedNow.has(s) && !(snap && ((snap.launch && snap.launch.state === 'starting') || isRunning(snap, now)));
+      }).length;
+      if (running + startedNow.size + manualNew >= WATCH_LIMIT) continue;
+      const mode = autoMode(proj);
+      next.launched[p.slug] = { at: new Date().toISOString(), mode, state: 'pending' };
+      saveWatch(proj, next);   // saved before the launch: a crash never starts a plan twice
+      launchPipeline(proj, [{ slug: p.slug, mode }]);
+      events.push({ type: 'auto-launch', slug: p.slug, mode });
+      startedNow.add(p.slug);
+    }
+  }
+  // 7. state, then events, then notifications: a crash can lose an event, never repeat one
+  saveWatch(proj, next);
+  for (const k of [...launchedNow.keys()]) if (k.startsWith(proj.name + '/')) launchedNow.delete(k);
+  for (const [slug, rec] of Object.entries(next.launched)) launchedNow.set(proj.name + '/' + slug, rec);
+  addEvents(proj, events);
+  const title = 'Plans: ' + proj.name;
+  for (const e of events) {
+    if (e.type === 'auto-launch') notifyMac(title, 'Started ' + e.slug, selQuery(proj, e.slug));
+    else if (e.type === 'auto-launch-failed') notifyMac(title, e.slug + ' did not start: ' + e.output, selQuery(proj, e.slug));
+    else if (e.type === 'run-outcome' && (e.outcome === 'needs-you' || e.outcome === 'failed')) {
+      const was = (saved.outcomes || {})[e.slug];
+      const prOpen = (s) => /^PR OPEN/i.test(String(s || ''));
+      if (e.previous !== e.outcome || (prOpen(e.status) && !prOpen(was && was.status)))
+        notifyMac(title, e.slug + ': ' + e.status, selQuery(proj, e.slug));
+    }
+  }
+  for (const n of newErrors) notifyMac(title, n.slug + ' cannot start by itself: ' + n.reason, selQuery(proj, n.slug));
+};
+let watching = false, lockNoted = false;
+/** One watcher tick over every project. Only the server that holds watcher.lock does the work. */
+const watchTick = async () => {
+  if (watching) return;
+  watching = true;
+  try {
+    if (!holdsLock() && !takeLock()) {
+      if (!lockNoted) console.log('watcher: another dashboard runs the watcher');
+      lockNoted = true;
+      return;
+    }
+    lockNoted = false;
+    for (const [k, at] of buttonMerged) if (Date.now() - at > BUTTON_MARK_MS) buttonMerged.delete(k);
+    const projects = allProjects();
+    // every PR list is read after the tick started, so no condition reads an old one
+    await Promise.all(projects.map(async (p) => {
+      const c = prLists[p.root];
+      if (c && c.loading) await c.loading;
+      await refreshPrList(p);
+    }));
+    const cache = new Map();
+    for (const p of projects) {
+      try { await watchProject(p, projects, cache); }
+      catch (e) { if (e === LOST_LOCK) throw e; console.log(`watcher: ${p.name}: ${redact(e.message || e)}`); }
+    }
+  } catch (e) {
+    console.log(e === LOST_LOCK ? 'watcher: lost the lock, tick stopped' : `watcher: ${redact(e.message || e)}`);
+  } finally { watching = false; }
+};
+/** Starts the watcher: a first tick after 2 s, then one every WATCH_MS. DASH_WATCH_MS=0 turns it off. */
+const startWatcher = () => {
+  for (const p of allProjects()) {
+    const w = loadJson(watchFile(p), null);
+    for (const [slug, rec] of Object.entries((w && w.launched) || {})) launchedNow.set(p.name + '/' + slug, rec);
+  }
+  if (!(WATCH_MS > 0)) return;
+  process.on('exit', () => { if (holdsLock()) try { unlinkSync(WATCH_LOCK); } catch {} });
+  setTimeout(() => { watchTick(); setInterval(watchTick, WATCH_MS).unref(); }, 2000).unref();
+};
+// what /api/state shows for a plan's `Waits for:` lines: the last tick's result, or "not met yet"
+const planWaits = (key, content) => {
+  const conds = parseWaitsFor(content);
+  if (!conds || launchedNow.has(key)) return null;
+  const last = waitStatus.get(key);
+  if (last && last.length === conds.length && last.every((w, i) => w.text === conds[i].text)) return last;
+  return conds.map((c) => ({ text: c.text, met: false, error: null }));
 };
 
 // ---------- local changes: what the worktree has that the PR on GitHub does not ----------
@@ -2798,6 +3213,22 @@ const server = http.createServer(async (req, res) => {
       const f = path.join(proj.autoRunsDir, slug + '.md');
       return text(res, existsSync(f) ? readFileSync(f, 'utf8') : '(no report yet)');
     }
+    // the watcher's events of one project, oldest first: the last `limit` (default 200, max 1000)
+    if (url.pathname === '/api/events') {
+      const proj = getProj();
+      if (!proj) return json(res, 400, { error: 'bad project' });
+      let limit = parseInt(url.searchParams.get('limit') || '', 10);
+      if (!(limit >= 1)) limit = 200;
+      limit = Math.min(limit, 1000);
+      const events = [];
+      let t = '';
+      try { t = readFileSync(eventsFile(proj), 'utf8'); } catch {}
+      for (const line of t.split('\n')) {
+        if (!line.trim()) continue;
+        try { events.push(JSON.parse(line)); } catch {}
+      }
+      return json(res, 200, { events: events.slice(-limit) });
+    }
     if (url.pathname.startsWith('/api/chat') && req.method === 'GET') {
       const proj = getProj();
       if (!proj || !safeName(slug)) return json(res, 400, { error: 'bad request' });
@@ -3284,6 +3715,7 @@ server.on('error', (e) => {
 
 server.listen(PORT, BIND, () => {
   chatReattach();
+  startWatcher();
   // prefer the /etc/hosts vanity domain when the user has added it
   let host = 'plans.localhost';
   try {

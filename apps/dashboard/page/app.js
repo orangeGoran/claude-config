@@ -242,6 +242,10 @@ const autoChips = (p) => {
   else if (notStarted(p)) c += '<span class="chip bad">⚠ didn’t start</span>';
   else if (p.run) c += '<span class="chip ' + OUT_CLASS[outOf(p)] +
     '">' + esc(String(p.run.status || outOf(p) || 'run').split(/[.—]/)[0].slice(0, 42)) + '</span>';
+  // a `Waits for:` plan the watcher has not started yet; a started plan never waits again
+  if (p.waits && !p.waits.every((w) => w.met) && !p.run && !p.live && !p.launch)
+    c += '<span class="chip warn" title="' + escA('Starts by itself when: ' + p.waits.map((w) =>
+      w.text + ' ' + (w.met ? '✓' : '✗') + (w.error ? ' (' + w.error + ')' : '')).join('; ')) + '">⏳ waits</span>';
   if (p.validations) c += '<span class="chip ok">validated ×' + p.validations + '</span>';
   if (p.worktree) c += '<span class="chip">worktree</span>';
   if (p.archived) c += '<span class="chip">📦 archived</span>';

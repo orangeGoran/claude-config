@@ -49,7 +49,7 @@ In your final reply, list each command that touched a service or the database (o
 @@IFNOT CONTRACT_IN_RULES@@
 - **Contracts:** @@CONTRACTS_RULE@@ Flag types or enum values that the plan writes by hand.
 @@END@@
-- **Scope:** the plan does more than its goal, or more than one step of the parent plan, or skips an explicit "go".
+- **Scope:** the plan does more than its goal, or more than one step of the parent plan, or skips an explicit "go" (a `- **Waits for**:` line in the header is a go).
 - **Commands:** a command that is "not available yet" in AGENTS.md, or that the plan invents.
 - **Estimates vs measurements:** the plan states a count or size without the command that measured it.
 - **Edge cases:** empty input, duplicates, missing permissions, a service that is down, concurrent runs.

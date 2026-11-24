@@ -43,7 +43,7 @@ Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS
 - Validation reports live in `.plans/.validations/`. Run reports live in `.plans/auto-runs/` (gitignored).
 - `docs/roadmap.md` is the parent plan. Child plans are written one step ahead.
 - A big piece of work that needs several plans has its own parent plan: `.plans/YYYYMMDD-HHMMSS-<slug>-parent.md`, which starts with `> **Master plan.**` (no steps, never launched) and holds the ordered child plans, the owner's decisions and the open decisions. `docs/roadmap.md` links each parent plan. A child plan names its parent plan in its header (`- **Parent**:`).
-- Every plan starts only after an explicit "go" from the owner. One plan per run.
+- Every plan starts only after an explicit "go" from the owner, or when the plans dashboard starts it because the `- **Waits for**:` condition in its header became true (that line is the go). One plan per run.
 - When a plan needs an owner decision, do not guess. Write the question down and continue with the steps that do not depend on it.
 
 ## Workflow
@@ -90,6 +90,6 @@ The stack: Node.js 18+ ES-module scripts with no dependencies, Bash, and a plain
 | Type check | not available yet |
 | Build | not available yet |
 | Restart the dashboard service | `npm run restart` (check pgrep -fl chat-relay.mjs first) |
-| Run a test dashboard by hand | `DASH_PORT=4911 DASH_NO_OPEN=1 node apps/dashboard/server.mjs` (stop it by its PID) |
+| Run a test dashboard by hand | `DASH_PORT=4911 DASH_NO_OPEN=1 DASH_WATCH_MS=0 node apps/dashboard/server.mjs` (stop it by its PID) |
 
 Skills take commands from this table and from `package.json`. A command that is "not available yet" does not exist: never invent one. Add it here (and to `.claude/settings.json` `permissions.allow`) in the same change that adds it.

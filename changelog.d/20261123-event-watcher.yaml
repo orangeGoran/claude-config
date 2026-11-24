@@ -1,0 +1,9 @@
+kind: added
+audience: both
+scope: dashboard
+summary: |
+  The dashboard server now checks every project once a minute, also when no page is open. A plan with a "Waits for:" line in its header (a PR merged, another plan merged, or a submodule commit) starts by itself in "to PR" mode when the condition becomes true, at most 4 runs per project at the same time. After a merge on GitHub the server pulls the main checkout (never the dashboard's own repo), and it sends macOS notifications when a plan starts by itself, cannot start, or needs you. After the pull, restart the dashboard (pgrep -fl chat-relay.mjs first, as AGENTS.md says).
+internal: |
+  New apps/dashboard/watch.mjs (pure helpers) and the "event watcher" section of apps/dashboard/server.mjs: a timer (DASH_WATCH_MS, default 60000, 0 turns it off) that only the holder of ~/.claude/pipeline-dashboard/watcher.lock runs. State per project in state/<project>/watch.json, events in state/<project>/events.jsonl (last 5000 lines, at-most-once). New GET /api/events?project=<name>&limit=<n> (default 200, max 1000; 400 for a bad project). /api/state plan objects get reportAt and waits (additive). Notifications use DASH_NOTIFIER, else terminal-notifier, else osascript; DASH_NO_NOTIFY=1 turns them off. The merge button marks its PR so the watcher does not pull it a second time. The server now imports NOTIFIERS from apps/scout/scout.mjs, so a scout change also needs the restart check. The "go" rule in AGENTS.md and the bootstrap templates now names the Waits for line.
+customer:
+  en: A plan can now wait for a pull request, another plan or a submodule commit, and the dashboard starts it by itself when that is ready. The dashboard also pulls your main checkout after a merge on GitHub and sends you a notification when a plan starts, cannot start, or needs you.
