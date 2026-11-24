@@ -116,13 +116,13 @@ Each repeated finding of a plan validation comes from a claim written from memor
 - **Cite by symbol or section, not by line.** Write `orders.service.ts` → `createOrder()`, not `orders.service.ts:137`. Add `:line` only when the line itself matters, and open it again after each edit to the plan: the tree moves under it.
 - **Never state a count or size you did not measure.** Put the command next to the number.
 @@IF HAS_TEST_HARNESS_DOC@@
-- **Read the test harness rules first.** Before you write the **Tests** section, read `@@TEST_HARNESS_DOC@@`. It lists what the end-to-end harness can and cannot do.
+- **Read the test harness rules first.** Before you write the **@@PLAN_TESTS@@** section, read `@@TEST_HARNESS_DOC@@`. It lists what the end-to-end harness can and cannot do.
 @@END@@
 @@IFNOT HAS_TEST_HARNESS_DOC@@
-- **Read the test harness rules first.** Before you write the **Tests** section, read the nested `AGENTS.md` of the end-to-end test folder, when the repo has one (see the **Layout** table of the root `AGENTS.md`). It lists what the harness can and cannot do.
+- **Read the test harness rules first.** Before you write the **@@PLAN_TESTS@@** section, read the nested `AGENTS.md` of the end-to-end test folder, when the repo has one (see the **Layout** table of the root `AGENTS.md`). It lists what the harness can and cannot do.
 @@END@@
 - **Owner-only files.** A headless run cannot write `.claude/` or `.vscode/` (Claude Code protects them). A step that changes them is marked "(owner, by hand)" and is not part of the run.
-- **Commands must exist.** A "How to verify" command must be in AGENTS.md **Commands** or the manifest when it runs, or be a plain tool (`grep`, `git`). If the plan adds the script, the step that adds it comes first. A command that is "not available yet" cannot be a check.
+- **Commands must exist.** A "@@PLAN_VERIFY@@" command must be in AGENTS.md **Commands** or the manifest when it runs, or be a plain tool (`grep`, `git`). If the plan adds the script, the step that adds it comes first. A command that is "not available yet" cannot be a check.
 
 ## Step 4 — Write the plan
 
@@ -137,7 +137,7 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 - **Tickets**: <#n, #m — the issues this plan works on; "none" for work without a ticket>
 @@END@@
 
-## Goal
+## @@PLAN_GOAL@@
 
 <What this plan delivers and why. Name the part of the parent plan it serves.>
 @@IF HAS_TICKETS@@
@@ -151,7 +151,7 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 > One row per "Done when" line of the body and per decision or failed review point in the comments (Step 1). Each row is a step or a test of this plan, or names the ticket or PR that carries it. A row with an "Other repo part" is met only when that part is merged.
 @@END@@
 
-## Context
+## @@PLAN_CONTEXT@@
 
 - Parent plan sections: <list>
 - Decisions taken for this plan: <1A — title, ...> (or "None")
@@ -202,7 +202,7 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 
 <Each changed function, type, schema or endpoint with its consumers (from the Step 3 search), or "None">
 
-## Steps
+## @@PLAN_STEPS@@
 
 1. <one concrete action with exact paths>
 2. ...
@@ -223,7 +223,7 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 <"None" when the plan does not change a database schema. Otherwise: the command that generates the migration, a review of the generated file line by line (a rename written as drop and add, changes from another branch), and the command that applies it and checks for drift.>
 @@END@@
 
-## Tests
+## @@PLAN_TESTS@@
 
 ### Unit tests
 
@@ -256,7 +256,7 @@ Save to `.plans/<YYYYMMDD-HHMMSS>-<kebab-slug>.md` (local time now, for example 
 > A change with no screen change writes `None — <reason>` here, and the test step skips the browser test.
 @@END@@
 
-## How to verify
+## @@PLAN_VERIFY@@
 
 ```bash
 <exact commands, one per line, each able to fail>
@@ -282,9 +282,9 @@ Before you show the plan, check it. Fix the plan if any item fails.
 - [ ] The Migrations section is filled (even if "None")
 @@END@@
 @@IF HAS_HTTP_API@@
-- [ ] The Tests section covers each endpoint case
+- [ ] The @@PLAN_TESTS@@ section covers each endpoint case
 @@END@@
-- [ ] The Tests section has a Harness constraints subsection: what the end-to-end tests cannot assert, and where it goes instead
+- [ ] The @@PLAN_TESTS@@ section has a Harness constraints subsection: what the end-to-end tests cannot assert, and where it goes instead
 - [ ] No test would still pass with the feature not built
 - [ ] The AI output subsection is filled (real AI, 3 runs, what is measured), or says "None"
 - [ ] Every symbol, path and section was opened in this session, and every signature the plan calls was checked against the source (it would compile)
@@ -299,7 +299,7 @@ Before you show the plan, check it. Fix the plan if any item fails.
 - [ ] The Tickets line lists each ticket the plan works on, and each "Done when" line of those tickets is a step or a test
 - [ ] Each ticket was read with all its comments, and the Done when section has a row for each decision and failed review point in them
 @@END@@
-- [ ] Every "How to verify" command exists when it runs, and can fail
+- [ ] Every "@@PLAN_VERIFY@@" command exists when it runs, and can fail
 - [ ] No "TBD" or "decide later" is left; each one was raised in the queue
 - [ ] No two steps conflict, and no step contradicts Tests or Affected files
 

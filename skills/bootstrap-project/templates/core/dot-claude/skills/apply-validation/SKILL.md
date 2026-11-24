@@ -51,7 +51,7 @@ After you edit, and before you report, run these three checks. They catch the de
 
 - **Citations you moved.** Open again each `file:line` and section in or next to a hunk you edited.
 - **Cross-references after a renumber.** If steps were added, removed or reordered, search for `step <n>` and confirm each one still points at the step it means.
-- **Each fix reached everywhere.** For each fix, find every other place the target mentions that subject (Hard rules, Endpoint access, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, Steps, Migrations, Tests, How to verify, and any doc-update step) and confirm none still states the old version.
+- **Each fix reached everywhere.** For each fix, find every other place the target mentions that subject (Hard rules, Endpoint access, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, @@PLAN_STEPS@@, Migrations, @@PLAN_TESTS@@, @@PLAN_VERIFY@@, and any doc-update step) and confirm none still states the old version.
 
 ### 5. Report and copyable reply
 
@@ -104,6 +104,6 @@ State the file path on its own line in your reply.
 
 ## Rules
 
-- Never weaken or delete a rule in `AGENTS.md` or `@@PARENT_PLAN@@` because a reviewer disliked it. Reject the finding with the reference.
+- Never weaken or delete a rule in @@RULES_DOCS@@ because a reviewer disliked it. Reject the finding with the reference.
 - Never run `git add` or `git commit`. The owner commits.
 - If a finding needs a scope or design decision, or takes an open decision of the parent plan, do not expand the scope silently. List it under "Needs owner decision" in both the table and the copyable reply.

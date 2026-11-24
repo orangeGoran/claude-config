@@ -71,7 +71,7 @@ Rules:
 - `summary`: always. One short paragraph (2–4 sentences) in plain words, written in ASD-STE100. The owner reads it in place of the `internal` note: what changed, for whom, and any limit or catch. No code names unless the reader needs one.
 @@END@@
 - `internal`: always. The developer details: endpoints, fields, error codes, migrations, settings, and anything surprising.
-- `customer`: only for `customer` and `both`, with every language (@@CHANGELOG_LOCALES@@) filled. Translate it yourself; never leave a placeholder. Write for a person who uses the product: what they can now do, not which endpoint changed. No field names, no status codes.
+- `customer`: only for `customer` and `both`, with every language (@@CHANGELOG_LOCALES@@) filled. With `audience: internal`, leave the `customer` key out completely (no empty block). Translate it yourself; never leave a placeholder. Write for a person who uses the product: what they can now do, not which endpoint changed. No field names, no status codes.
 - Use made-up values when an example helps. Never put real customer data, credentials or unshipped security details in the entry.
 @@IF HAS_VERSION_BUMP@@
 
@@ -82,6 +82,7 @@ Raise `version` in `@@CHANGELOG_VERSION_FILE@@` by exactly one step from the ver
 - **patch** (`1.4.2` → `1.4.3`): a fix.
 - **minor** (`1.4.2` → `1.5.0`): a feature, or a new optional field.
 - **major** (`1.4.2` → `2.0.0`): a breaking change: a removed or renamed endpoint or field, a new required request field, a changed status code, a stricter access rule.
+- **While the version is `0.x`**, a breaking change raises **minor** (`0.7.3` → `0.8.0`), never `1.0.0`. Then the `internal` note starts with `BREAKING:` and says what callers must change. Only the owner decides when the version becomes `1.0.0`.
 
 The branch has raised it already when `git diff origin/@@BASE_BRANCH@@...HEAD -- @@CHANGELOG_VERSION_FILE@@` shows a `version` line. Do not raise it twice.
 @@END@@

@@ -48,6 +48,7 @@ Preflight (on failure: status `FAILED: preflight` with the reason, then end):
 @@SERVICES_CHECKS@@
    One is down → status `BLOCKED: start <name>, then resume` instead of `FAILED`. Do not start it yourself.
 @@END@@
+- **Submodules.** A new worktree does not initialize its submodules, and a command that writes into an empty submodule folder leaves stray files. When the worktree has a `.gitmodules` file, read the `path = …` lines and run `ls <path>` for each one (headless runs deny `git submodule status`). A folder that is empty or missing → run `git submodule update --init`, then check it again. When stray files block the update, list them under `## Diagnosis` and set status `BLOCKED: submodule <path> is not initialized`. Never delete the stray files yourself.
 - Set the report status to `RUNNING` and add a Timeline entry.
 
 **Resume:** read the report's Status and Timeline, `git status` and `git diff` (the work of finished phases is uncommitted until the Commit phase). Continue from the first incomplete phase. Do not redo completed phases. Add a Timeline entry that says where you resumed and why the earlier session stopped.
@@ -58,6 +59,7 @@ The report is the owner's window into this run. The plans dashboard reads it. Af
 
 - After each phase: update the `## Status:` line and add one Timeline entry (`- HH:MM:SS — <one line>`).
 - Statuses: `RUNNING` → `IMPLEMENTED` → `TESTED` → `VERIFIED` (→ `VERIFIED — AWAITING REVIEW` in verify mode) → `DOCUMENTED` → `COMMITTED — READY TO PUSH` (commit mode) or `PR OPEN — <url>` (pr mode). Stop states: `FAILED: <phase>`, `BLOCKED: <reason>`, `NEEDS DECISION — <n> questions`.
+- Use no other status words. The dashboard reads `REVIEWED`, `VERIFIED`, `COMMITTED` and `PR OPEN` as "needs you". A status such as "TESTS REVIEWED" shows a running run as finished.
 - Never edit the `- **Mode**:`, `- **Outcome**:` or `- **Link**:` lines. The launcher owns them.
 - On `FAILED` or `BLOCKED`: add `## Diagnosis` — what failed, evidence (output excerpt, file:line), what you tried, a suggested next step.
 
@@ -70,16 +72,17 @@ The report is the owner's window into this run. The plans dashboard reads it. Af
    - It also runs the plan's browser test. Copy its browser-test lines (rounds, report page link, findings fixed, findings listed, test data made) under `## Browser test`. In-scope findings still open after 3 rounds do not fail the run: they go to the PR as open points.
    - When the plan has a **Browser test** section that is not `None — <reason>`, "skipped" is not a valid result. The browser test did not run, or has no report page link → status `BLOCKED — browser test (<reason>)`, the reason under `## Diagnosis`, and end the session. Do not commit or ship without it.
 @@END@@
-3. **Verify** — invoke `/skill-4-verify <plan-file> --unattended`. It runs the `/code-review` loop (max 2 rounds) and the rule audit (hard rules, contracts, doc comments, tests, secrets, plan scope).
+3. **Verify** — invoke `/skill-4-verify <plan-file> --unattended`. It runs the `/code-review` loop (max 2 rounds) and the rule audit (hard rules, contracts, doc comments, tests, secrets, security, plan scope).
 @@IF MOD_CODEX@@
    - Each round of the loop is one Claude review, then one Codex review of the code that Claude's fixes left (max 2 rounds: Claude, Codex, Claude, Codex). It fixes the valid findings of both. Codex OFF (missing, not logged in, quota) never fails the phase: write one Timeline line with the reason.
 @@END@@
 @@IF MOD_TEST_REVIEW@@
    - It also runs `/test-review --fix`. Copy its `## Summary for the PR` under `## Test review`.
+   - A `POSSIBLE PRODUCTION BUG` from the test review does not stop the run. A revert check that did not put a file back byte for byte (its `git hash-object` before and after differ) does: set `FAILED: test-review`, name the file under `## Diagnosis`, and end the session.
 @@END@@
-   - Run every command in the plan's "How to verify" yourself, as bare commands.
+   - Run every command in the plan's "@@PLAN_VERIFY@@" yourself, as bare commands.
    - If its code-review loop, its Codex fixes or its test review changed a file, run the full test command once (AGENTS.md, **Commands**, "Test (full)"; skip it when that row is "not available yet") as a regression gate. The skill runs only the scoped tests. A failure counts toward the failure budget.
-   - Copy its review order, table, rounds, numbered findings (`F1`, `F2`, …, with file:line and state) and open items (each question exactly as written) under `## Verification` and `## Code review`.
+   - Copy its review order, table, rounds, numbered findings (`F1`, `F2`, …, with file:line and state) and open items (each question exactly as written) under `## Verification` and `## Code review`, plus its **Security: needs validation** block when there is one.
    - Any row still Fail after its fixes → `FAILED: verify`. Open items that need the owner → **Needs decision**. Otherwise status `VERIFIED`.
 
 **Failure budget:** each phase gets at most 2 fix-and-retry rounds beyond the skills' own loops. Then set `FAILED: <phase>` with a diagnosis and end the session.
@@ -121,15 +124,21 @@ To ship: resume this run in "to PR" mode. It makes the one commit, then opens th
    2. `git add -- <path> <path> …`, naming every path (a deleted or moved path too). Never `git add -A` or `git add .`.
    3. `git commit -m "<type>(<scope>): <what the plan does, in plain words>"`. Conventional Commits, no AI attribution. One commit: never split the work into several.
 
-**commit mode:** set status `COMMITTED — READY TO PUSH`, append, and end the session:
+**commit mode:**
+
+1. **PR body** — write `<report dir>/<slug>-pr-body.md` with the Write tool: a summary of the change, the plan file, the verification table and the test results. No AI attribution.
+2. Set status `COMMITTED — READY TO PUSH`, append the hand-off with the real worktree path, base, commit title and PR body path, and end the session. Do not run its commands yourself.
 
 ```markdown
 ## Hand-off
 
-Nothing is pushed. To open the PR, resume this run in "to PR" mode, or:
+Nothing is pushed. Resume this run in "to PR" mode, or run:
 
     cd <worktree-path>
-    claude    # then say "push" and run /skill-5-ship
+    git push -u origin auto/<slug>
+    gh pr create --draft --base <base> --title "<commit title>" --body-file <abs-path-to-pr-body>
+
+After the merge, from the main checkout: `git pull`, then `bash .claude/scripts/auto-pipeline.sh --cleanup <slug>`.
 ```
 
 **pr mode:**
@@ -137,7 +146,7 @@ Nothing is pushed. To open the PR, resume this run in "to PR" mode, or:
 @@IF MOD_DECISION_SHEET@@
 6. **Decision sheet** — read `.claude/skills/decision-sheet/SKILL.md` and follow it with `--base <base> --plan .plans/done/<plan-file> --report <report> --out <report dir>/<slug>-decision-sheet.md`.
 @@IF MOD_CODEX@@
-   When the Verify phase ran Codex (row 1 says `Codex ON`), add `--codex-report <path>` with the last Codex report that ran (row 1 names it, for example `.plans/.code-reviews/<branch-with-slashes-as-dashes>-codex-round-2.md`), so Codex does not review the same code twice.
+   When the Verify phase ran Codex (row 1 says `Codex ON`), add `--codex-report <path>` with the Codex report that row 1 names (`.plans/.code-reviews/<branch-with-slashes-as-dashes>-codex.md`, which holds the last round), so Codex does not review the same code twice.
 @@END@@
    Write one Timeline line with its status, the number of questions and its path. It never blocks: when it fails, write one Timeline line and continue.
 @@END@@

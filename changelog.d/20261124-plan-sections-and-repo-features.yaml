@@ -1,0 +1,16 @@
+kind: changed
+audience: internal
+scope: bootstrap-project
+summary: |
+  An upgrade now keeps a project's own plan headings, so the skills stop showing as
+  "changed" only because of heading names. The templates also gained features that a
+  real project had already built: safer merges in the ship step, clearer pipeline
+  hand-offs, a security pass in verify, and one Codex report name that every tool reads.
+internal: |
+  New optional answer `rules.planSections.{goal,context,steps,tests,verify}` (default Goal,
+  Context, Steps, Tests, How to verify). It fills @@PLAN_GOAL@@, @@PLAN_CONTEXT@@,
+  @@PLAN_STEPS@@, @@PLAN_TESTS@@, @@PLAN_VERIFY@@ in the plan template, the step skills, both
+  validators and first-plan.md, and @@LANES_SCOPE_SECTIONS@@ / @@LANES_SKIP_SECTIONS@@ in
+  plan-lanes.mjs. An unknown key fails the render. @@HARD_RULE_TITLES@@ keeps the title case.
+  @@RULE_DETAILS@@ (apply-validation) is indented under its parent bullet. The checklist and
+  lesson 30 say to copy the headings in adopt and upgrade mode.

@@ -44,7 +44,7 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 @@IF HAS_MIGRATIONS@@
    - **Schema:** when the plan adds tables, columns or enums, confirm it has a migration step and follows the schema rules in `AGENTS.md`.
 @@END@@
-4. **Check the "How to verify" commands.** Each command must exist when it runs (AGENTS.md, Commands, or the manifest) and must be able to fail.
+4. **Check the "@@PLAN_VERIFY@@" commands.** Each command must exist when it runs (AGENTS.md, Commands, or the manifest) and must be able to fail.
 
 ## What to hunt for
 
@@ -54,7 +54,7 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 - **Edge cases:** empty or missing input, two requests at the same time, retries and idempotency, pagination, permissions not granted.
 - **Duplicate side effects:** a new success or failure branch that can write a state change or send an event two times. Name the one owner of each state change.
 - **Broken references:** dead paths, wrong function names, types or enum values that do not exist.
-- **Template gaps:** a missing or empty Goal, Context, Hard rules, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, Steps, @@MIGRATIONS_GAP@@Tests or How to verify section (an empty section must say "None" or "No new wiring"); @@ENDPOINT_GAP@@a Tests section without its Harness constraints; vague steps; a verify step that cannot fail.
+- **Template gaps:** a missing or empty @@PLAN_GOAL@@, @@PLAN_CONTEXT@@, Hard rules, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, @@PLAN_STEPS@@, @@MIGRATIONS_GAP@@@@PLAN_TESTS@@ or @@PLAN_VERIFY@@ section (an empty section must say "None" or "No new wiring"); @@ENDPOINT_GAP@@a @@PLAN_TESTS@@ section without its Harness constraints; vague steps; a verify step that cannot fail.
 @@IF MOD_CHANGELOG@@
 @@IF HAS_VERSION_BUMP@@
 - **Release note:** no step that adds the `changelog.d/` entry and the version raise, unless the change qualifies for the `no-changelog` label.
@@ -98,7 +98,7 @@ Run these checks whenever the plan touches sign-in, sessions, tokens, secrets, a
 @@IFNOT CONTRACT_IN_RULES@@
 - [ ] Contracts respected
 @@END@@
-- [ ] "How to verify" commands are real and can fail
+- [ ] "@@PLAN_VERIFY@@" commands are real and can fail
 @@IF MOD_CHANGELOG@@
 - [ ] Release note step present (or `no-changelog` justified)
 @@END@@

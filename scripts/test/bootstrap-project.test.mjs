@@ -331,7 +331,14 @@ test('codex on: verify runs the Codex code review, the sheet reuses it, and the 
     assert.match(v, /validate-implementation skill .*Base: develop\./);
     assert.match(v, /argument-hint: .*--no-codex/);
     assert.doesNotMatch(v, /@@/);
-    assert.match(read(on.repo, '.claude/skills/skill-auto-pipeline/SKILL.md'), /--codex-report <path>` with the last Codex report that ran .*\.plans\/\.code-reviews\/.*-codex-round-2\.md/);
+    // one report per branch, overwritten each round: ship, plan-lanes and the dashboard read only this name
+    assert.match(v, /-o "\.plans\/\.code-reviews\/<branch-with-slashes-as-dashes>-codex\.md"/);
+    assert.match(read(on.repo, '.claude/skills/skill-auto-pipeline/SKILL.md'), /--codex-report <path>` with the Codex report that row 1 names \(`\.plans\/\.code-reviews\/<branch-with-slashes-as-dashes>-codex\.md`/);
+    assert.match(read(on.repo, '.claude/skills/decision-sheet/SKILL.md'), /`\.plans\/\.code-reviews\/<branch-with-slashes-as-dashes>-codex\.md`, which each round overwrites/);
+    assert.match(read(on.repo, '.claude/scripts/plan-lanes.mjs'), /'-codex\.md'/);
+    for (const f of ['.claude/skills/skill-4-verify/SKILL.md', '.claude/skills/skill-auto-pipeline/SKILL.md', '.claude/skills/decision-sheet/SKILL.md', '.claude/skills/skill-5-ship/SKILL.md']) {
+      assert.doesNotMatch(read(on.repo, f), /codex-round/, f);
+    }
     assert.match(read(on.repo, '.claude/skills/decision-sheet/SKILL.md'), /Verify already ran Codex/);
     assert.match(read(on.repo, '.gitignore'), /^\.plans\/\.code-reviews\/$/m);
     const offV = read(off.repo, '.claude/skills/skill-4-verify/SKILL.md');
@@ -343,6 +350,89 @@ test('codex on: verify runs the Codex code review, the sheet reuses it, and the 
     rmSync(on.dir, { recursive: true, force: true });
     rmSync(off.dir, { recursive: true, force: true });
   }
+});
+
+test('the install prewarm: pnpm gets `pnpm --version` and a hint, npm gets none, and a failed prewarm stops the launch with the hint', () => {
+  const pnpm = bootstrapRepo();
+  const npm = bootstrapRepo((p) => ({ ...p, stack: { ...p.stack, packageManager: 'npm', installCmd: 'npm ci' } }));
+  try {
+    const src = readFileSync(path.join(pnpm.repo, '.claude/scripts/auto-pipeline.sh'), 'utf8');
+    assert.match(src, /^INSTALL_PREWARM_CMD="pnpm --version"$/m);
+    assert.match(src, /^INSTALL_PREWARM_FIX="remove the \*_tmp_\* folders .*then run pnpm --version"$/m);
+    assert.doesNotMatch(src, /if \[ "\$tool" = pnpm \]/, 'no hard-coded pnpm check in the generic code');
+    const npmSrc = readFileSync(path.join(npm.repo, '.claude/scripts/auto-pipeline.sh'), 'utf8');
+    assert.match(npmSrc, /^INSTALL_PREWARM_CMD=""$/m);
+    assert.match(npmSrc, /^INSTALL_PREWARM_FIX=""$/m);
+    // the install tool is `bash` here, so the test does not need pnpm on PATH
+    const run = (prewarm, fix) => pipelineBash(pnpm.repo, ['check_install_tool'],
+      `REPO='${pnpm.repo}'; INSTALL_CMD='bash -c true'; INSTALL_PREWARM_CMD='${prewarm}'; INSTALL_PREWARM_FIX='${fix}'; check_install_tool; echo PASSED`);
+    const failed = run('false', 'run the fix');
+    assert.equal(failed.status, 1, failed.stdout + failed.stderr);
+    assert.match(failed.stdout, /FATAL: `false` failed in the main checkout \(INSTALL_PREWARM_CMD in the CONFIG block\)\.\n\s+Try: run the fix/);
+    const noHint = run('false', '');
+    assert.equal(noHint.status, 1);
+    assert.doesNotMatch(noHint.stdout, /Try:/);
+    for (const ok of [run('true', ''), run('', '')]) {
+      assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+      assert.match(ok.stdout, /PASSED/);
+    }
+  } finally {
+    rmSync(pnpm.dir, { recursive: true, force: true });
+    rmSync(npm.dir, { recursive: true, force: true });
+  }
+});
+
+test('an upgrade adds INSTALL_PREWARM_* to an older kept CONFIG block, and the older block still runs', () => {
+  const { dir, repo, stage } = bootstrapRepo();
+  try {
+    const f = path.join(repo, '.claude/scripts/auto-pipeline.sh');
+    const old = readFileSync(f, 'utf8').replace(/^# EDIT 2b:[\s\S]*?^INSTALL_PREWARM_FIX=.*\n/m, '');
+    assert.doesNotMatch(old, /^INSTALL_PREWARM_CMD="pnpm/m);
+    writeFileSync(f, old);
+    // the script body gives an older block an empty default, so `set -u` does not stop it
+    const r = pipelineBash(repo, ['check_install_tool'], `REPO='${repo}'; INSTALL_CMD='bash -c true'; check_install_tool; echo "PASSED [$INSTALL_PREWARM_CMD]"`);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /PASSED \[\]/);
+    node('render.mjs', ['.', '--upgrade', '--stage', stage, '--json'], repo);
+    const staged = readFileSync(path.join(stage, '.claude/scripts/auto-pipeline.sh'), 'utf8');
+    assert.match(staged, /^INSTALL_PREWARM_CMD="pnpm --version"$/m);
+    assert.match(staged, /^INSTALL_PREWARM_FIX="remove /m);
+    assert.equal(spawnSync('bash', ['-n', path.join(stage, '.claude/scripts/auto-pipeline.sh')]).status, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('existing_worktree falls back to the older flat worktree folder only when the current one does not exist', () => {
+  const { dir, repo } = bootstrapRepo();
+  try {
+    const root = path.join(dir, 'worktrees');
+    const r = pipelineBash(repo, ['worktree_of_branch', 'existing_worktree'], [
+      `REPO='${repo}'; WORKTREES_ROOT='${root}'; WORKTREES_DIR="$WORKTREES_ROOT/acme-api"`,
+      'mkdir -p "$WORKTREES_ROOT/old-slug"',
+      'echo "A=$(existing_worktree old-slug)"', 'echo "B=$(existing_worktree new-slug)"',
+      'mkdir -p "$WORKTREES_DIR/old-slug"', 'echo "C=$(existing_worktree old-slug)"'].join('\n'));
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, new RegExp(`^A=${root}/old-slug$`, 'm'));
+    assert.match(r.stdout, new RegExp(`^B=${root}/acme-api/new-slug$`, 'm'));
+    assert.match(r.stdout, new RegExp(`^C=${root}/acme-api/old-slug$`, 'm'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the verify audit has a Security row and names the rows that may be N/A by number', () => {
+  const { dir, repo } = bootstrapRepo();
+  try {
+    const v = readFileSync(path.join(repo, '.claude/skills/skill-4-verify/SKILL.md'), 'utf8');
+    const row = (name) => Number(v.match(new RegExp(`^\\| (\\d+) \\| ${name} \\|`, 'm'))?.[1]);
+    const sec = row('Security'), scope = row('Plan scope'), tests = row('Tests'), secrets = row('Secrets');
+    assert.ok(sec > 2 && scope === sec + 1, `Security ${sec}, Plan scope ${scope}`);
+    assert.match(v, new RegExp(`These rows may be N/A: rows 3–\\d+ \\(the hard rules\\), only when the scope has nothing the rule checks`));
+    assert.match(v, new RegExp(`row ${sec} \\(Security\\), only when no changed path matches the table of the security pass`));
+    assert.match(v, new RegExp(`row ${scope} \\(Plan scope\\), only when there is no plan file`));
+    assert.match(v, new RegExp(`Rows 1 \\(Code review\\), 2 \\(Lint and format\\), \\d+ \\(JSDoc\\), ${tests} \\(Tests\\), ${secrets} \\(Secrets\\) are never N/A\\.`));
+    assert.match(v, new RegExp(`rows 1–${scope} are Pass or N/A`));
+    assert.match(v, /security-checklist\.md/);
+    assert.ok(existsSync(path.join(repo, '.claude/skills/skill-4-verify/security-checklist.md')));
+    assert.match(v, /### Secrets scan \(subagent, Grep and Read only\)/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('after the ship, follow-ups on an open PR are committed and pushed without asking', () => {
@@ -502,4 +592,33 @@ test('render rejects a reviewStatus without a staging branch or equal to status'
       assert.match(r.stderr, msg);
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('rules.planSections renames the plan headings in the plan template, the skills, the validators and plan-lanes', () => {
+  const names = { goal: 'Requirement', steps: 'Implementation steps', tests: 'Tests to write', verify: 'Final verification' };
+  const { dir, repo } = bootstrapRepo((p) => ({ ...p, rules: { ...p.rules, planSections: names } }));
+  try {
+    const read = (f) => readFileSync(path.join(repo, f), 'utf8');
+    const plan = read('.claude/skills/skill-1-plan/SKILL.md');
+    for (const h of ['Requirement', 'Context', 'Implementation steps', 'Tests to write', 'Final verification']) assert.match(plan, new RegExp(`^## ${h}$`, 'm'));
+    assert.doesNotMatch(plan, /^## (Goal|Steps|Tests|How to verify)$/m);
+    assert.match(read('.claude/skills/skill-2-implement/SKILL.md'), /plan's \*\*Implementation steps\*\*/);
+    assert.match(read('.claude/skills/skill-3-test/SKILL.md'), /\*\*Final verification\*\* section/);
+    assert.match(read('.claude/agents/plan-validator.md'), /empty Requirement, Context,/);
+    const lanes = read('.claude/scripts/plan-lanes.mjs');
+    assert.match(lanes, /SKIP_SECTIONS = \[[^\]]*'final verification'/);
+    assert.doesNotMatch(lanes, /'how to verify'/);
+    // the hard-rule titles keep their case
+    assert.doesNotMatch(read('.claude/skills/skill-3-test/SKILL.md'), /\(tenant scoping/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+  const bad = mkdtempSync(path.join(os.tmpdir(), 'bootstrap-test-'));
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: bad });
+    const p = JSON.parse(readFileSync(EXAMPLE, 'utf8'));
+    p.rules.planSections = { goal: 'Requirement', done: 'Done' };
+    writeFileSync(path.join(bad, 'answers.json'), JSON.stringify(p));
+    const r = node('render.mjs', ['.', '--params', 'answers.json', '--stage', path.join(bad, 'stage')], bad);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /rules\.planSections\.done is unknown/);
+  } finally { rmSync(bad, { recursive: true, force: true }); }
 });
