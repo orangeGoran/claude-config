@@ -619,6 +619,11 @@ async function renderDetail(loadPlan) {
   syncUrl();
   const p = find(selected);
   if (!p) return renderEmptyDetail();
+  // every way to open a plan ends here, so this one place adds its tab
+  const was = sessionTabs;
+  sessionTabs = tabsOpen(sessionTabs, p.key);
+  if (sessionTabs !== was) saveTabs();
+  drawSessionTabs();
   markDetailProject(p.project);
   CUR_ISSUES = p.issuesUrl || '';
   let tab = prTab[p.key] || 'plan';
@@ -3520,6 +3525,7 @@ function renderEmptyDetail() {
   markDetailProject(null);
   syncChat(null);
   drawHdTabs(null);
+  drawSessionTabs();
   document.body.classList.remove('review');
   byId('detail').innerHTML = state.length ? '<span class="dim">Select a plan on the left.</span>'
     : '<div class="welcome"><h2>Hand off the work. Review the result.</h2><p>Describe a change in a plan ' +
@@ -4077,6 +4083,11 @@ async function refreshOnce() {
       && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
     checkAlerts();
     renderList();
+    // a tab goes only when its project is in the state and its plan is not; the dots follow the state
+    const kept = tabsPrune(sessionTabs, (k) => !!find(k), state.map((s) => s.name));
+    if (kept.length !== sessionTabs.length) { sessionTabs = kept; saveTabs(); }
+    drawSessionTabs();
+    if (paletteOpen()) paletteDraw(true);   // an open palette lists the plans of this state; the picked row stays picked
     if (selected && !typing) renderDetail(false);
     else if (!selected) renderEmptyDetail();
     renderBoard();
@@ -4092,6 +4103,265 @@ async function refreshOnce() {
   connMsg('');
   if (logKey) loadLog();
 }
+// --- session tabs ---
+// Each plan or worktree item you open becomes a tab in the strip under the header. A tab is its key
+// ("<project>/<slug>"). Closing a tab never stops an agent or a run. These pure functions take and give
+// plain lists, so the test can run them without the page.
+/** Gives the list with key added at the end. Gives the same list when key is in it. */
+function tabsOpen(tabs, key) { return tabs.includes(key) ? tabs : [...tabs, key]; }
+/** Gives { tabs, next }: the list without key, and the key to show next (right, else left, else null). */
+function tabsClose(tabs, key) {
+  const i = tabs.indexOf(key);
+  if (i < 0) return { tabs, next: null };
+  const rest = tabs.filter((k) => k !== key);
+  return { tabs: rest, next: rest[i] ?? rest[i - 1] ?? null };
+}
+/** Gives the key of tab n (1-based). n 9 gives the last tab. Out of range gives null. */
+function tabAt(tabs, n) { return (n === 9 ? tabs[tabs.length - 1] : tabs[n - 1]) ?? null; }
+/** Gives the key d places (1 or -1) from key, with wrap-around. A key not in the list gives the first tab. */
+function tabStep(tabs, key, d) {
+  if (!tabs.length) return null;
+  const i = tabs.indexOf(key);
+  return i < 0 ? tabs[0] : tabs[(i + d + tabs.length) % tabs.length];
+}
+/** Gives the list without the keys that known() rejects while their project is in projects. Other keys stay. */
+function tabsPrune(tabs, known, projects) {
+  return tabs.filter((k) => known(k) || !projects.includes(k.split('/')[0]));
+}
+/** Gives the keys that known() accepts, in order: the tabs that show and get a number. */
+function tabsShown(tabs, known) { return tabs.filter((k) => known(k)); }
+/** Gives a clean tab list from the saved JSON text: strings only, no duplicates. Bad text gives []. */
+function tabsLoad(raw) {
+  let v;
+  try { v = JSON.parse(raw); } catch { return []; }
+  return Array.isArray(v) ? v.filter((k, i) => typeof k === 'string' && v.indexOf(k) === i) : [];
+}
+/** Gives the closed-tab stack with key on top, an older copy of key removed, at most 10 keys. */
+function closedPush(closed, key) { return [...closed.filter((k) => k !== key), key].slice(-10); }
+// --- end session tabs ---
+let sessionTabs = [];
+try { sessionTabs = tabsLoad(localStorage.getItem('dash-tabs')); } catch {}
+let closedTabs = [];   // in memory only: Ctrl+Shift+T after a reload has nothing to reopen
+const saveTabs = () => { try { localStorage.setItem('dash-tabs', JSON.stringify(sessionTabs)); } catch {} };
+const shownTabs = () => tabsShown(sessionTabs, (k) => !!find(k));
+const IS_MAC = /Mac/.test(navigator.platform);
+// the key hint of the tab at index i of n tabs: ⌃1–⌃8, and ⌃9 on the last one after the 8th
+const tabHint = (i, n) => !IS_MAC ? '' : i === n - 1 && n > 8 ? '⌃9' : i < 8 ? '⌃' + (i + 1) : '';
+// the dot of a tab or a palette row: a working worktree agent, a chat that asks you, else the run's dot
+const sessionDot = (p) => p.kind === 'wt' ? (p.agent === 'working' ? 'live' : '') : p.chatWaits ? 'warn' : dotClass(p);
+/** Gives [attribute, key] of a tab-strip button (its go or close control), or null for any other element. */
+const tabControlOf = (el) => !el || !el.dataset ? null : el.dataset.goTab != null ? ['data-go-tab', el.dataset.goTab]
+  : el.dataset.closeTab != null ? ['data-close-tab', el.dataset.closeTab] : null;
+/** Gives the tab-strip button that tabControlOf() named, or null when the strip has none. */
+const findTabControl = (c) => !c ? null
+  : [...byId('stabs').querySelectorAll('[' + c[0] + ']')].find((el) => el.getAttribute(c[0]) === c[1]) || null;
+let stabsShownSel = null;   // the open tab that the strip last scrolled into view
+/** Draws the tab strip from the shown tabs. The tab of the open plan is marked. */
+function drawSessionTabs() {
+  const S = byId('stabs');
+  if (!S) return;
+  const list = shownTabs();
+  // the button that has the focus, so the redraw can give it back
+  const a = S.contains(document.activeElement) ? document.activeElement : null;
+  const focused = tabControlOf(a);
+  S.hidden = !list.length;
+  S.innerHTML = list.map((key, i) => {
+    const p = find(key), on = key === selected;
+    const dot = sessionDot(p);
+    const hint = tabHint(i, list.length);
+    return '<div class="stab' + (on ? ' on' : '') + '" role="presentation">' +
+      '<button class="stabgo" data-go-tab="' + escA(key) + '"' + (on ? ' aria-current="true"' : '') + ' title="' + escA(p.title || p.file) + '">' +
+      '<span class="dot ' + dot + '"></span>' + projPill(p.project) + '<span class="stabn">' + esc(p.file) + '</span>' +
+      (hint ? '<kbd>' + hint + '</kbd>' : '') + '</button>' +
+      '<button class="stabx" data-close-tab="' + escA(key) + '" aria-label="Close tab" title="Close tab' + (IS_MAC ? ' (⌃W)' : '') + '">×</button></div>';
+  }).join('');
+  S.querySelectorAll('[data-go-tab]').forEach((el) => el.addEventListener('click', () => openSession(el.dataset.goTab)));
+  S.querySelectorAll('[data-close-tab]').forEach((el) => el.addEventListener('click', () => closeSession(el.dataset.closeTab)));
+  // a newly opened tab comes into view (a redraw for a state tick keeps the strip where you scrolled it),
+  // and the strip keeps the keyboard focus the redraw took away
+  const cur = S.querySelector('.stab.on .stabgo');
+  if (cur && selected !== stabsShownSel) cur.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  stabsShownSel = cur ? selected : null;
+  if (a) (findTabControl(focused) || cur)?.focus();
+}
+/** Opens the plan or worktree item of key, as a click on its sidebar row does. */
+function openSession(key) {
+  if (key === selected) return;
+  selected = key; renderList(); renderDetail(true);
+  if (boardOn) renderBoard();
+}
+/** Closes the tab of key (default: the open plan). The plan stays in the sidebar; its run goes on. */
+function closeSession(key = selected) {
+  const shown = shownTabs();
+  if (key == null || !shown.includes(key)) return;
+  const { next } = tabsClose(shown, key);
+  sessionTabs = sessionTabs.filter((k) => k !== key);
+  closedTabs = closedPush(closedTabs, key);
+  saveTabs();
+  if (key !== selected) return drawSessionTabs();
+  if (next) openSession(next); else goHome();
+}
+/** Opens the last closed tab that still exists and is not open. */
+function reopenSession() {
+  while (closedTabs.length) {
+    const key = closedTabs.pop();
+    if (find(key) && !sessionTabs.includes(key)) return openSession(key);
+  }
+}
+/** Opens tab n (1-based; 9 is the last tab). */
+function switchSession(n) {
+  const key = tabAt(shownTabs(), n);
+  if (key != null) openSession(key);
+}
+/** Opens the tab d places (1 or -1) from the open one, with wrap-around. */
+function nextSession(d) {
+  const key = tabStep(shownTabs(), selected, d);
+  if (key != null) openSession(key);
+}
+// --- command palette ---
+// ⌘K (Ctrl+K off macOS) finds plans and worktree items and runs the header actions.
+/**
+ * Gives the palette rows for the query q: the matching actions, then at most 50 matching plans
+ * (open tabs first, in tab order, then not archived, then archived newest first). An empty q gives
+ * the open tabs, then all actions.
+ */
+function paletteMatch(q, plans, actions, tabs) {
+  const byKey = new Map(plans.map((p) => [p.key, p]));
+  const inTabs = tabs.filter((k) => byKey.has(k));
+  if (!q.trim()) return [...inTabs.slice(0, 50).map((key) => ({ kind: 'plan', key })), ...actions.map((a) => ({ kind: 'action', id: a.id }))];
+  const acts = actions.filter((a) => matchesFields([a.label], q)).map((a) => ({ kind: 'action', id: a.id }));
+  // a worktree item matches by its branch too, as in the sidebar
+  const hit = (p) => p.kind === 'wt' && p.branch ? matchesQ({ ...p, tags: [...(p.tags || []), p.branch] }, q) : matchesQ(p, q);
+  const tabbed = inTabs.filter((k) => hit(byKey.get(k)));
+  const rest = plans.filter((p) => !tabs.includes(p.key) && hit(p));
+  const live = rest.filter((p) => !p.archived);
+  const arch = rest.filter((p) => p.archived).sort((a, b) => String(b.slug).localeCompare(String(a.slug)));
+  const keys = [...tabbed, ...live.map((p) => p.key), ...arch.map((p) => p.key)].slice(0, 50);
+  return [...acts, ...keys.map((key) => ({ kind: 'plan', key }))];
+}
+// --- end palette match ---
+// the open plan's PR view switch, as the Plan · PR / Files changed buttons do
+const palettePrTab = (tab) => { prTab[selected] = tab; lastPrDraw = null; renderDetail(false); };
+const openHasPr = () => { const p = find(selected); return !!(p && p.pr); };
+const PALETTE_ACTIONS = [
+  { id: 'board', label: 'Board', run: () => byId('boardBtn').click() },
+  { id: 'scout', label: 'Scout', run: () => byId('scoutBtn').click() },
+  { id: 'settings', label: 'Settings', run: () => openSettings() },
+  { id: 'guide', label: 'Add project', run: () => openGuide(1) },
+  { id: 'chat', label: 'Chat on/off', run: () => toggleChat(), when: () => hasChat(find(selected)) },
+  { id: 'plantab', label: 'Plan tab', run: () => palettePrTab('plan'), when: openHasPr },
+  { id: 'files', label: 'Files changed', run: () => palettePrTab('files'), when: openHasPr },
+  { id: 'close', label: 'Close tab', keys: IS_MAC ? '⌃W' : '', run: () => closeSession() },
+  { id: 'reopen', label: 'Reopen closed tab', keys: IS_MAC ? '⌃⇧T' : '', run: () => reopenSession() },
+  { id: 'theme', label: 'Theme light/dark', run: () => byId('themeBtn').click() },
+  { id: 'alerts', label: 'Alerts on/off', run: () => byId('alertBtn').click() },
+];
+// paletteBackTab: the tab button paletteBack is, so the focus finds it again after a strip redraw
+let paletteRows = [], palettePick = 0, paletteBack = null, paletteBackTab = null;
+const paletteOpen = () => !byId('palette').hidden;
+/** Opens the palette with an empty query. When it is open already, selects the query text. */
+function openSearch() {
+  const inp = byId('palq');
+  if (paletteOpen()) { inp.select(); return; }
+  paletteBack = document.activeElement;
+  paletteBackTab = tabControlOf(paletteBack);
+  byId('palette').hidden = false;
+  inp.value = ''; palettePick = 0;
+  inp.focus();
+  paletteDraw();
+}
+/** Closes the palette. With back, the focus goes back where it was when the palette opened. */
+function closeSearch(back) {
+  byId('palette').hidden = true;
+  // a tab button that a strip redraw replaced is found again by its key
+  const to = paletteBack && !document.contains(paletteBack) ? findTabControl(paletteBackTab) : paletteBack;
+  paletteBack = paletteBackTab = null;
+  if (back && to && to !== document.body && document.contains(to) && to.focus) to.focus();
+  // the hidden box must not keep the focus: Esc and the typed keys go to the page again
+  else if (document.activeElement === byId('palq')) byId('palq').blur();
+}
+/** Fills the palette list from the query. With keep, the picked row stays picked when it is still in the list. */
+function paletteDraw(keep) {
+  const inp = byId('palq'), L = byId('pall');
+  const acts = PALETTE_ACTIONS.filter((a) => !a.when || a.when());
+  const was = keep ? paletteRows[palettePick] : null;
+  paletteRows = paletteMatch(inp.value.toLowerCase(), [...plans, ...wts], acts, shownTabs());
+  if (was) {
+    const n = paletteRows.findIndex((r) => r.kind === was.kind && r.key === was.key && r.id === was.id);
+    if (n >= 0) palettePick = n;
+  }
+  inp.setAttribute('aria-controls', 'pall');
+  if (!paletteRows.length) {
+    L.innerHTML = '<div class="pali none" role="option" aria-disabled="true">No matches</div>';
+    inp.removeAttribute('aria-activedescendant');
+    return;
+  }
+  palettePick = Math.min(palettePick, paletteRows.length - 1);
+  L.innerHTML = paletteRows.map((r, n) => {
+    const on = n === palettePick;
+    const head = '<div class="pali' + (on ? ' on' : '') + '" role="option" id="pali-' + n + '" data-n="' + n + '"' + (on ? ' aria-selected="true"' : '') + '>';
+    if (r.kind === 'action') {
+      const a = acts.find((x) => x.id === r.id);
+      return head + '<span class="palk">Action</span><b>' + esc(a.label) + '</b>' + (a.keys ? '<kbd>' + esc(a.keys) + '</kbd>' : '') + '</div>';
+    }
+    const p = find(r.key);
+    return head + '<span class="dot ' + sessionDot(p) + '"></span>' +
+      projPill(p.project) + '<b>' + esc(p.file) + '</b>' + (p.title ? '<span class="dim">' + esc(p.title) + '</span>' : '') +
+      (p.archived ? '<span class="chip">📦 archived</span>' : '') + '</div>';
+  }).join('');
+  inp.setAttribute('aria-activedescendant', 'pali-' + palettePick);
+  L.querySelectorAll('[data-n]').forEach((el) => el.addEventListener('mousedown', (e) => { e.preventDefault(); paletteUse(+el.dataset.n); }));
+  const on = L.querySelector('.on');
+  if (on) on.scrollIntoView({ block: 'nearest' });
+}
+/** Runs row n: a plan row opens the plan, an action row runs its handler. The palette closes first. */
+function paletteUse(n) {
+  const r = paletteRows[n];
+  if (!r) return;
+  closeSearch(false);
+  if (r.kind === 'plan') return openSession(r.key);
+  const a = PALETTE_ACTIONS.find((x) => x.id === r.id);
+  if (a) a.run();
+}
+/** The keys inside the palette box: arrows move, Enter runs, Tab stays in the box. Esc is in the global handler. */
+function paletteKey(e) {
+  if (e.isComposing) return;   // an input method is still building the word
+  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && paletteRows.length) {
+    e.preventDefault();
+    palettePick = (palettePick + (e.key === 'ArrowDown' ? 1 : -1) + paletteRows.length) % paletteRows.length;
+    return paletteDraw();
+  }
+  if (e.key === 'Enter') { e.preventDefault(); return paletteUse(palettePick); }
+  if (e.key === 'Tab') e.preventDefault();
+}
+byId('palq').addEventListener('input', () => { palettePick = 0; paletteDraw(); });
+byId('palq').addEventListener('keydown', paletteKey);
+document.addEventListener('mousedown', (e) => {
+  if (paletteOpen() && !byId('palette').contains(e.target)) closeSearch(true);
+});
+// an overlay that owns the keys: the guide, the tour, a full-screen diagram or picture, the selection dialog
+const keysOwned = () => byId('onb').classList.contains('open') || tourStep >= 0 ||
+  !!document.querySelector('.mmdfull, .imgview') || byId('seldlg').open;
+// the global keys, in the capture phase so they work in text boxes too (on macOS, Ctrl with a digit, W or T types nothing)
+document.addEventListener('keydown', (e) => {
+  if (keysOwned()) return;
+  const open = paletteOpen();
+  // Esc while an input method builds a word only stops the word
+  if (open && e.key === 'Escape' && !e.isComposing) { e.preventDefault(); e.stopPropagation(); return closeSearch(true); }
+  if ((IS_MAC ? e.metaKey : e.ctrlKey) && e.code === 'KeyK' && !e.altKey && !e.shiftKey) { e.preventDefault(); return openSearch(); }
+  if (open) return;
+  const ctrlOnly = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+  const digit = /^Digit([1-9])$/.exec(e.code);
+  if (ctrlOnly && digit) { e.preventDefault(); return switchSession(+digit[1]); }
+  if (ctrlOnly && e.code === 'KeyW') { e.preventDefault(); return closeSession(); }
+  if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && e.code === 'KeyT') { e.preventDefault(); return reopenSession(); }
+}, true);
+// the hooks the Mac app calls from its menu shortcuts. They obey the same gates as the keys:
+// nothing while an overlay owns the keys, and no tab hook while the palette is open
+const tabHook = (f) => (...a) => { if (!keysOwned() && !paletteOpen()) f(...a); };
+const searchHook = () => { if (!keysOwned()) openSearch(); };
+window.dashboard = { switchSession: tabHook(switchSession), nextSession: tabHook(nextSession),
+  closeSession: tabHook(() => closeSession()), reopenSession: tabHook(reopenSession), openSearch: searchHook };
 // --- Board: every plan of every project in one column, by where it stands. Every column fills in by itself:
 // from the run, the PR, archiving and the validation rounds. The sidebar is hidden (the board is the list), and
 // a card opens its plan in a panel beside the board (#detail), so the board stays in view. The filters, the

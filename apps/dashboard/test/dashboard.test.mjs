@@ -306,6 +306,120 @@ test('an answer still arriving shows as Markdown, with no raw marks', async () =
   ]) assert.equal(render(partial).trim(), html, partial);
 });
 
+// the page's pure functions between two marker lines, run outside the page
+const pageBlock = (page, from, to) => {
+  const a = page.indexOf(from), b = page.indexOf(to, a);
+  assert.ok(a >= 0 && b > a, `the page has ${from} … ${to}`);
+  return page.slice(a, b);
+};
+
+test('session tabs: open, close, number, step, prune, load and the closed stack', async () => {
+  const page = await (await get('/')).text();
+  const t = new Function(pageBlock(page, '// --- session tabs ---', '// --- end session tabs ---') +
+    'return { tabsOpen, tabsClose, tabAt, tabStep, tabsPrune, tabsShown, tabsLoad, closedPush };')();
+
+  const ab = ['a', 'b'];
+  assert.deepEqual(t.tabsOpen(ab, 'c'), ['a', 'b', 'c']);
+  assert.equal(t.tabsOpen(ab, 'a'), ab, 'a key in the list keeps the same list');
+  assert.deepEqual(t.tabsOpen(['b', 'a'], 'b'), ['b', 'a'], 'no reorder');
+
+  assert.deepEqual(t.tabsClose(['a', 'b', 'c'], 'b'), { tabs: ['a', 'c'], next: 'c' });
+  assert.deepEqual(t.tabsClose(['a', 'b', 'c'], 'c'), { tabs: ['a', 'b'], next: 'b' });
+  assert.deepEqual(t.tabsClose(['a'], 'a'), { tabs: [], next: null });
+  assert.deepEqual(t.tabsClose(ab, 'x'), { tabs: ab, next: null });
+
+  assert.equal(t.tabAt(['a', 'b', 'c'], 2), 'b');
+  assert.equal(t.tabAt(['a', 'b', 'c'], 9), 'c');
+  assert.equal(t.tabAt(ab, 5), null);
+  assert.equal(t.tabAt([], 1), null);
+  assert.equal(t.tabAt([], 9), null);
+
+  assert.equal(t.tabStep(['a', 'b', 'c'], 'c', 1), 'a');
+  assert.equal(t.tabStep(['a', 'b', 'c'], 'a', -1), 'c');
+  assert.equal(t.tabStep(['a', 'b', 'c'], 'a', 1), 'b');
+  assert.equal(t.tabStep(['a', 'b', 'c'], 'gone', 1), 'a');
+  assert.equal(t.tabStep([], 'a', 1), null);
+
+  const known = new Set(['demo/a', 'demo/b']);
+  assert.deepEqual(t.tabsPrune(['demo/gone', 'old/x', 'demo/a'], (k) => known.has(k), ['demo']), ['old/x', 'demo/a']);
+
+  const shown = t.tabsShown(['old/x', 'demo/a', 'demo/b'], (k) => known.has(k));
+  assert.deepEqual(shown, ['demo/a', 'demo/b']);
+  assert.equal(t.tabAt(shown, 1), 'demo/a', 'a hidden key gets no number');
+  assert.equal(t.tabsClose(shown, 'demo/a').next, 'demo/b');
+
+  assert.deepEqual(t.closedPush(['a', 'b'], 'a'), ['b', 'a']);
+  const many = Array.from({ length: 12 }, (_, i) => 'k' + i).reduce(t.closedPush, []);
+  assert.deepEqual(many, Array.from({ length: 10 }, (_, i) => 'k' + (i + 2)), 'the newest 10 keys');
+
+  assert.deepEqual(t.tabsLoad('["a","b","a",3]'), ['a', 'b']);
+  for (const bad of ['{"a":1}', 'nope', null]) assert.deepEqual(t.tabsLoad(bad), [], String(bad));
+});
+
+test('the palette finds actions and plans, open tabs first, archived last, at most 50 plans', async () => {
+  const page = await (await get('/')).text();
+  const match = new Function('const projLook = () => ({ short: "" });\n' +
+    pageBlock(page, 'const squash =', 'function visiblePlans() {') +
+    pageBlock(page, '// --- command palette ---', '// --- end palette match ---') + 'return paletteMatch;')();
+  const plan = (slug, more = {}) => ({ key: 'demo/' + slug, file: slug + '.md', title: 'Plan ' + slug, project: 'demo',
+    client: 'Example Co', slug, tags: [], archived: false, ...more });
+  const plans = [
+    plan('20260101-000000-alpha'),
+    plan('20260101-000001-beta', { pr: { number: 12, title: 'Fix login' } }),
+    plan('20250101-000000-old-alpha', { archived: true }),
+    plan('20250601-000000-newer-alpha', { archived: true }),
+    plan('20260101-000002-gamma'),
+    { key: 'demo/wt.side-fix', kind: 'wt', file: 'side-fix', title: 'side branch', project: 'demo', client: 'Example Co',
+      slug: 'wt.side-fix', branch: 'claude/quick-patch', tags: [], pr: null },
+  ];
+  const actions = [{ id: 'board', label: 'Board' }, { id: 'scout', label: 'Scout' }, { id: 'theme', label: 'Theme light/dark' }];
+  const keys = (rows) => rows.map((r) => r.kind === 'plan' ? r.key : '!' + r.id);
+
+  assert.deepEqual(keys(match('boa', plans, actions, [])), ['!board']);
+  assert.deepEqual(keys(match('gamma', plans, actions, [])), ['demo/20260101-000002-gamma']);
+  assert.deepEqual(keys(match('#12', plans, actions, [])), ['demo/20260101-000001-beta']);
+  // "demo" is only in the project name: every item matches, not archived first (list order), then archived newest first
+  assert.deepEqual(keys(match('demo', plans, actions, [])), ['demo/20260101-000000-alpha', 'demo/20260101-000001-beta',
+    'demo/20260101-000002-gamma', 'demo/wt.side-fix', 'demo/20250601-000000-newer-alpha', 'demo/20250101-000000-old-alpha'],
+  'a plan matches by its project');
+  assert.deepEqual(keys(match('side fix', plans, actions, [])), ['demo/wt.side-fix'], 'a worktree item matches by its file');
+  assert.deepEqual(keys(match('quick patch', plans, actions, [])), ['demo/wt.side-fix'], 'a worktree item matches by its branch');
+  // open tabs first, then not archived, then archived newest first
+  assert.deepEqual(keys(match('alpha', plans, actions, ['demo/20250101-000000-old-alpha'])),
+    ['demo/20250101-000000-old-alpha', 'demo/20260101-000000-alpha']
+      .concat(['demo/20250601-000000-newer-alpha']));
+  assert.deepEqual(keys(match('alpha', plans, actions, [])),
+    ['demo/20260101-000000-alpha', 'demo/20250601-000000-newer-alpha', 'demo/20250101-000000-old-alpha']);
+  // an empty query: the open tabs in tab order (a stale key is skipped), then every action
+  assert.deepEqual(keys(match('', plans, actions, ['demo/20260101-000002-gamma', 'demo/gone', 'demo/20260101-000000-alpha'])),
+    ['demo/20260101-000002-gamma', 'demo/20260101-000000-alpha', '!board', '!scout', '!theme']);
+  const sixty = Array.from({ length: 60 }, (_, i) => plan('20260201-0000' + String(i).padStart(2, '0') + '-p'));
+  const rows = match('', sixty, actions, sixty.map((p) => p.key));
+  assert.equal(rows.filter((r) => r.kind === 'plan').length, 50);
+  assert.equal(rows.filter((r) => r.kind === 'action').length, actions.length);
+  const found = match('p', sixty, [{ id: 'prefs', label: 'Prefs' }], []);
+  assert.equal(found.filter((r) => r.kind === 'plan').length, 50, 'the cap counts plan rows only');
+  assert.equal(found.filter((r) => r.kind === 'action').length, 1);
+});
+
+test('the page has the tab strip, the palette and the window.dashboard hooks', async () => {
+  const page = await (await get('/')).text();
+  assert.match(page, /<nav id="stabs"[^>]* hidden><\/nav>/);
+  assert.match(page, /id="palette"[^>]* hidden/);
+  assert.match(page, /#stabs\[hidden\], #palette\[hidden\] \{ display:none; \}/);
+  assert.match(page, /body\.review #stabs \{ display:none; \}/);
+  const hooks = /window\.dashboard = \{([^}]*)\}/.exec(page);
+  assert.ok(hooks, 'window.dashboard = { … }');
+  // each hook calls its own function, and each goes through the gate that the keyboard path uses
+  const body = hooks[1].replace(/\s+/g, ' ');
+  for (const [name, target] of [['switchSession', 'tabHook(switchSession)'], ['nextSession', 'tabHook(nextSession)'],
+    ['closeSession', 'tabHook(() => closeSession())'], ['reopenSession', 'tabHook(reopenSession)'], ['openSearch', 'searchHook']])
+    assert.ok(body.includes(name + ': ' + target), `${name}: ${target}`);
+  // the gates: tab hooks do nothing under an overlay or the open palette; the palette hook only under an overlay
+  assert.match(page, /const tabHook = \(f\) => \(\.\.\.a\) => \{ if \(!keysOwned\(\) && !paletteOpen\(\)\) f\(\.\.\.a\); \};/);
+  assert.match(page, /const searchHook = \(\) => \{ if \(!keysOwned\(\)\) openSearch\(\); \};/);
+});
+
 test('stores status and tags', async () => {
   assert.deepEqual(await post('/api/meta', { project: 'demo', slug: 'demo-plan', status: 'in review', tags: ['api', 'api'] }), { ok: true });
   const p = await onlyPlan();
@@ -1470,6 +1584,7 @@ test('docs-media copies a dashboard that starts and serves the page, without the
     }
     assert.ok(res, 'the copied server answers: ' + err);
     assert.equal(res.status, 200);
+    assert.match(await res.text(), /id="stabs"/, 'the copy serves the page of this checkout');
   } finally {
     await stop(child);
     rmSync(box, { recursive: true, force: true });

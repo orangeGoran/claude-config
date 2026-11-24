@@ -16,6 +16,7 @@
   <button id="settingsbtn" title="projects & settings">⚙ Settings</button>
   <button id="alertBtn" aria-pressed="false" title="Sound and notification when a run stops or the agent answers">🔕</button>
   <button id="themeBtn" title="toggle light/dark">🌙</button></div></header>
+<nav id="stabs" aria-label="Open plans" hidden></nav>
 <div class="wrap">
   <aside>
     <div class="filters">
@@ -58,6 +59,7 @@
 <dialog id="seldlg" aria-labelledby="seldlgt"><div class="seldlg-top"><b id="seldlgt"></b><span style="flex:1"></span>
   <button class="ccopy" id="seldlgcopy">Copy</button><button class="onb-x" id="seldlgx" title="Close (Esc)">✕</button></div>
   <p id="seldlgnote" hidden></p><pre id="seldlgbody"></pre></dialog>
+<div id="palette" class="palette" role="dialog" aria-modal="true" aria-label="Command palette" hidden><input id="palq" type="search" autocomplete="off" spellcheck="false" aria-label="Search plans and actions" placeholder="Search plans and actions…"><div id="pall" role="listbox"></div></div>
 <div id="toasts" role="status" aria-live="polite"><div id="toastList"></div><button id="toastPill" class="toastPill" hidden></button></div>
 <div id="tour"><div id="tourblock"></div><div id="tourhole"></div>
   <div id="tourpop" role="dialog" aria-live="polite"></div></div>

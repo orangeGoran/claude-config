@@ -874,3 +874,34 @@
   .sc-checks tr.muted td { color:var(--dim); } .sc-mute { color:var(--warn); white-space:nowrap; }
   .sc-mkeys { margin-top:10px; } .sc-mkeys ul { list-style:none; margin:4px 0 0; padding:0; }
   .sc-mkeys li { display:flex; gap:8px; justify-content:space-between; align-items:center; padding:3px 0; }
+  /* session tabs: one tab per opened plan, in a row under the header */
+  #stabs { display:flex; gap:4px; padding:4px 20px; border-bottom:1px solid var(--line); overflow-x:auto; flex-shrink:0;
+           background:var(--panel); }
+  .stab { display:flex; align-items:center; flex-shrink:0; border:1px solid transparent; border-radius:7px; max-width:320px; }
+  .stab:hover { background:var(--hover); }
+  .stab.on { background:var(--card); border-color:var(--line); }
+  .stab button { border:0; background:none; color:inherit; font:inherit; cursor:pointer; padding:3px 6px; }
+  .stabgo { display:flex; align-items:center; gap:6px; min-width:0; font-size:calc(12.5px * var(--fs)); color:var(--dim); }
+  .stab.on .stabgo { color:var(--fg); }
+  .stabn { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .stab .dot { width:7px; height:7px; margin-top:0; }
+  .stab kbd, .pali kbd { font:calc(11px * var(--fs)) ui-monospace,monospace; color:var(--dim); }
+  .stabx { color:var(--dim); border-radius:5px; padding:1px 6px; }
+  .stabx:hover { color:var(--fg); background:var(--sel); }
+  body.review #stabs { display:none; }
+  /* the ⌘K palette: a panel like the chat's / menu, centered at the top */
+  .palette { position:fixed; top:12vh; left:50%; transform:translateX(-50%); z-index:60; width:min(560px, 92vw);
+             background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 30px rgba(0,0,0,.35);
+             display:flex; flex-direction:column; }
+  .palette input { margin:8px; background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:8px;
+                   padding:7px 10px; font-size:calc(14px * var(--fs)); }
+  #pall { max-height:min(420px, 60vh); overflow:auto; padding-bottom:6px; }
+  .pali { padding:5px 12px; cursor:pointer; font-size:calc(12.5px * var(--fs)); display:flex; align-items:center; gap:8px; min-width:0; }
+  .pali b { font-family:ui-monospace,monospace; font-weight:600; white-space:nowrap; }
+  .pali .dim { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  .pali .dot { margin-top:0; }
+  .pali kbd { margin-left:auto; }
+  .pali .palk { color:var(--dim); font-size:calc(11px * var(--fs)); }
+  .pali.on, .pali:hover { background:var(--sel); }
+  .pali.none { cursor:default; color:var(--dim); } .pali.none:hover { background:none; }
+  #stabs[hidden], #palette[hidden] { display:none; }
