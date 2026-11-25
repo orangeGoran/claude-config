@@ -89,10 +89,15 @@ export function parseLog(text) {
     if (comp && o.type === 'system' && o.subtype === 'init') comp.sawInit = true;
     if (typeof o.session_id === 'string' && o.session_id) { addSid(o.session_id); lastSid = o.session_id; }
     const ts = tsOf(o);
-    if (o.type === 'system' && o.subtype === 'init') streams.push({ lastTotal: null });
+    if (o.type === 'system' && o.subtype === 'init') streams.push({ sid: null, firstTotal: null, lastTotal: null });
     if (o.type === 'result') {
-      if (!streams.length) streams.push({ lastTotal: null });
-      if (typeof o.total_cost_usd === 'number') streams[streams.length - 1].lastTotal = o.total_cost_usd;
+      if (!streams.length) streams.push({ sid: null, firstTotal: null, lastTotal: null });
+      const st = streams[streams.length - 1];
+      if (typeof o.total_cost_usd === 'number') {
+        if (st.sid === null && typeof o.session_id === 'string' && o.session_id) st.sid = o.session_id;
+        if (st.firstTotal === null) st.firstTotal = o.total_cost_usd;
+        st.lastTotal = o.total_cost_usd;
+      }
       const r = { usage: sumModelUsage(o.model_usage_since_last_result), totalCost: typeof o.total_cost_usd === 'number' ? o.total_cost_usd : null, compaction: Boolean(comp) };
       results.push(r);
       if (comp) {
@@ -308,14 +313,33 @@ export function allocateCost(weights, rest) {
 }
 
 /**
+ * Adds the total_cost_usd of the streams and returns the sum, or null when no stream has one.
+ * A resumed session (--resume) continues its running total: when a stream of a session starts
+ * at or above the last total of an earlier stream of the same session, only the difference
+ * counts. A stream that starts lower is a new total and counts in full.
+ */
+export function streamCostSum(streams) {
+  const prevLast = new Map();
+  let sum = null;
+  for (const s of streams) {
+    if (s.lastTotal === null) continue;
+    const key = s.sid ?? '(none)';
+    const prev = prevLast.get(key);
+    const add = prev !== undefined && s.firstTotal !== null && s.firstTotal >= prev ? s.lastTotal - prev : s.lastTotal;
+    sum = (sum ?? 0) + add;
+    prevLast.set(key, s.lastTotal);
+  }
+  return sum;
+}
+
+/**
  * Computes the run cost (total, cross-check, thinking tokens) and sets the cost of each row:
  * the compaction rows get their own exact cost, the other rows share the rest by token weight.
  * Returns the cost facts for formatTables.
  */
 export function applyCosts(parsed, report) {
   const withUsage = parsed.results.filter((r) => r.usage?.hasCost);
-  const crossTotals = parsed.streams.map((s) => s.lastTotal).filter((v) => v !== null);
-  const crossCheck = crossTotals.length ? crossTotals.reduce((a, v) => a + v, 0) : null;
+  const crossCheck = streamCostSum(parsed.streams);
   let total = null, source = null;
   if (withUsage.length) { total = withUsage.reduce((a, r) => a + r.usage.cost, 0); source = 'model_usage'; }
   else if (crossCheck !== null) { total = crossCheck; source = 'total_cost_usd'; }
@@ -381,8 +405,8 @@ export function formatTables(report, cost, unparsable) {
   }
   for (const w of report.warnings) out.push(`warning: ${w}`);
   out.push(`total cost: ${fmtCost(cost.total)}${cost.source === 'total_cost_usd' ? ' (from total_cost_usd)' : ''}`);
-  out.push(`cross-check (last total_cost_usd of each stream, summed): ${fmtCost(cost.crossCheck)}`);
-  if (cost.source === 'total_cost_usd') out.push('caveat: no result line has model_usage_since_last_result; the total is the sum of the last total_cost_usd of each stream.');
+  out.push(`cross-check (total_cost_usd of each stream, summed; a resumed session adds only its new cost): ${fmtCost(cost.crossCheck)}`);
+  if (cost.source === 'total_cost_usd') out.push('caveat: no result line has model_usage_since_last_result; the total is the total_cost_usd of each stream, summed (a resumed session adds only its new cost).');
   if (cost.total === null) out.push('caveat: the result lines have no cost field; every cost is n/a.');
   out.push('caveat: the row costs are estimates from token weights (input 1, cache write 1.25, cache read 0.1, output 5); only the total and the compaction cost are exact.');
   out.push(`caveat: the assistant usage has no thinking tokens; thinking tokens of the whole run (result lines): ${cost.thinking === null ? 'n/a' : fmtInt(cost.thinking)}.`);

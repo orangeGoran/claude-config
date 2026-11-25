@@ -23,7 +23,7 @@ This is the roadmap: the goals and the architecture of the repo, and the list of
 
 ## Parent plans
 
-- **Plans Mac app** — [.plans/20261122-151056-plans-mac-app-parent.md](../.plans/20261122-151056-plans-mac-app-parent.md): a native Mac app around the dashboard, with keyboard shortcuts for sessions. Phase 1 (session tabs and ⌘K, see [plans-dashboard.md](plans-dashboard.md#tabs-and-keyboard-shortcuts)) is built; phases 2 and 3 are not written yet.
+- **Plans Mac app** — [.plans/20261122-151056-plans-mac-app-parent.md](../.plans/20261122-151056-plans-mac-app-parent.md): a native Mac app around the dashboard, with keyboard shortcuts for sessions. Phase 1 (session tabs and ⌘K, see [plans-dashboard.md](plans-dashboard.md#tabs-and-keyboard-shortcuts)) is built; phase 2 is split into 2a (the app shell, being planned) and 2b (the native parts); 2b and phase 3 are not written yet.
 
 - **Move the apps out of `scripts/`** — built: [.plans/done/20261122-152506-move-apps-out-of-scripts.md](../.plans/done/20261122-152506-move-apps-out-of-scripts.md). The dashboard (`apps/dashboard/`: `server.mjs`, `page/`, `chat-relay.mjs`, `restart.mjs`) and the scout (`apps/scout/scout.mjs`) live in `apps/`, each with its own `test/` folder; `scripts/` holds setup and helper scripts. Each Mac runs `scripts/setup-macos.sh` again, so the login service starts `apps/dashboard/server.mjs`. It runs before Mac app phase 1 (owner decision 2026-11-22).
 

@@ -18,8 +18,10 @@ A native Mac app around the dashboard, so the owner can switch between working s
 
 ## Phases
 
-1. **Session tabs and the ⌘K palette (page)**, built — `.plans/20261122-133231-session-tabs-and-command-palette.md`. The tab strip, Ctrl+1–9 / Ctrl+W / Ctrl+Shift+T in the browser, the ⌘K palette (plans, worktrees and header actions), and the `window.dashboard` hooks (`switchSession`, `nextSession`, `closeSession`, `reopenSession`, `openSearch`) that the app calls.
-2. **The Mac app shell and native parts** — plan not written yet. In `apps/plans-mac/` (a new top-level `apps/` folder; owner decision 2026-11-22): the Swift app and `npm run build-app` (`swiftc`, ad-hoc signed, copied to `~/Applications`); the menu bar with ⌘1–8, ⌘9 (last tab), ⌘⇧[ / ⌘⇧], ⌘W, ⌘⇧T, ⌘K, ⌘L, ⌘B, ⌘, and the Edit menu, each calling a `window.dashboard` hook; links to other sites open in the default browser; window size and place kept. Native parts: notifications with Allow / Deny that answer through `POST /api/chat/answer` (WKWebView has no web notifications), a Dock badge with the count of sessions that need the owner, keep the Mac awake while a run or chat works, reload by itself after the server restarts, and an "App update ready" bar when the shell code on disk is newer than the app.
+1. **Session tabs and the ⌘K palette (page)**, built — `.plans/done/20261122-133231-session-tabs-and-command-palette.md`. The tab strip, Ctrl+1–9 / Ctrl+W / Ctrl+Shift+T in the browser, the ⌘K palette (plans, worktrees and header actions), and the `window.dashboard` hooks (`switchSession`, `nextSession`, `closeSession`, `reopenSession`, `openSearch`) that the app calls.
+2. **The Mac app**, in `apps/plans-mac/` (a new top-level `apps/` folder; owner decision 2026-11-22). Too big for one PR, so it is two plans, in this order:
+   - **2a. The app shell** — planning now. The Swift app and `npm run build-app` (`swiftc`, ad-hoc signed, copied to `~/Applications`); the menu bar with ⌘1–8, ⌘9 (last tab), ⌘⇧[ / ⌘⇧], ⌘W, ⌘⇧T, ⌘K, ⌘L, ⌘B, ⌘, and the Edit menu, each calling a `window.dashboard` hook (the page gets the hooks that are still missing); links to other sites open in the default browser; window size and place kept; `scripts/setup.sh` asks before it builds and installs the app. The owner can try it first, and 2b builds on it.
+   - **2b. The native parts** — plan not written yet. Notifications with Allow / Deny that answer through `POST /api/chat/answer` (WKWebView has no web notifications), a Dock badge with the count of sessions that need the owner, keep the Mac awake while a run or chat works, reload by itself after the server restarts, and an "App update ready" bar when the shell code on disk is newer than the app. It takes the two phase 2 open decisions below.
 3. **The ⌘N new-session sheet** — plan not written yet. The sheet and its server work: "ask about the project" and "new plan" need a chat that has no plan file yet (today every chat belongs to a plan, and only a confirmed scout proposal starts `/skill-1-plan` in a repo-root chat, `scoutConfirm()`). "Launch a ready plan" lists the Ready plans.
 
 ## Later (not in Release 1)
@@ -28,5 +30,5 @@ Menu bar icon with live status, a global quick-capture hotkey, `plans://` deep l
 
 ## Open decisions
 
-- Phase 2: how the app finds out that the shell code changed (version endpoint or file hash), and which events ring a notification (all alerts, or only permission asks and failed runs). Decided in the phase 2 plan.
+- Phase 2b: how the app finds out that the shell code changed (version endpoint or file hash), and which events ring a notification (all alerts, or only permission asks and failed runs). Decided in the 2b plan.
 - Phase 3: where a chat without a plan lives (a placeholder plan file, or a new chat kind on the server), and its endpoint access. Decided in the phase 3 plan.
