@@ -47,19 +47,6 @@ BASE_BRANCH="main"
 # It runs only when INSTALL_MANIFEST exists in the worktree.
 INSTALL_CMD=""
 INSTALL_MANIFEST="package.json"
-# EDIT 3: untracked files the main checkout copies into each new worktree.
-ENV_FILES=('.env')
-# EDIT 4: extra allow rules for every run (install, services, migrations). A command
-# the plan's "How to verify" uses must be here or in .claude/settings.json, or the
-# headless run is BLOCKED. Never put push or PR rules here: the PR overlay below has them.
-RUN_EXTRA_ALLOW=('Bash(bash .claude/scripts/workflow-complete-step.sh*)' 'Bash(command -v codex)' 'Bash(test -x ~/.local/bin/codex)' 'Bash(codex exec*)' 'Bash(codex login status*)' 'Bash(~/.local/bin/codex exec*)' 'Bash(~/.local/bin/codex login status*)' "Bash($HOME/.local/bin/codex exec*)" "Bash($HOME/.local/bin/codex login status*)" 'Read(~/.claude/skills/browser-usability-test/**)' 'Read(~/.claude/browser-usability-test/**)' 'Bash(node ~/.claude/skills/browser-usability-test/scripts/*)' 'Bash(QA_*=* node ~/.claude/skills/browser-usability-test/scripts/*)' "Bash(node $HOME/.claude/skills/browser-usability-test/scripts/*)" "Bash(QA_*=* node $HOME/.claude/skills/browser-usability-test/scripts/*)" 'Bash(curl -s -o /dev/null -w *)')
-# EDIT 5: the mode the dashboard preselects (verify | commit | pr).
-DEFAULT_MODE="pr"
-# EDIT 6: bare commands every run needs (for example a generator the browser test reads).
-# The preflight runs each once in the new worktree; each must also have an allow rule.
-PREFLIGHT_CMDS=()
-# EDIT 7: the browser-usability-test project of this repo; empty = no browser test.
-BROWSER_TEST_PROJECT="plans-dashboard"
 # EDIT 2b: a command that runs once in the main checkout before any worktree install;
 # empty = none. Example: the first use of a newly pinned pnpm installs that version by
 # itself. Parallel worktree installs at that moment can leave a half-built *_tmp_* folder,
@@ -67,6 +54,19 @@ BROWSER_TEST_PROJECT="plans-dashboard"
 # INSTALL_PREWARM_FIX is the hint that a failed prewarm prints; empty = no hint.
 INSTALL_PREWARM_CMD=""
 INSTALL_PREWARM_FIX=""
+# EDIT 3: untracked files the main checkout copies into each new worktree.
+ENV_FILES=('.env')
+# EDIT 4: extra allow rules for every run (install, services, migrations). A command
+# the plan's "How to verify" uses must be here or in .claude/settings.json, or the
+# headless run is BLOCKED. Never put push or PR rules here: the PR overlay below has them.
+RUN_EXTRA_ALLOW=('Bash(DASH_PORT=* node apps/dashboard/server.mjs*)' 'Bash(bash .claude/scripts/workflow-complete-step.sh*)' 'Bash(command -v codex)' 'Bash(test -x ~/.local/bin/codex)' 'Bash(codex exec*)' 'Bash(codex login status*)' 'Bash(~/.local/bin/codex exec*)' 'Bash(~/.local/bin/codex login status*)' "Bash($HOME/.local/bin/codex exec*)" "Bash($HOME/.local/bin/codex login status*)" 'Read(~/.claude/skills/browser-usability-test/**)' 'Read(~/.claude/browser-usability-test/**)' 'Bash(node ~/.claude/skills/browser-usability-test/scripts/*)' 'Bash(QA_*=* node ~/.claude/skills/browser-usability-test/scripts/*)' "Bash(node $HOME/.claude/skills/browser-usability-test/scripts/*)" "Bash(QA_*=* node $HOME/.claude/skills/browser-usability-test/scripts/*)" 'Bash(curl -s -o /dev/null -w *)')
+# EDIT 5: the mode the dashboard preselects (verify | commit | pr).
+DEFAULT_MODE="pr"
+# EDIT 6: bare commands every run needs (for example a generator the browser test reads).
+# The preflight runs each once in the new worktree; each must also have an allow rule.
+PREFLIGHT_CMDS=()
+# EDIT 7: the browser-usability-test project of this repo; empty = no browser test.
+BROWSER_TEST_PROJECT="plans-dashboard"
 # ===================================================================================
 # settings that a CONFIG block from an older template does not have
 [ -n "${PREFLIGHT_CMDS+x}" ] || PREFLIGHT_CMDS=()
