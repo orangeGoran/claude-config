@@ -317,7 +317,7 @@ Before you show the plan, check it. Fix the plan if any item fails.
 Run `/skill-auto-validate-plan` on the saved plan yourself. Do not ask first.
 
 - Use the Skill tool: `skill: "skill-auto-validate-plan"`, `args: ".plans/<plan-file>.md"`. Always pass the plan path, so it cannot pick a different plan.
-- Follow it to the end: all rounds (max 2), the owner questions, and its final report.
+- Follow it to the end: all rounds (max 4; most plans stop earlier), the owner questions, and its final report.
 - Ask its owner questions through the question queue, in the decision format: show the list first, then one question per message. Never use AskUserQuestion for them. Do not guess.
 - Skip this step only in these cases, and say in one line why:
   - The owner said "draft only" or "skip validation".

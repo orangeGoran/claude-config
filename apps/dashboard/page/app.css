@@ -27,20 +27,39 @@
            align-items:center; gap:14px; flex-shrink:0; }
   h1 { font-size:calc(15px * var(--fs)); margin:0; }
   #home { color:inherit; text-decoration:none; }
-  /* the Plan · PR / Files changed switch sits where the review bar has it: in the middle of the space left of the chat
-     panel, but never over the left group (--tabx, set by placeHdTabs in app.js); the left group stops before it */
-  header.mainhd { position:relative; }
-  .mainhd .hleft, .mainhd .hright { display:flex; align-items:center; gap:14px; min-width:0; }
-  .mainhd .hleft { flex:1; }
-  .mainhd .hright { margin-left:auto; }
+  /* one header row: Plans, the ⋯ menu, Code, the Plan · PR switch, the open-plan tabs, then the status on the right.
+     The buttons used less often are in the ⋯ menu (#hdmenu), so the row also holds the open-plan tabs */
+  header.mainhd { padding:5px 14px; gap:10px; min-height:calc(40px * var(--fs)); }
+  /* the Plan / Files switch starts at the same x in the header and in the Files changed bar (.rbar):
+     both bars have the same padding and gap, and a left group of the same fixed width (--hdl). Its slot (--hdsw)
+     fills the rest of the sidebar width (aside), so the open-plan tabs start at the sidebar's right edge,
+     and stays when the open plan has no PR, so the tabs never move */
+  :root { --asw:calc(400px * var(--fs)); --hdl:calc(184px * var(--fs)); --hdsw:calc(var(--asw) - 14px - var(--hdl) - 20px); }
+  .mainhd .hdl { display:flex; align-items:center; gap:10px; width:var(--hdl); flex-shrink:0; white-space:nowrap; }
+  #hdtabs { flex-shrink:0; white-space:nowrap; min-width:var(--hdsw); display:flex; }
+  .mainhd .hright { display:flex; align-items:center; gap:8px; margin-left:auto; flex-shrink:0; min-width:0; }
+  .mainhd .hright > * { white-space:nowrap; }
   /* shown only while the open plan waits for GitHub or the server (busy), beside the thin bar at the top */
-  .mainhd .hdnote { margin-left:auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; visibility:hidden; }
-  body.busy .mainhd .hdnote { visibility:visible; }
-  .mainhd .hleft > :not(.hdnote) { flex-shrink:0; white-space:nowrap; }
-  #hdtabs { position:absolute; top:50%; left:var(--tabx, 50%); transform:translate(-50%, -50%); }
-  .mainhd.tabs .hleft { max-width:calc(var(--tabx, 50%) - var(--tabsw, 0px) / 2 - 36px); }
+  .mainhd .hdnote { display:none; }
+  body.busy .mainhd .hdnote { display:inline; }
+  #hdmenuBtn { font-weight:700; letter-spacing:1px; padding:2px 9px; }
+  #hdmenuBtn.flag::after { content:''; display:inline-block; width:6px; height:6px; margin-left:4px; border-radius:50%;
+                           background:var(--warn); vertical-align:2px; }
+  /* the ⋯ menu: a popover under its button (app.js places it); a click outside or Esc closes it */
+  .hdmenu { margin:0; inset:auto; position:fixed; min-width:200px; padding:6px; border:1px solid var(--line); border-radius:10px;
+            background:var(--panel); color:var(--fg); box-shadow:0 12px 40px rgba(0,0,0,.4); }
+  .hdmenu:popover-open { display:flex; flex-direction:column; gap:2px; }
+  .hdmenu > button, .hdmenu > .hdlink { text-align:left; border:0; background:none; border-radius:6px; padding:6px 10px;
+            font-size:calc(13px * var(--fs)); color:var(--fg); }
+  .hdmenu > button:hover, .hdmenu > .hdlink:hover { background:var(--sel); }
+  .hdmenu > button.on { color:var(--accent); }
+  .hdmenu hr { border:0; border-top:1px solid var(--line); margin:4px 0; width:100%; }
+  .hdmenu .hmfoot { font-size:calc(11px * var(--fs)); padding:4px 10px 2px; font-variant-numeric:tabular-nums; }
   .wrap { flex:1; display:flex; min-height:0; }
-  aside { width:calc(400px * var(--fs)); border-right:1px solid var(--line); background:var(--panel);
+  /* the column right of the sidebar: the tab strip on top, then the plan, the board and the chat side by side */
+  .maincol { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; }
+  .mainrow { flex:1; min-height:0; display:flex; }
+  aside { width:var(--asw); border-right:1px solid var(--line); background:var(--panel);
           flex-shrink:0; display:flex; flex-direction:column; }
   .filters { padding:10px 12px; display:flex; gap:8px; align-items:center; border-bottom:1px solid var(--line); }
   .filters button { font-size:calc(12px * var(--fs)); }
@@ -88,6 +107,8 @@
   .mergedline { display:flex; align-items:center; gap:8px; margin:10px 0 0; padding:8px 12px; border-radius:10px;
                 border:1px solid var(--merge); background:color-mix(in srgb, var(--merge) 14%, transparent); }
   .mergedline a { margin-left:auto; color:var(--link); text-decoration:none; white-space:nowrap; }
+  .mergedline .mini { margin-left:auto; white-space:nowrap; flex-shrink:0; padding:2px 10px; font-size:calc(11px * var(--fs)); border-radius:99px; }
+  .mergedline .mini + a { margin-left:0; }
   .chip.x { cursor:pointer; } .chip.x:hover { border-color:var(--bad); color:var(--bad); }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--dot); flex-shrink:0; margin-top:5px; }
   @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.3 } }
@@ -119,6 +140,7 @@
   .runstrip { padding:4px 0 2px; border-bottom:1px solid var(--line); display:none; }
   .runstrip.on { display:block; }
   .runstrip .cap { padding:12px 20px 6px; font-size:calc(11px * var(--fs)); letter-spacing:.08em; font-weight:600; color:var(--run); text-transform:uppercase; }
+  .runstrip .cap { position:sticky; top:0; z-index:2; background:var(--panel); }
   .runstrip .cap.okc { color:var(--ok); } .runstrip .cap.wc { color:var(--warn); } .runstrip .cap.bc { color:var(--bad); }
   .runstrip .sgrp { --sc:var(--run); --pcard:color-mix(in srgb, var(--card) 55%, var(--panel)); margin:0 10px 10px;
                     background:var(--pcard); border:1px solid var(--line); border-left:4px solid var(--sc);
@@ -142,7 +164,6 @@
            border:1px solid color-mix(in srgb, var(--pc) 35%, transparent); vertical-align:1px; margin-right:5px;
            white-space:nowrap; word-break:normal; }
   .phead.pcx { border-left:4px solid var(--pc); }
-  section#detail.pcx { border-top:3px solid var(--pc); }
   .openmk { display:inline-block; font:700 calc(10px * var(--fs))/1.5 system-ui,sans-serif; letter-spacing:.06em;
             padding:0 7px; border-radius:99px; background:var(--accent); color:var(--accentfg); margin-right:5px;
             vertical-align:1px; white-space:nowrap; word-break:normal; }
@@ -516,8 +537,11 @@
   /* review mode: the PR tabs take the whole window; one thin toolbar: back and title, the tabs in the middle, the actions on the right */
   body.review > header, body.review aside { display:none; }
   body.review #detail { padding:0; display:flex; flex-direction:column; }
-  .rbar { position:sticky; top:0; z-index:3; display:grid; grid-template-columns:minmax(0,1fr) auto minmax(max-content,1fr);
-          align-items:center; gap:16px; padding:6px 12px; background:var(--panel); border-bottom:1px solid var(--line); flex-shrink:0; }
+  .rbar { position:sticky; top:0; z-index:3; display:grid; grid-template-columns:var(--hdl) auto minmax(0,1fr) max-content;
+          align-items:center; gap:10px; padding:5px 14px; background:var(--panel); border-bottom:1px solid var(--line); flex-shrink:0; }
+  .rbar { min-height:calc(40px * var(--fs)); }
+  .rbar .rsw { display:flex; justify-self:start; }
+  #hdtabs .prtabs.off button { opacity:.55; cursor:default; }
   .rbar .rleft { display:flex; align-items:center; gap:4px; min-width:0; }
   .rbar .rright { display:flex; align-items:center; justify-content:flex-end; gap:2px; }
   .rbar .rname { font-weight:600; font-size:calc(13px * var(--fs)); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -533,14 +557,11 @@
   .rbar #ract button.merge, .rbar #ract button.primary { padding:4px 12px; margin-left:6px; }
   .rbar #ract .chip { margin-right:6px; }
   /* quiet actions: no box until the pointer is on them, so the one filled button is the next step */
-  .rbar #rback, .rbar .chatbtn, #ract .ghbtn, #ract .rfbtn { background:none; border-color:transparent; }
-  .rbar #rback, .rbar .chatbtn, .rbar #ract .ghbtn, .rbar #ract .rfbtn { padding:4px 10px; border-radius:6px; }
-  .rbar #rback:hover, .rbar .chatbtn:hover, #ract .ghbtn:hover, #ract .rfbtn:hover { background:var(--hover); border-color:transparent; }
+  .rbar #rback, #ract .ghbtn, #ract .rfbtn { background:none; border-color:transparent; }
+  .rbar #rback, .rbar #ract .ghbtn, .rbar #ract .rfbtn { padding:4px 10px; border-radius:6px; }
+  .rbar #rback:hover, #ract .ghbtn:hover, #ract .rfbtn:hover { background:var(--hover); border-color:transparent; }
   #ract .rfbtn { font-size:calc(16px * var(--fs)); }
   #ract .vsbtn { font-size:calc(13px * var(--fs)); }
-  .rbar .chatbtn { margin-left:0; }
-  .rbar .chatbtn.on { background:var(--sel); border-color:transparent; color:var(--fg); }
-  .rbar .chatbtn .n { border-radius:10px; padding:0 5px; margin-left:4px; font-size:calc(11px * var(--fs)); }
   #prview.pvpr { max-width:calc(1000px * var(--fs)); }
   .prtabsrow { display:flex; align-items:center; gap:12px; border-bottom:1px solid var(--line); margin:12px 0 16px; }
   /* as wide as the PR text below, so GitHub, reload and Merge sit over it, not at the window's edge */
@@ -602,8 +623,6 @@
   #chat[hidden], .csplit[hidden] { display:none; }
   .csplit { width:9px; margin:0 -4px; cursor:col-resize; flex-shrink:0; position:relative; z-index:4; }
   .csplit:hover, .csplit:focus-visible, body.dragging .csplit.on { background:color-mix(in srgb, var(--accent) 45%, transparent); outline:none; }
-  .chatbtn { margin-left:auto; } .chatbtn.on { border-color:var(--accent); color:var(--accent); }
-  .chatbtn .n { background:var(--warn); color:var(--accentfg); }
   .chead { display:flex; align-items:center; gap:8px; padding:7px 12px; border-bottom:1px solid var(--line); flex-shrink:0; }
   .chead .ppill { flex-shrink:0; margin:0; }
   .chead button { padding:3px 9px; font-size:calc(12px * var(--fs)); }
@@ -748,6 +767,37 @@
   .toast .tb { color:var(--dim); overflow-wrap:anywhere; }
   .toast .tx, .toast .th { background:none; border:0; color:var(--dim); cursor:pointer; font-size:16px; line-height:1; padding:0 3px; }
   .toast .tx:hover, .toast .th:hover { color:var(--fg); }
+  /* the sticky note: one per browser, over every tab; drag it by its top bar, resize it at the bottom right corner */
+  .note { --nc:#fde68a; position:fixed; z-index:42; width:240px; min-width:160px; min-height:110px; display:flex; flex-direction:column;
+          background:var(--nc); color:#1f2328; border-radius:6px; box-shadow:0 10px 30px rgba(0,0,0,.35); resize:both; overflow:hidden; }
+  .note[hidden] { display:none; }
+  .note[data-color="green"] { --nc:#bbf7d0; } .note[data-color="blue"] { --nc:#bfdbfe; } .note[data-color="pink"] { --nc:#fbcfe8; }
+  .notebar { display:flex; align-items:center; gap:6px; padding:4px 6px; cursor:grab; touch-action:none; user-select:none;
+             background:color-mix(in srgb, var(--nc) 80%, #000 8%); }
+  body.notedrag, body.notedrag .notebar { cursor:grabbing; user-select:none; }
+  .notecolors { display:flex; gap:4px; }
+  .notecolors button { width:14px; height:14px; padding:0; border-radius:50%; border:1px solid rgba(0,0,0,.25); cursor:pointer; }
+  .notecolors [data-color="yellow"] { background:#fde68a; } .notecolors [data-color="green"] { background:#bbf7d0; }
+  .notecolors [data-color="blue"] { background:#bfdbfe; } .notecolors [data-color="pink"] { background:#fbcfe8; }
+  .notex { background:none; border:0; color:#1f2328; opacity:.6; cursor:pointer; font-size:16px; line-height:1; padding:0 3px; }
+  .notex:hover { opacity:1; }
+  .note textarea { flex:1; width:100%; box-sizing:border-box; border:0; outline:0; resize:none; padding:8px 10px; background:transparent;
+                   color:inherit; font:inherit; font-size:calc(13px * var(--fs)); line-height:1.4; }
+  /* a merged PR: a card on the right with the git step and Okay, close */
+  #mergedcard { position:fixed; right:calc(var(--chatw, 0px) + 16px); top:120px; z-index:45; width:min(340px, calc(100vw - 32px));
+                background:var(--panel); border:1px solid var(--merge); border-left:4px solid var(--merge); border-radius:10px;
+                padding:14px 16px; box-shadow:0 8px 28px rgba(0,0,0,.35); display:flex; flex-direction:column; gap:8px; }
+  #mergedcard[hidden] { display:none; }
+  #mergedcard h3 { margin:0; font-size:calc(15px * var(--fs)); }
+  #mergedcard .mcname { color:var(--fg); overflow-wrap:anywhere; }
+  #mergedcard .dim { overflow-wrap:anywhere; }
+  #mergedcard pre { margin:0; max-height:140px; overflow:auto; white-space:pre-wrap; font-size:calc(11.5px * var(--fs)); }
+  #mergedcard .crow { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  #mergedcard .mchead { display:flex; align-items:center; gap:8px; cursor:grab; touch-action:none; user-select:none; }
+  body.notedrag #mergedcard .mchead { cursor:grabbing; }
+  #mergedcard .mchead h3 { flex:1; }
+  #mergedcard .mcmin { background:none; border:0; color:var(--dim); font-size:20px; line-height:1; cursor:pointer; padding:0 4px; }
+  #mergedcard .mcmin:hover { color:var(--fg); }
   @keyframes toastIn { from { opacity:0; transform:translateY(8px); } }
   #tourblock { position:fixed; inset:0; z-index:30; }
   #tourhole { position:fixed; z-index:31; border-radius:10px; pointer-events:none;
@@ -768,6 +818,14 @@
              background:var(--panel); border:1px solid var(--line); box-shadow:0 4px 14px rgba(0,0,0,.3); }
   .jumpbtn:hover { border-color:var(--accent); color:var(--accent); }
   .jumpbtn[hidden] { display:none; }
+  /* your last message, pinned over the top of the chat log once it scrolled out of view (pinLastAsk in app.js) */
+  .pinwrap { position:relative; height:0; flex-shrink:0; z-index:3; }
+  .pinask { position:absolute; top:0; left:0; right:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+            overflow:hidden; text-align:left; white-space:normal; overflow-wrap:anywhere; line-height:1.45; border-radius:0;
+            padding:6px 12px; border:0; border-bottom:1px solid var(--line); font-size:calc(12.5px * var(--fs)); color:var(--fg);
+            background:color-mix(in srgb, var(--accent) 16%, var(--panel)); box-shadow:0 4px 12px rgba(0,0,0,.25); cursor:pointer; }
+  .pinask:hover { color:var(--accent); }
+  .pinask[hidden] { display:none; }
 
   /* Board: one column per stage, all projects on one board (renderBoard in app.js) */
   #boardBtn.on { border-color:var(--accent); color:var(--accent); }
@@ -874,30 +932,52 @@
   .sc-checks tr.muted td { color:var(--dim); } .sc-mute { color:var(--warn); white-space:nowrap; }
   .sc-mkeys { margin-top:10px; } .sc-mkeys ul { list-style:none; margin:4px 0 0; padding:0; }
   .sc-mkeys li { display:flex; gap:8px; justify-content:space-between; align-items:center; padding:3px 0; }
-  /* session tabs: one tab per opened plan, in a row under the header */
-  #stabs { display:flex; gap:4px; padding:4px 20px; border-bottom:1px solid var(--line); overflow-x:auto; flex-shrink:0;
-           background:var(--panel); }
-  .stab { display:flex; align-items:center; flex-shrink:0; border:1px solid transparent; border-radius:7px; max-width:320px; }
+  /* session tabs: one tab per opened plan, in the header row; the strip scrolls sideways when the tabs do not fit */
+  #stabs { display:flex; gap:2px; flex:1 1 0; min-width:0; overflow-x:auto; scrollbar-width:none; }
+  #stabs::-webkit-scrollbar { display:none; }
+  /* a tab is short: pill, PR number (or a cut title), status dot; the × shows on the open tab and on hover */
+  .stabn { max-width:120px; }
+  .stabdot { margin-top:0; width:8px; height:8px; }
+  .stab .ppill { font-size:calc(10.5px * var(--fs)); }
+  .stab:not(.on):not(:hover) .stabx { visibility:hidden; }
+  .stab.dragging { opacity:.4; }
+  .stab.dropl { box-shadow:inset 2px 0 0 var(--accent); }
+  .stab.dropr { box-shadow:inset -2px 0 0 var(--accent); }
+  .srt { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+  .stab { display:flex; align-items:center; flex-shrink:0; border:1px solid transparent; border-radius:7px; max-width:380px; }
   .stab:hover { background:var(--hover); }
   .stab.on { background:var(--card); border-color:var(--line); }
   .stab button { border:0; background:none; color:inherit; font:inherit; cursor:pointer; padding:3px 6px; }
   .stabgo { display:flex; align-items:center; gap:6px; min-width:0; font-size:calc(12.5px * var(--fs)); color:var(--dim); }
   .stab.on .stabgo { color:var(--fg); }
   .stabn { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .stab .dot { width:7px; height:7px; margin-top:0; }
+  .stabpr { font-weight:600; white-space:nowrap; }
+  .stabst { flex-shrink:0; white-space:nowrap; }
+  .stab.prev .stabn { font-style:italic; }
   .stab kbd, .pali kbd { font:calc(11px * var(--fs)) ui-monospace,monospace; color:var(--dim); }
   .stabx { color:var(--dim); border-radius:5px; padding:1px 6px; }
   .stabx:hover { color:var(--fg); background:var(--sel); }
   body.review #stabs { display:none; }
   /* the ⌘K palette: a panel like the chat's / menu, centered at the top */
-  .palette { position:fixed; top:12vh; left:50%; transform:translateX(-50%); z-index:60; width:min(560px, 92vw);
-             background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 30px rgba(0,0,0,.35);
+  .palette { position:fixed; top:12vh; left:50%; transform:translateX(-50%); z-index:60; width:min(1100px, 94vw);
+             background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:0 18px 60px rgba(0,0,0,.45);
              display:flex; flex-direction:column; }
+  /* the page behind the open palette goes dim and blurred; a click on it closes the palette */
+  body:has(#palette:not([hidden]))::after { content:''; position:fixed; inset:0; z-index:59;
+             background:rgba(0,0,0,.35); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
   .palette input { margin:8px; background:var(--input); color:var(--fg); border:1px solid var(--line); border-radius:8px;
                    padding:7px 10px; font-size:calc(14px * var(--fs)); }
-  #pall { max-height:min(420px, 60vh); overflow:auto; padding-bottom:6px; }
+  #pall { max-height:70vh; overflow:auto; padding-bottom:6px; }
   .pali { padding:5px 12px; cursor:pointer; font-size:calc(12.5px * var(--fs)); display:flex; align-items:center; gap:8px; min-width:0; }
-  .pali b { font-family:ui-monospace,monospace; font-weight:600; white-space:nowrap; }
+  .pali { padding:8px 14px; }
+  .palp { display:flex; flex-direction:column; gap:3px; min-width:0; flex:1; }
+  .pal1 { display:flex; align-items:center; gap:8px; min-width:0; }
+  .pal1 b { font-weight:600; min-width:0; flex:0 1 auto; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .pal1 .chip, .pal1 .ppill { flex-shrink:0; }
+  .palpr { font-size:calc(14px * var(--fs)); font-weight:700; padding:2px 9px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .name > .palpr, .rp .n > .palpr { margin-right:6px; vertical-align:1px; font-family:-apple-system,"Segoe UI",sans-serif; }
+  .palpr small { font-size:calc(10px * var(--fs)); font-weight:500; opacity:.85; }
+  .pal2 { font-size:calc(11.5px * var(--fs)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .pali .dim { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
   .pali .dot { margin-top:0; }
   .pali kbd { margin-left:auto; }

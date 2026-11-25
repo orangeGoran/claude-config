@@ -1,0 +1,9 @@
+kind: added
+audience: both
+scope: dashboard
+summary: |
+  The dashboard has one sticky note. 📝 Note in the ⋯ menu (or "Sticky note" in the ⌘K palette) shows or hides it. The note floats over the page on every tab; you drag it by its top bar, resize it at its corner, and pick one of four colors. The note is kept in this browser only. After the pull, restart the dashboard (check pgrep -fl chat-relay.mjs first) and reload the page.
+internal: |
+  Page only (apps/dashboard/page/): no server change, no new endpoint. New #note element and #noteBtn menu button in page.html, .note styles in app.css. In app.js the "// --- sticky note ---" block keeps { text, color, x, y, w, h, open } in localStorage dash-note, follows other tabs through the storage event, and keeps the note inside the window with the pure function noteClamp (cut out and tested in apps/dashboard/test/dashboard.test.mjs). The drag uses its own body class notedrag, not the shared dragging class (that one shows a resize cursor).
+customer:
+  en: The dashboard now has a sticky note. Open it from the ⋯ menu, drag it anywhere, resize it and pick a color. It stays on screen on every tab and is kept in your browser.

@@ -8,10 +8,10 @@ Cut the Claude tokens and the wall time of an unattended pipeline run in every p
 
 ## Plans, in order
 
-### 1. Templates diet — `.plans/20261124-161043-pipeline-diet-templates.md`
+### 1. Templates diet — `.plans/done/20261124-161043-pipeline-diet-templates.md`
 
 - **Scope:** the skill-text diet in the templates (verify, test, implement, test-review, auto-pipeline); Codex leaves verify by default (`pipeline.codexInVerify`, `CODEX_IN_VERIFY`); in "to PR" mode the decision sheet runs before the commit with `--fix`; the core script `run-usage.mjs` with its self-test, Commands rows and allow rules.
-- **Owner decisions:** 1A generic infrastructure retry signs; 2A the diet applies to the Codex-in-verify variant too; 3B the sheet fixes its Codex findings before the commit and lists each fixed finding, which is not a checkbox question ("fix it now", no follow-up tickets). Plan validation 1A (2026-11-24): `/skill-auto-validate-plan` runs max 2 rounds, not 4 (step 19).
+- **Owner decisions:** 1A generic infrastructure retry signs; 2A the diet applies to the Codex-in-verify variant too; 3B the sheet fixes its Codex findings before the commit and lists each fixed finding, which is not a checkbox question ("fix it now", no follow-up tickets). Plan validation 1A (2026-11-24): `/skill-auto-validate-plan` runs max 2 rounds, not 4 (step 19). Reversed on 2026-11-25 by plan 3 (max 4 rounds with an early stop).
 - **Open decisions:** none.
 
 ### 2. Tickets for defects of another repo — not written yet
@@ -23,3 +23,9 @@ Cut the Claude tokens and the wall time of an unattended pipeline run in every p
   - A guard so the planner finds these tickets in one search: a fixed label (for example `from-pipeline`) and the source PR link in each ticket body.
   - Which modes may open a ticket: only "to PR" (the only mode with network writes today), or also "commit" and "stop at verify".
   - How `skill-1-plan` searches for and merges related tickets (which repos, which labels, open tickets only).
+
+### 3. Review loop caps — `.plans/done/20261125-210049-review-loop-caps.md`
+
+- **Scope:** `/skill-auto-validate-plan` runs max 4 rounds with an early stop (a round with no accepted fix and no open regression ends the loop), a `RAISED BEFORE` rule for findings that an earlier round rejected, and a final edits check instead of a fifth round; `pipeline.codexInVerify` is on by default when the `codex` module is on.
+- **Owner decisions:** 1A (2026-11-25) plan validation max 4 rounds with an early stop, raised-before and a final edits check; 2A (2026-11-25) `pipeline.codexInVerify` defaults to true when `modules.codex` is on. Both from the round-caps report.
+- **Open decisions:** none.
