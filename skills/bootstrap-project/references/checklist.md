@@ -93,7 +93,7 @@ Before the render, show what you found as a short list in plain words, for examp
 
 ```
 What I found (reply OK, or name what is wrong):
-- Project: Tracebook, private, GitHub orangeGoran/tracebook, dashboard group "Personal"
+- Project: Acme Notes, private, GitHub acme/acme-notes, dashboard group "Personal"
 - Commands: none yet (no package.json). I fill them in later with /bootstrap-project --upgrade.
 - Big plan: docs/PLAN.md
 - Folders: native/, packages/, apps/, scripts/, docs/

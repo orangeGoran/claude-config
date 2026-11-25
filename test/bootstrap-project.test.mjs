@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, realpathSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, realpathSync, statSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -535,6 +535,21 @@ test('the placeholder check skips changelog entries, but still checks the change
     assert.ok(!verify().failed.some((f) => /placeholders/.test(JSON.stringify(f))));
     // a leftover in a doc the bootstrap writes still fails
     writeFileSync(path.join(repo, 'changelog.d/README.md'), '# Changelog\n\n@@PROJECT_NAME@@\n');
+    assert.ok(verify().failed.some((f) => /placeholders/.test(JSON.stringify(f))));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the placeholder check skips a plan the owner wrote, but still checks the first plan', () => {
+  const { dir, repo } = bootstrapRepo();
+  try {
+    const verify = () => JSON.parse(node('verify.mjs', ['.', '--registry', path.join(dir, 'none.json'), '--json'], repo).stdout);
+    // a plan about the templates names a placeholder on purpose: it is not a leftover
+    writeFileSync(path.join(repo, '.plans/20260102-100000-template-work.md'), '# Plan: x\n\n- A merged file with `@@LINT_CMD@@` fails.\n');
+    assert.ok(!verify().failed.some((f) => /placeholders/.test(JSON.stringify(f))));
+    // a leftover in the first plan, which the bootstrap writes, still fails
+    const first = readdirSync(path.join(repo, '.plans')).find((f) => f.endsWith('-check-the-pipeline-end-to-end.md'));
+    assert.ok(first, 'the bootstrap wrote the first plan');
+    writeFileSync(path.join(repo, '.plans', first), '# Plan: Check the pipeline end to end\n\n@@PLAN_GOAL@@\n');
     assert.ok(verify().failed.some((f) => /placeholders/.test(JSON.stringify(f))));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

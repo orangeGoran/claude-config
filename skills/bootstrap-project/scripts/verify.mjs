@@ -188,9 +188,9 @@ check('claudemd', 'dash-tip', 'CLAUDE.md', existsSync(R('CLAUDE.md')));
     // changelog.d/: only the docs the bootstrap writes, never the entries (*.yaml), which are
     // history and may name a placeholder on purpose (an entry about the templates)
     ...walk(R('changelog.d')).filter((f) => f.endsWith('.md')),
-    // only the plan files the bootstrap writes (top level), never the history in
-    // done/ or .validations/, which may quote template-like text
-    ...(existsSync(R('.plans')) ? readdirSync(R('.plans')).filter((f) => f.endsWith('.md')).map((f) => R('.plans', f)) : [])];
+    // only the plan file the bootstrap writes (the first plan, at the top level). Other plans,
+    // done/ and .validations/ may quote a placeholder on purpose (a plan about the templates)
+    ...(existsSync(R('.plans')) ? readdirSync(R('.plans')).filter((f) => f.endsWith('-check-the-pipeline-end-to-end.md')).map((f) => R('.plans', f)) : [])];
   const hits = files.filter((f) => /@@[A-Z][A-Z0-9_ ]*@@/.test(read(f) || '')).map((f) => path.relative(root, f));
   check('placeholders', 'required', 'No leftover template placeholders', !hits.length, hits.join(', ') || `${files.length} file(s) scanned`);
 }
