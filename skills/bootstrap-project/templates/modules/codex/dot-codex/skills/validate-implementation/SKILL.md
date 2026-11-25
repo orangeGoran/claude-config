@@ -17,8 +17,9 @@ Optional: a plan file path under `.plans/` and a base ref. The default base is `
    - `git diff <base>...HEAD`
    - `git diff`
    - `git diff --cached`
+   - `git ls-files --others --exclude-standard`
 
-   If the current branch is the base branch, review only the uncommitted changes.
+   Read each untracked file it lists in full: before the pipeline's commit, a new file of the plan is untracked, and the diffs above do not show it. If the current branch is the base branch, review only the uncommitted changes.
 2. **The plan (context):** the given plan file, else the most recently modified `.plans/*.md` (not in `.plans/done/`, `.plans/.validations/` or `.plans/.workflow-state/`). If no plan matches the diff, say so and review the diff by itself.
 
 Say which base and which plan you use before you continue.

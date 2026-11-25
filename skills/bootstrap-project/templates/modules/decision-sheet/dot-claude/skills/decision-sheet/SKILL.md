@@ -2,7 +2,12 @@
 name: decision-sheet
 @@IF MOD_CODEX@@
 description: Build the PR decision sheet — at most 5 yes/no questions that only a person can answer (behavior changes, breaking changes, production impact, access changes, choices nobody planned), plus one block of what machines already checked. Optionally runs the Codex implementation review first, and skips it when Codex is missing or out of quota. The output is a checkbox block that /skill-5-ship --unattended puts in the PR body and that the "Decision Sheet" CI check reads. Use in /skill-auto-pipeline before ship, from /pr-feedback, or when the owner asks for "the decision sheet" or "what do I need to decide on this branch".
+@@IF CODEX_IN_VERIFY@@
 argument-hint: "[--base <ref>] [--plan <file>] [--report <pipeline report>] [--test-review <report>] [--out <path>] [--no-codex] [--codex-report <path>] [--fix]"
+@@END@@
+@@IFNOT CODEX_IN_VERIFY@@
+argument-hint: "[--base <ref>] [--plan <file>] [--report <pipeline report>] [--test-review <report>] [--out <path>] [--no-codex] [--fix]"
+@@END@@
 @@END@@
 @@IFNOT MOD_CODEX@@
 description: Build the PR decision sheet — at most 5 yes/no questions that only a person can answer (behavior changes, breaking changes, production impact, access changes, choices nobody planned), plus one block of what machines already checked. The output is a checkbox block that /skill-5-ship --unattended puts in the PR body and that the "Decision Sheet" CI check reads. Use in /skill-auto-pipeline before ship, from /pr-feedback, or when the owner asks for "the decision sheet" or "what do I need to decide on this branch".
@@ -22,12 +27,15 @@ The reader opens this on a PR and has about two minutes. The reader does not rea
 - `--out` (default `.plans/.decision-sheets/<branch-with-slashes-as-dashes>.md`). Run `mkdir -p .plans/.decision-sheets` when you use the default.
 @@IF MOD_CODEX@@
 - `--no-codex`: skip Step 2. `--fix`: fix the VALID Codex findings (Step 2, item 4).
+@@IF CODEX_IN_VERIFY@@
 - `--codex-report <path>`: the Codex report that `/skill-4-verify` (Step 1) wrote for this branch: `.plans/.code-reviews/<branch-with-slashes-as-dashes>-codex.md`, which each round overwrites, so it holds the last round. Do not run Codex again (Step 2, item 0).
+@@END@@
 @@END@@
 
 Run every shell command bare: one command per call, no pipes, `&&`, redirection or heredocs. Headless runs auto-deny compound commands. Run the commands in this session, never in a subagent.
 
 @@REPORTING_RULES@@
+@@REPORTING_RULES_AFTER_PR@@
 
 ## Step 1 — Collect the facts
 
@@ -55,7 +63,9 @@ Browser test: read the plan's **Browser test** section, the `## Browser test` se
 
 Skip it with `--no-codex`. Otherwise:
 
+@@IF CODEX_IN_VERIFY@@
 0. **Verify already ran Codex** (`--codex-report <path>`, and the file exists and is not empty): do not run Codex again. Verify checked and fixed its findings; take their status from the verify findings (the `F<n> … (codex)` lines in the `## Code review` section of the pipeline report). A deferred one is a kind-6 item, as any deferred verify finding. The report's "Present but not planned" list feeds kind 5. Write the sheet's Codex line as `✅ Codex: ran in verify, <n> fixed, <n> open`. Then go to Step 3.
+@@END@@
 1. Find the CLI: `command -v codex`, else `test -x ~/.local/bin/codex` (the Bash tool does not load `~/.zshrc`). Use the one you found as `<codex>`. Write the path exactly as `codex` or `~/.local/bin/codex` (with the `~`, not the expanded home folder): the allow rules match that text. Then run `<codex> login status`. Missing or not logged in → **Codex OFF** ("Codex not available"). A command that the session refuses ("requires approval") is not a missing CLI. Record it as `permission denied: <command>`, so that the allow rule is easy to fix.
 2. Run it (background Bash, 10-minute timeout) with the repo's Codex skill as it is:
    ```bash
@@ -63,7 +73,7 @@ Skip it with `--no-codex`. Otherwise:
    ```
    Keep `</dev/null` (without it, `codex exec` waits for input forever). A non-zero exit, a timeout, an empty `-o` file, or output that mentions a quota, a usage limit, a rate limit or billing → **Codex OFF** with that reason in a few words (`quota: usage limit until 14:00`).
 3. **Codex OFF never fails this skill.** Record the reason and continue.
-4. Codex ON: check each finding against the code as `/apply-validation` does (VALID / PARTIALLY VALID / INVALID with evidence). With `--fix`, fix the VALID findings (max 1 round), then run the scoped tests and lint for the touched files again (AGENTS.md, Commands; a missing command is "not available yet"). A VALID finding that you did not fix becomes an open item (Step 3, kind 6). Its "Present but not planned" list feeds kind 5.
+4. Codex ON: check each finding against the code as `/apply-validation` does (VALID / PARTIALLY VALID / INVALID with evidence). With `--fix`, fix the VALID findings (max 1 round), then run the scoped tests and lint for the touched files again (AGENTS.md, Commands; a missing command is "not available yet"). A fixed finding is not a question: it is listed on the Codex line with its `file:line`, so the reviewer sees it without a checkbox. Name the files your fixes touched at the end of your output for this skill (the caller reads it; when the pipeline follows this file, continue with its next item), and say whether their scoped tests and lint passed. A VALID finding that you did not fix becomes an open item (Step 3, kind 6). Its "Present but not planned" list feeds kind 5.
 @@END@@
 
 ## Step 3 — Pick the questions
@@ -130,7 +140,12 @@ Disagree? Untick or comment, then run `/pr-feedback <PR#>`.
 @@END@@
 @@IF MOD_CODEX@@
 ⏭ Codex: skipped (<reason>). Run `/pr-feedback <PR#> --codex` to add it later.
-(or, when Codex ran: `✅ Codex: <n> findings fixed, <n> open`, or `✅ Codex: ran in verify, <n> fixed, <n> open`)
+@@IF CODEX_IN_VERIFY@@
+(or, when Codex ran: `✅ Codex: <n> findings fixed (<file:line> — <one-line gist>, …), <n> open`, or `✅ Codex: ran in verify, <n> fixed, <n> open`)
+@@END@@
+@@IFNOT CODEX_IN_VERIFY@@
+(or, when Codex ran: `✅ Codex: <n> findings fixed (<file:line> — <one-line gist>, …), <n> open`)
+@@END@@
 @@END@@
 <!-- decision-sheet:end -->
 ```

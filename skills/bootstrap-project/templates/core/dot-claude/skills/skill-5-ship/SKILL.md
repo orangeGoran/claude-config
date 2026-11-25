@@ -20,6 +20,7 @@ Ship: $ARGUMENTS
 - **Unattended:** never use AskUserQuestion. Every "stop" below sets the report status `BLOCKED: <one-line reason>`, writes the details under `## Diagnosis`, pushes nothing, and ends the session. When a command is denied, write the exact command in the diagnosis. Do not suggest "add an allow rule" without checking `.claude/settings.json` first: a deny rule wins over every allow rule.
 
 @@REPORTING_RULES@@
+@@REPORTING_RULES_AFTER_PR@@
 
 ## Step 1 — Preflight
 
@@ -188,11 +189,11 @@ Write the body with the Write tool. Unattended: to `<report dir>/<slug>-pr-body.
 @@IF HAS_BROWSER_TEST@@
 @@IF HAS_TICKETS@@
 
-The decision sheet is usually built before Step 4 posted the pictures. When its "Browser test" line does not match the evidence of Step 4, build the sheet again first: read `.claude/skills/decision-sheet/SKILL.md` and follow it with the same `--out`.
+The decision sheet is usually built before Step 4 posted the pictures. When its "Browser test" line does not match the evidence of Step 4, build the sheet again first: read `.claude/skills/decision-sheet/SKILL.md` and follow it with the same `--out` and `--no-codex`, and copy the Codex line and the Codex questions from the old sheet into the new one.
 @@END@@
 @@IFNOT HAS_TICKETS@@
 
-When the sheet's "Browser test" line does not match the browser-test evidence (the report page, the rounds, the open findings), build the sheet again first: read `.claude/skills/decision-sheet/SKILL.md` and follow it with the same `--out`.
+When the sheet's "Browser test" line does not match the browser-test evidence (the report page, the rounds, the open findings), build the sheet again first: read `.claude/skills/decision-sheet/SKILL.md` and follow it with the same `--out` and `--no-codex`, and copy the Codex line and the Codex questions from the old sheet into the new one.
 @@END@@
 @@END@@
 @@END@@

@@ -27,6 +27,7 @@ When the owner runs this skill, they ask you to commit and push fixes to the PR 
 - Questions to the owner go in a chat message, in the decision format from `/skill-1-plan` (the facts, one example step by step with real values, Option A (recommended) and Option B, why A). Never use AskUserQuestion for them.
 
 @@REPORTING_RULES@@
+@@REPORTING_RULES_AFTER_PR@@
 
 ## Step 0 — Find the PR and the worktree
 

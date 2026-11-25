@@ -61,7 +61,7 @@ At most 2 rounds. For each MISSING behavior, each WEAK test and each SURVIVED ch
 
 1. Write the test, or make it stronger. Follow the pattern of the tests next to it and the nested `AGENTS.md` of the test folder, if there is one.
 2. Run it against the unchanged code. It must pass. **If a new or stronger test fails against the real code, do not change the production code and do not make the test weaker.** Record it as `POSSIBLE PRODUCTION BUG` with the failure output. A person must decide about it.
-3. Run the matching revert check again (Step 3). It must now be KILLED.
+3. Run the matching revert check again (Step 3), when one exists. It must now be KILLED.
 
 At the end, lint and format **only the changed test files**: give their paths to the lint and format commands, one command per call (@@FILE_LINT_HINT@@). Never run a whole-repo command with `--fix` here: it changes files outside this review. When the repo has no per-file form, run the check-only form and fix the reported lines by hand. Judge by the exit code and the error count, not by the last lines of the output.
 
