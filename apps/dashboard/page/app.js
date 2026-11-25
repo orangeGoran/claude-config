@@ -7,7 +7,7 @@ const VSC_OPEN = { html: VSCODE_SVG + ' Code' };
 // theme: remembered per browser, defaults to system preference
 const applyTheme = (t) => {
   document.documentElement.dataset.theme = t;
-  document.getElementById('themeBtn').textContent = t === 'light' ? '🌙' : '☀️';
+  document.getElementById('themeBtn').textContent = t === 'light' ? '🌙 Dark theme' : '☀️ Light theme';
   if (window.monaco && typeof monoTheme === 'function') monoTheme();
   redrawMermaid();
 };
@@ -74,6 +74,42 @@ function jumpToBottom(L) {
     requestAnimationFrame(() => { queued = false; b.hidden = L.scrollHeight - L.scrollTop - L.clientHeight < 80; });
   };
   b.addEventListener('click', () => L.scrollTo({ top: L.scrollHeight, behavior: 'smooth' }));
+  L.addEventListener('scroll', update, { passive: true });
+  new MutationObserver(update).observe(L, { childList: true, subtree: true, characterData: true });
+  new ResizeObserver(update).observe(L);
+  update();
+}
+/** Gives the index of the message to pin: the last one whose bottom is above the top of the view (viewTop),
+ *  or -1 when every message is still in or below the view. Each box is { top, bottom } in screen pixels, in page order. */
+function pinnedAsk(boxes, viewTop) {
+  let at = -1;
+  boxes.forEach((b, n) => { if (b.bottom <= viewTop) at = n; });
+  return at;
+}
+// Your last message, pinned over the top of the chat log once it has scrolled out of view: a long answer
+// does not hide what you asked. A click on it scrolls back to the message. Built like jumpToBottom.
+function pinLastAsk(L) {
+  const wrap = document.createElement('div');
+  wrap.className = 'pinwrap';
+  wrap.innerHTML = '<button class="pinask" hidden title="Your message: click to scroll to it"></button>';
+  L.before(wrap);
+  const b = wrap.firstChild;
+  let queued = false, target = null;
+  const update = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      const asks = [...L.querySelectorAll('.cyou')];
+      const at = pinnedAsk(asks.map((el) => el.getBoundingClientRect()), L.getBoundingClientRect().top + 4);
+      target = at < 0 ? null : asks[at];
+      b.hidden = !target;
+      if (!target) return;
+      const msg = target.querySelector('.amsg.you'), text = (msg ? msg.textContent : '').replace(/\s+/g, ' ').trim();
+      b.textContent = text || 'Your message (image)';
+    });
+  };
+  b.addEventListener('click', () => { if (target) target.scrollIntoView({ block: 'start', behavior: 'smooth' }); });
   L.addEventListener('scroll', update, { passive: true });
   new MutationObserver(update).observe(L, { childList: true, subtree: true, characterData: true });
   new ResizeObserver(update).observe(L);
@@ -333,11 +369,11 @@ const itemHtml = (p, withProject) => `
       <input type="checkbox" aria-label="queue this plan" data-check="${p.key}" ${picked.has(p.key) ? 'checked' : ''}
              ${p.live || starting(p) || p.worktree || p.archived ? 'disabled' : ''}>
       <div class="t">
-        <div class="name">${selected === p.key ? openMark : ''}${withProject ? projPill(p.project) : ''}${p.file}</div>
+        <div class="name">${p.pr ? prNumChip(p.pr) : ''}${selected === p.key ? openMark : ''}${withProject ? projPill(p.project) : ''}${p.file}</div>
         <div class="chiprow">
           ${STATUSES.includes(p.status) ? '<span class="chip st">' + esc(p.status) + '</span>' : ''}
           ${p.tags.map((t) => '<span class="chip">' + esc(t) + '</span>').join('')}
-          ${autoChips(p)}
+          ${autoChips({ ...p, pr: null }) /* the PR number starts the name line */}
           ${picked.has(p.key) ? '<span class="chip st">▶ ' + esc(modeLabel(p)) + '</span>' : ''}
         </div>
       </div>
@@ -361,14 +397,15 @@ function visibleWts() {
 const agentChip = (w) => w.agent === 'working' ? '<span class="chip live">● agent working</span>'
   : w.agent === 'idle' ? '<span class="chip" title="the last session wrote ' + escA(new Date(w.lastActive).toLocaleString()) +
     '">agent idle · ' + ago(w.lastActive) + '</span>' : '';
-const wtChips = (w) => agentChip(w) + (w.pr ? prChip(w.pr) : '<span class="chip">no PR</span>') +
+// inRow: the sidebar row, where the PR number starts the name line
+const wtChips = (w, inRow) => agentChip(w) + (w.pr ? (inRow ? '' : prChip(w.pr)) : '<span class="chip">no PR</span>') +
   (w.dirty ? '<span class="chip warn" title="files changed and not committed">' + w.dirty + ' uncommitted</span>' : '');
 const wtItemHtml = (w) => `
     <div class="item wtrow ${selected === w.key ? 'sel' : ''} ${w.agent === 'working' ? 'live' : ''}" data-key="${escA(w.key)}"${selected === w.key ? ' aria-current="true"' : ''}>
       <div class="t">
-        <div class="name">${selected === w.key ? openMark : ''}${esc(w.name)}</div>
+        <div class="name">${w.pr ? prNumChip(w.pr) : ''}${selected === w.key ? openMark : ''}${esc(w.name)}</div>
         <div class="sub" title="${escA(w.title)}">${esc(w.title)}</div>
-        <div class="chiprow">${wtChips(w)}</div>
+        <div class="chiprow">${wtChips(w, true)}</div>
       </div>
       <div class="dot ${w.agent === 'working' ? 'live' : ''}"></div>
     </div>`;
@@ -434,14 +471,15 @@ function renderList() {
   rs.className = 'runstrip' +
     (sLive.length || sInflight.length || sReady.length || sBad.length || sLaunching.length || sFailed.length ? ' on' : '');
   let sh = '';
-  const stripName = (p) => (p.key === selected ? openMark : '') + projPill(p.project) + p.file + (p.pr ? ' ' + prChip(p.pr) : '') + chatChip(p);
+  const stripName = (p) => (p.pr ? prNumChip(p.pr) : '') + (p.key === selected ? openMark : '') + projPill(p.project) + p.file + chatChip(p);
   // one plan row: dot, name, the run's status line, then its buttons
   const stripRow = (p, dot, sub, acts) => '<div class="rp" data-go="' + p.key + '"><span class="dot ' + dot + '"></span>' +
     '<div class="t"><div class="n">' + stripName(p) + '</div>' +
     (sub ? '<div class="rst" title="' + escA(sub) + '">' + esc(sub) + '</div>' : '') +
     (acts ? '<div class="acts">' + acts + '</div>' : '') + '</div></div>';
-  const stripGroup = (cls, cap, list, row) => list.length ? '<div class="cap ' + cls + '">' + cap + ' · ' + list.length + '</div>' +
-    '<div class="sgrp ' + cls + '">' + list.map(row).join('') + '</div>' : '';
+  // each group is one section, so its caption sticks at the top while its rows scroll, as a project name does
+  const stripGroup = (cls, cap, list, row) => list.length ? '<div class="sgsec"><div class="cap ' + cls + '">' + cap + ' · ' + list.length + '</div>' +
+    '<div class="sgrp ' + cls + '">' + list.map(row).join('') + '</div></div>' : '';
   const repBtn = (p) => '<button class="mini" data-rep="' + p.key + '">' + (p.hasPipeline ? '📋 report' : '📄 log') + '</button>';
   // the run's own status says what it waits for ("VERIFIED", "PR OPEN — 3 DECISIONS WAITING",
   // "BLOCKED: step 10 …"); a run that stopped blocked or failed needs you as much as a finished one
@@ -458,7 +496,8 @@ function renderList() {
   rs.querySelectorAll('[data-go]').forEach((el) => {
     if (el.dataset.go === selected) { el.classList.add('sel'); el.setAttribute('aria-current', 'true'); }
     el.addEventListener('click', () => {
-      selected = el.dataset.go; revealInSide(selected); renderList(); renderDetail(true); scrollToSelected();
+      // the clicked row is in view: the list does not scroll to the plan's row in its project section
+      selected = el.dataset.go; revealInSide(selected); renderList(); renderDetail(true);
     });
   });
   rs.querySelectorAll('[data-why]').forEach((el) =>
@@ -654,10 +693,9 @@ async function renderDetail(loadPlan) {
   CUR_ISSUES = p.issuesUrl || '';
   let tab = prTab[p.key] || 'plan';
   // the Ask tab is now the chat panel: an old ?tab=ask link opens it beside the diff
-  if (tab === 'ask') { prTab[p.key] = tab = p.pr ? 'files' : 'plan'; if (!chatOn) toggleChat(true); }
+  if (tab === 'ask') prTab[p.key] = tab = p.pr ? 'files' : 'plan';
   if (tab === 'pr') prTab[p.key] = tab = 'plan';   // the plan and its PR are one tab
   if (tab !== 'plan' && !p.pr) tab = 'plan';
-  autoChat(p);
   syncChat(p);
   drawHdTabs(p);
   if (tab !== 'plan') return renderPrTab(p, tab, loadPlan);
@@ -690,7 +728,7 @@ async function renderDetail(loadPlan) {
       <h2 class="fname">${p.file}</h2>
       <div class="subtitle">${inline(p.title)}</div></div>
       <div class="btns" id="actions"></div></div>
-    ${withPr ? '<div class="prtabsrow"><div class="prtabs">' + chatBtn(p) + '</div><span class="btns" id="ract"></span></div>' : prTabs(p, 'plan') + badges}
+    ${withPr ? '<div class="prtabsrow"><div class="prtabs"></div><span class="btns" id="ract"></span></div>' : prTabs(p, 'plan') + badges}
     <div id="morebox" ${moreOpen.has(p.key) ? '' : 'hidden'}>
     ${withPr ? badges + lastStep : ''}
     <div class="metabox"><b>Status:</b>
@@ -954,6 +992,15 @@ try { mergeMethod = localStorage.getItem('dash-merge-method'); } catch {}
 // throw away the open file and the scroll position
 let lastPrDraw = null;
 const PR_CHIP = { OPEN: 'ok', MERGED: 'merged', CLOSED: 'bad' };
+/** Gives the state word of PR pr: open, draft, merged or closed. */
+const prStateWord = (pr) => pr.state === 'MERGED' ? 'merged' : pr.state === 'CLOSED' ? 'closed' : pr.isDraft ? 'draft' : 'open';
+/** Gives the big PR number chip ("#900 draft") that starts a row: people find a PR by its number.
+ *  The palette rows, the sidebar rows and the run strip use it. */
+const prNumChip = (pr) => {
+  const w = prStateWord(pr);
+  return '<span class="chip palpr' + (w === 'merged' ? ' merged' : w === 'open' ? ' ok' : '') + '">#' + esc(String(pr.number)) +
+    ' <small>' + w + '</small></span>';
+};
 const prChip = (pr) => {
   const draft = pr.isDraft && pr.state === 'OPEN';
   return '<span class="chip ' + (draft ? '' : PR_CHIP[pr.state] || '') + '">' + (pr.state === 'MERGED' ? '✓ ' : '') + 'PR #' + pr.number + ' · ' +
@@ -977,24 +1024,23 @@ let diffSplit = true, diffFull = true;
 try { diffSplit = localStorage.getItem('dash-diff-split') !== '0'; } catch {}
 try { diffFull = localStorage.getItem('dash-diff-full') !== '0'; } catch {}
 
-// inBar: the review toolbar, where ‹ Plan is the way back, the viewed line has the file count and Chat sits with the actions;
-// 'hd': the main header, laid out as the toolbar but with the file count (no viewed line there)
+// inBar ('hd'): the switch of the main header and of the Files changed bar, the same in both, at the same place.
+// Without inBar: the switch row of a plan with no PR
 const prTabs = (p, tab, inBar) => !p.pr && !hasChat(p) ? '' : '<div class="prtabs">' + [
   // the plan and its PR are one tab; in the review bar it is the way back, beside ‹ Plan
   (!inBar || p.pr) && ['plan', (p.kind === 'wt' ? 'Worktree' : 'Plan') + (p.pr ? ' · PR <span class="n">#' + p.pr.number + '</span>' : '')],
-  p.pr && ['files', 'Files changed' + (inBar === true ? '' : ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
+  p.pr && ['files', 'Files changed' + ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
     prData[p.key] && prData[p.key].changedFiles != null ? prData[p.key].changedFiles
-      : prDiff[p.key] && prDiff[p.key].files ? prDiff[p.key].files.length : null))],
-].filter(Boolean).map(([id, label]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '">' + label + '</button>').join('') +
-  (inBar ? '' : chatBtn(p)) + '</div>';
+      : prDiff[p.key] && prDiff[p.key].files ? prDiff[p.key].files.length : null)],
+].filter(Boolean).map(([id, label]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '">' + label + '</button>').join('') + '</div>';
 // the same switch in the main header, so the plan view has it where Files changed has it
 function drawHdTabs(p) {
   setSelTitle(p);
   const h = byId('hdtabs');
   if (!h) return;
-  h.innerHTML = p && p.pr ? prTabs(p, 'plan', 'hd') : '';
-  h.parentElement.classList.toggle('tabs', !!h.innerHTML);
-  placeHdTabs();
+  // an open plan with no PR gets the switch greyed out: its place in the row stays filled, and the tabs do not move
+  h.innerHTML = p && p.pr ? prTabs(p, 'plan', 'hd') : p ? '<div class="prtabs off" title="No PR yet: Files changed opens when the plan has a PR">' +
+    '<button class="on" disabled>' + (p.kind === 'wt' ? 'Worktree' : 'Plan') + ' · no PR</button><button disabled>Files changed</button></div>' : '';
   h.querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => {
     prTab[p.key] = el.dataset.tab; lastPrDraw = null; renderDetail(false);
   }));
@@ -1003,7 +1049,6 @@ function bindPrTabs(p) {
   byId('detail').querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => {
     prTab[p.key] = el.dataset.tab; lastPrDraw = null; renderDetail(false);
   }));
-  byId('detail').querySelectorAll('[data-chat]').forEach((el) => el.addEventListener('click', () => toggleChat()));
 }
 // --- Chat panel: the Claude session that ran the plan, beside Files changed and the plan ---
 // Like the VS Code extension's panel: the whole session (the run, then the chat) scrolls above
@@ -1016,9 +1061,8 @@ const hasChat = (p) => !!(p && p.kind !== 'wt' && ((p.sessions && p.sessions.len
 // the modes are the server's; only their names on the picker are the page's
 const CHAT_MODE_NAMES = { default: 'Ask before edits', acceptEdits: 'Edit automatically', plan: 'Plan mode', auto: 'Auto' };
 const CHAT_MODES = /*@CHAT_MODES*/[].map((m) => [m, CHAT_MODE_NAMES[m] || m]);
-let chatOn = false, chatW = 0, chatMode = 'default', chatModel = '';
+let chatW = 0, chatMode = 'default', chatModel = '';
 try {
-  chatOn = localStorage.getItem('dash-chat-open') === '1';
   chatW = +localStorage.getItem('dash-chat-w') || 0;
   chatMode = localStorage.getItem('dash-chat-mode') || 'default';
   chatModel = localStorage.getItem('dash-chat-model') || '';
@@ -1043,43 +1087,15 @@ function chatHistPush(key, text) {
   for (const k of keys.slice(0, Math.max(0, keys.length - 50))) delete chatHist[k];
   try { localStorage.setItem('dash-chat-hist', JSON.stringify(chatHist)); } catch {}
 }
-const chatBtn = (p) => hasChat(p) ? '<button class="chatbtn' + (chatOn ? ' on' : '') + '" data-chat="1" aria-pressed="' + chatOn +
-  '" title="Chat with the agent that ran this plan">Chat' + (p.chatWaits ? ' <span class="n">!</span>' : '') + '</button>' : '';
-let chatAutoFor = null;
-function autoChat(p) {
-  if (chatAutoFor === p.key) return;
-  chatAutoFor = p.key;
-  if (hasChat(p) && !chatOn) {
-    chatOn = true;
-    document.querySelectorAll('[data-chat]').forEach((b) => { b.classList.add('on'); b.setAttribute('aria-pressed', 'true'); });
-  }
-}
-// the header switch centers over the space left of the chat panel (as the review bar's does), but moves right of the
-// left group (Plans, Code, the review pill, the clock) when a wide chat would push it onto that group
-function placeHdTabs() {
-  const h = byId('hdtabs'), hd = h && h.parentElement;
-  if (!hd) return;
-  const chatw = byId('chat').hidden ? 0 : byId('chat').offsetWidth + byId('csplit').offsetWidth;
-  const left = [...hd.querySelector('.hleft').children].filter((el) => !el.classList.contains('hdnote') && el.offsetParent)
-    .reduce((w, el) => w + el.offsetWidth + 14, 0);
-  const pad = parseFloat(getComputedStyle(hd).paddingLeft) || 0;
-  hd.style.setProperty('--tabsw', h.offsetWidth + 'px');
-  hd.style.setProperty('--tabx', Math.round(Math.max((hd.clientWidth - chatw) / 2, pad + left + 22 + h.offsetWidth / 2)) + 'px');
-}
-// the chat panel's width (and its divider): the toasts stay left of it, the header switch is placed again
+// the chat panel's width (and its divider): the toasts stay left of it
 const hdObs = new ResizeObserver(() => {
   document.body.style.setProperty('--chatw', (byId('chat').offsetWidth + byId('csplit').offsetWidth) + 'px');
-  placeHdTabs();
 });
 hdObs.observe(byId('chat'));
-hdObs.observe(document.querySelector('.mainhd'));
-document.querySelectorAll('.mainhd .hleft > :not(.hdnote)').forEach((el) => hdObs.observe(el));
-function toggleChat(on) {
-  chatOn = on == null ? !chatOn : on;
-  try { localStorage.setItem('dash-chat-open', chatOn ? '1' : '0'); } catch {}
-  document.querySelectorAll('[data-chat]').forEach((b) => { b.classList.toggle('on', chatOn); b.setAttribute('aria-pressed', String(chatOn)); });
+/** Shows the open plan's chat (it is always open when the plan has a session) and puts the cursor in its box. */
+function focusChat() {
   syncChat(find(selected));
-  if (chatOn && byId('cin')) byId('cin').focus();
+  if (byId('cin')) byId('cin').focus();
 }
 function setChatWidth(px, save) {
   const C = byId('chat');
@@ -1087,9 +1103,9 @@ function setChatWidth(px, save) {
   chatW = px ? C.offsetWidth : 0;
   if (save) try { chatW ? localStorage.setItem('dash-chat-w', chatW) : localStorage.removeItem('dash-chat-w'); } catch {}
 }
-// shown for the open plan when the panel is on and the plan has a session to talk to
+// always shown for the open plan when it has a session to talk to; there is no button to close it
 function syncChat(p) {
-  const show = chatOn && hasChat(p);
+  const show = hasChat(p);
   byId('chat').hidden = byId('csplit').hidden = !show;
   if (!show) { if (ch) { ch.es.close(); ch = null; } holdChatLock(); return; }
   if (ch && ch.key === p.key) { ch.p = p; return; }
@@ -1118,8 +1134,7 @@ function chatBind(p) {
   C.innerHTML =
     '<div class="chead"><b>Chat</b>' + projPill(p.project) + '<span class="dim cwho" id="cwho"></span><span style="flex:1"></span>' +
       '<button id="cfork" title="The next message goes on in a copy of this session. The session so far stays as it is.">Fork</button>' +
-      '<button id="cnew" hidden title="The next message starts again from the run’s latest session">New chat</button>' +
-      '<button id="cclose" title="Close the chat" aria-label="Close the chat">✕</button></div>' +
+      '<button id="cnew" hidden title="The next message starts again from the run’s latest session">New chat</button></div>' +
     '<div class="clog" id="clog" aria-live="polite"><div class="dim cmore" id="cmore"></div><div id="citems"></div>' +
       '<div id="clive"></div></div>' +
     '<div id="cwaits"></div>' +
@@ -1167,7 +1182,6 @@ function chatBind(p) {
   });
   paintSync();
   byId('cstop').addEventListener('click', () => post('/api/chat/stop', { project: c.p.project, slug: c.p.slug }));
-  byId('cclose').addEventListener('click', () => toggleChat(false));
   byId('cfork').addEventListener('click', () => post('/api/chat/fork', { project: c.p.project, slug: c.p.slug }));
   byId('cnew').addEventListener('click', () => post('/api/chat/new', { project: c.p.project, slug: c.p.slug }));
   byId('cmode').addEventListener('change', (e) => chatSetMode(e.target.value, chatModel));
@@ -1185,6 +1199,7 @@ function chatBind(p) {
   });
   L.addEventListener('scroll', () => { if (L.scrollTop < 150) chatLoad('old'); }, { passive: true });
   jumpToBottom(L);
+  pinLastAsk(L);
   // a tool line keeps its open state when the list repaints
   L.addEventListener('toggle', (e) => {
     const i = e.target.dataset && e.target.dataset.i;
@@ -1740,10 +1755,10 @@ async function renderPrTab(p, tab, force) {
   document.body.classList.toggle('review', review);
   if (!again) byId('detail').innerHTML = (review ? `
     <div class="rbar">
-      <div class="rleft"><button id="rback" title="Back to the plan and the plan list (Esc)">‹ Plan</button>
-        ${projPill(p.project)}<span class="rname" title="${escA((p.title || p.slug) + '\n' + p.client + ' / ' + p.project + ' / ' + p.file)}">${inline(p.title || p.slug)}</span></div>
-      ${prTabs(p, tab, true)}
-      <div class="rright"><span class="seen" id="rseen"></span>${chatBtn(p)}<span class="btns" id="ract"></span></div></div>` : `
+      <div class="rleft"><button id="rback" title="Back to the plan and the plan list (Esc)">‹ Plan</button>${projPill(p.project)}</div>
+      <div class="rsw">${prTabs(p, tab, 'hd')}</div>
+      <span class="rname" title="${escA((p.title || p.slug) + '\n' + p.client + ' / ' + p.project + ' / ' + p.file)}">${inline(p.title || p.slug)}</span>
+      <div class="rright"><span class="seen" id="rseen"></span><span class="btns" id="ract"></span></div></div>` : `
     <div class="crumb">${esc(p.client)} / ${projPill(p.project)}${esc(p.project)}</div>
     <h2 class="fname">${p.file}</h2>
     <div class="subtitle">${inline(p.title)}</div>
@@ -1768,13 +1783,17 @@ async function renderPrTab(p, tab, force) {
 function drawBarAction(p, tab) {
   const d = prData[p.key], R = byId('ract');
   if (!R || !d || d.error) return;
-  // the PR's state when it is not simply open, then GitHub, then the one next step
-  R.innerHTML = (d.state === 'OPEN' && !d.isDraft ? '' : prChip(d)) + '<a class="ghbtn" href="' + escA(d.url) + '" target="_blank" rel="noopener" ' +
-    'title="Open PR #' + d.number + ' on GitHub">' + GITHUB_SVG + '&nbsp;#' + d.number + '</a>';
+  // the PR's state when it is not simply open, then GitHub, then the one next step. In the Files changed bar the
+  // switch beside it shows the PR number already: the state is one word and GitHub is its logo, so the bar fits
+  const inBar = tab === 'files';
+  R.innerHTML = (d.state === 'OPEN' && !d.isDraft ? '' : inBar ? '<span class="chip ' + (prStateWord(d) === 'draft' ? '' : PR_CHIP[d.state] || '') + '">' + prStateWord(d) + '</span>' : prChip(d)) +
+    '<a class="ghbtn" href="' + escA(d.url) + '" target="_blank" rel="noopener" ' +
+    'title="Open PR #' + d.number + ' on GitHub" aria-label="Open PR #' + d.number + ' on GitHub">' + GITHUB_SVG + (inBar ? '' : '&nbsp;#' + d.number) + '</a>';
   // Files changed has no header with the plan's actions: the worktree in VS Code is here
   if (tab === 'files') {
     const vs = document.createElement('button');
-    vs.textContent = 'VS Code'; vs.className = 'rfbtn vsbtn'; vs.title = 'Open the plan’s worktree in VS Code';
+    vs.innerHTML = VSCODE_SVG; vs.className = 'rfbtn vsbtn'; vs.title = 'Open the plan’s worktree in VS Code';
+    vs.setAttribute('aria-label', 'Open the plan’s worktree in VS Code');
     vs.addEventListener('click', () => post('/api/vscode', { project: p.project, slug: p.slug }));
     R.insertBefore(vs, R.querySelector('.ghbtn'));
   }
@@ -3598,6 +3617,7 @@ document.addEventListener('keydown', (e) => {
     return paintDemo();
   }
   if (e.key !== 'Escape') return;
+  if (byId('hdmenu').matches(':popover-open')) return;   // Esc closes only the ⋯ menu (the browser closes it)
   if (e.target.closest && e.target.closest('.monaco-editor') && document.querySelector('.monaco-editor .find-widget.visible')) return;
   if (byId('onb').classList.contains('open')) return closeGuide();
   if (e.target.closest && e.target.closest('#chat')) return;   // Esc in the chat closes only its menu
@@ -3922,8 +3942,8 @@ const TOUR = [
       'A launched plan runs in the background; you can close the tab.' },
   { el: () => document.querySelector('.launchbar'), title: 'Run several at once',
     body: 'Tick plans in the list (or double-click them) and they queue down here. One press starts them all.' },
-  { el: () => [byId('guidebtn'), byId('settingsbtn')], title: 'Guide and Settings',
-    body: 'Guide brings back the walkthrough and the list of repos found on this machine. ' +
+  { el: () => byId('hdmenuBtn'), title: 'The ⋯ menu',
+    body: 'Board, Scout, QA reports, alerts and the theme are here. Add project brings back the walkthrough and the list of repos found on this machine. ' +
       'Settings is where you rename projects, change folders and edit launchers.' },
 ];
 let tourStep = -1;
@@ -3999,7 +4019,7 @@ try { alertsOn = localStorage.getItem('dash-alerts') === '1'; } catch {}
 const wasBusy = {};   // plan key -> run / chat / waiting flags at the last state
 function paintAlertBtn() {
   const b = byId('alertBtn');
-  b.textContent = alertsOn ? '🔔' : '🔕';
+  b.textContent = alertsOn ? '🔔 Alerts on' : '🔕 Alerts off';
   b.setAttribute('aria-pressed', String(alertsOn));
   b.title = alertsOn ? 'Alerts on: sound and notification when a run stops or the agent answers. Click to turn off.'
     : 'Alerts off. Click for a sound and a notification when a run stops or the agent answers.';
@@ -4047,7 +4067,7 @@ async function ringsHere(key) {
 }
 function openFromAlert(key, tab) {
   selected = key;
-  if (tab === 'chat') { chatOn = false; toggleChat(true); } else if (tab) prTab[key] = tab;
+  if (tab === 'chat') focusChat(); else if (tab) prTab[key] = tab;
   revealInSide(key);
   lastPrDraw = null; renderList(); renderDetail(true);
   scrollToSelected();
@@ -4065,6 +4085,13 @@ function revealInSide(key) {
 // Scroll the side list so the open plan's row is on screen, below its project's sticky header
 // (the header's height changes when its chips wrap, so it is measured each time).
 function scrollToSelected() {
+  // a plan in the run strip (running, launched, stopped, waiting on you) shows there, above its project section
+  const strip = byId('runstrip').querySelector('.rp.sel');
+  if (strip) {
+    const cap = strip.closest('.sgsec')?.querySelector('.cap');   // the row lands below its group's sticky caption
+    strip.style.scrollMarginTop = (cap ? cap.offsetHeight + 8 : 8) + 'px';
+    strip.scrollIntoView({ block: 'nearest' }); return;
+  }
   const el = byId('side').querySelector('.item.sel');
   if (!el) return;
   const head = el.closest('.pgrp')?.querySelector('.phead');
@@ -4266,7 +4293,7 @@ async function refreshOnce() {
   if (logKey) loadLog();
 }
 // --- session tabs ---
-// Each plan or worktree item you open becomes a tab in the strip under the header. A tab is its key
+// Each plan or worktree item you open becomes a tab in the strip in the header row. A tab is its key
 // ("<project>/<slug>"). Closing a tab never stops an agent or a run. These pure functions take and give
 // plain lists, so the test can run them without the page.
 /** Gives the list with key added at the end. Gives the same list when key is in it. */
@@ -4308,6 +4335,14 @@ function tabsLoad(raw) {
   try { v = JSON.parse(raw); } catch { return []; }
   return Array.isArray(v) ? v.filter((k, i) => typeof k === 'string' && v.indexOf(k) === i) : [];
 }
+/** Gives the list with key moved next to target: before it, or after it when after is true.
+ *  A key or target not in the list, or key === target, gives the same list. */
+function tabsMove(tabs, key, target, after) {
+  if (key === target || !tabs.includes(key) || !tabs.includes(target)) return tabs;
+  const rest = tabs.filter((k) => k !== key);
+  const i = rest.indexOf(target) + (after ? 1 : 0);
+  return [...rest.slice(0, i), key, ...rest.slice(i)];
+}
 /** Gives the closed-tab stack with key on top, an older copy of key removed, at most 10 keys. */
 function closedPush(closed, key) { return [...closed.filter((k) => k !== key), key].slice(-10); }
 // --- end session tabs ---
@@ -4346,11 +4381,14 @@ function tabStatus(p) {
 }
 // the readable name of a tab: the plan or PR title without the date the file name starts with
 const tabTitle = (p) => String(p.title && p.title !== p.slug ? p.title : p.slug || p.file || '').replace(/^\d{8}-\d{6}-/, '');
-/** Gives the label HTML of a tab: the project pill, the PR number, the title and the status word. */
+/** Gives the label HTML of a tab: the project pill, then the PR number, or the title when the plan has no PR,
+ *  then the status as a colored dot (the word is in its tooltip and for screen readers). The tab is short,
+ *  so many tabs fit in the header row; the full title is in the tab's tooltip. */
 function tabLabelHtml(p) {
   const [stc, stw] = tabStatus(p);
-  return projPill(p.project) + (p.pr ? '<span class="stabpr">#' + esc(String(p.pr.number)) + '</span>' : '') +
-    '<span class="stabn">' + esc(tabTitle(p)) + '</span><span class="chip stabst ' + stc + '">' + esc(stw) + '</span>';
+  return projPill(p.project) + (p.pr ? '<span class="stabpr">#' + esc(String(p.pr.number)) + '</span>'
+    : '<span class="stabn">' + esc(tabTitle(p)) + '</span>') +
+    '<span class="dot stabdot ' + stc + '" title="' + escA(stw) + '"></span><span class="srt">' + esc(stw) + '</span>';
 }
 const shownTabs = () => tabsShown(sessionTabs, (k) => !!find(k));
 const IS_MAC = /Mac/.test(navigator.platform);
@@ -4377,11 +4415,11 @@ function drawSessionTabs() {
   S.innerHTML = list.map((key, i) => {
     const p = find(key), on = key === selected, prev = key === previewTab;
     const hint = tabHint(i, list.length);
-    return '<div class="stab' + (on ? ' on' : '') + (prev ? ' prev' : '') + '" role="presentation">' +
+    return '<div class="stab' + (on ? ' on' : '') + (prev ? ' prev' : '') + '" role="presentation" draggable="true" data-drag-tab="' + escA(key) + '">' +
       '<button class="stabgo" data-go-tab="' + escA(key) + '"' + (on ? ' aria-current="true"' : '') + ' title="' +
-        escA((p.title || p.file) + ' · ' + p.file + (prev ? ' · Preview: the next plan you open from the list takes this tab. Click the tab to keep it.' : '')) + '">' +
-      tabLabelHtml(p) +
-      (hint ? '<kbd>' + hint + '</kbd>' : '') + '</button>' +
+        escA((p.title || p.file) + ' · ' + tabStatus(p)[1] + (hint ? ' · ' + hint : '') + '\n' + p.file +
+          (prev ? '\nPreview: the next plan you open from the list takes this tab. Click the tab to keep it.' : '')) + '">' +
+      tabLabelHtml(p) + '</button>' +
       '<button class="stabx" data-close-tab="' + escA(key) + '" aria-label="Close tab" title="Close tab' + (IS_MAC ? ' (⌃W)' : '') + '">×</button></div>';
   }).join('');
   S.querySelectorAll('[data-go-tab]').forEach((el) => el.addEventListener('click', () => { keepTab(el.dataset.goTab); openSession(el.dataset.goTab); }));
@@ -4411,6 +4449,42 @@ function closeSession(key = selected) {
   if (key !== selected) return drawSessionTabs();
   if (next) openSession(next); else goHome();
 }
+/** Moves the open plan's tab d places (1 or -1) along the strip, without wrap-around. */
+function moveSession(d) {
+  const shown = shownTabs(), i = shown.indexOf(selected), j = i + d;
+  if (i < 0 || j < 0 || j >= shown.length) return;
+  keepTab(selected);
+  sessionTabs = tabsMove(sessionTabs, selected, shown[j], d > 0); saveTabs(); drawSessionTabs();
+}
+// drag a tab onto another tab to move it there: the left half of a tab puts it before, the right half after
+let dragTab = null;
+const dropSide = (el, e) => { const r = el.getBoundingClientRect(); return e.clientX > r.left + r.width / 2; };
+byId('stabs').addEventListener('dragstart', (e) => {
+  const t = e.target.closest && e.target.closest('[data-drag-tab]');
+  if (!t) return;
+  dragTab = t.dataset.dragTab;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', dragTab);
+  t.classList.add('dragging');
+});
+byId('stabs').addEventListener('dragover', (e) => {
+  const t = dragTab && e.target.closest('[data-drag-tab]');
+  byId('stabs').querySelectorAll('.dropl, .dropr').forEach((el) => el.classList.remove('dropl', 'dropr'));
+  if (!t || t.dataset.dragTab === dragTab) return;
+  e.preventDefault();
+  t.classList.add(dropSide(t, e) ? 'dropr' : 'dropl');
+});
+byId('stabs').addEventListener('drop', (e) => {
+  const t = dragTab && e.target.closest('[data-drag-tab]');
+  if (!t) return;
+  e.preventDefault();
+  keepTab(dragTab);
+  sessionTabs = tabsMove(sessionTabs, dragTab, t.dataset.dragTab, dropSide(t, e)); saveTabs(); drawSessionTabs();
+});
+byId('stabs').addEventListener('dragend', () => {
+  dragTab = null;
+  byId('stabs').querySelectorAll('.dragging, .dropl, .dropr').forEach((el) => el.classList.remove('dragging', 'dropl', 'dropr'));
+});
 /** Opens the last closed tab that still exists and is not open. */
 function reopenSession() {
   while (closedTabs.length) {
@@ -4446,20 +4520,27 @@ function paletteMatch(q, plans, actions, tabs) {
   const rest = plans.filter((p) => !tabs.includes(p.key) && hit(p));
   const live = rest.filter((p) => !p.archived);
   const arch = rest.filter((p) => p.archived).sort((a, b) => String(b.slug).localeCompare(String(a.slug)));
-  const keys = [...tabbed, ...live.map((p) => p.key), ...arch.map((p) => p.key)].slice(0, 50);
+  let keys = [...tabbed, ...live.map((p) => p.key), ...arch.map((p) => p.key)];
+  // a PR number ("901", "#901", "pr 901") puts the plans of exactly that PR first
+  const prNum = /^\s*(?:#|pr\s*)?(\d+)\s*$/i.exec(q);
+  if (prNum) {
+    const isPr = (k) => !!byKey.get(k).pr && +byKey.get(k).pr.number === +prNum[1];
+    keys = [...keys.filter(isPr), ...keys.filter((k) => !isPr(k))];
+  }
+  keys = keys.slice(0, 50);
   return [...acts, ...keys.map((key) => ({ kind: 'plan', key }))];
 }
 // --- end palette match ---
-/** Gives the inside of a palette row for plan p, read like its tab: project pill, PR tag, title and status word,
+/** Gives the inside of a palette row for plan p: the PR number (big), project pill, title and status word,
  *  then a small line with the last run status (no links), the file name and the tags. */
 function paletteRowHtml(p) {
   const [stc, stw] = tabStatus(p);
-  const prState = p.pr ? (p.pr.state === 'MERGED' ? 'merged' : p.pr.state === 'CLOSED' ? 'closed' : p.pr.isDraft ? 'draft' : 'open') : '';
   const run = p.run && p.run.status ? String(p.run.status).replace(/\s*[—–-]?\s*https?:\/\/\S+/g, '').trim() : '';
   const facts = [run, p.file, ...(p.tags || [])].filter(Boolean);
-  return '<div class="palp"><div class="pal1">' + projPill(p.project) +
-    (p.pr ? '<span class="chip' + (prState === 'merged' ? ' merged' : prState === 'open' ? ' ok' : '') + '">PR #' + esc(String(p.pr.number)) + ' · ' + prState + '</span>' : '') +
-    '<b>' + esc(tabTitle(p)) + '</b><span class="chip stabst ' + stc + '">' + esc(stw) + '</span>' +
+  // the PR number comes first and big: people look a PR up by its number
+  return '<div class="palp"><div class="pal1">' +
+    (p.pr ? prNumChip(p.pr) : '') +
+    projPill(p.project) + '<b>' + esc(tabTitle(p)) + '</b><span class="chip stabst ' + stc + '">' + esc(stw) + '</span>' +
     (p.archived ? '<span class="chip">📦 archived</span>' : '') + '</div>' +
     '<div class="pal2 dim">' + facts.map(esc).join(' · ') + '</div></div>';
 }
@@ -4471,10 +4552,12 @@ const PALETTE_ACTIONS = [
   { id: 'scout', label: 'Scout', run: () => byId('scoutBtn').click() },
   { id: 'settings', label: 'Settings', run: () => openSettings() },
   { id: 'guide', label: 'Add project', run: () => openGuide(1) },
-  { id: 'chat', label: 'Chat on/off', run: () => toggleChat(), when: () => hasChat(find(selected)) },
+  { id: 'chat', label: 'Chat: type a message', run: () => focusChat(), when: () => hasChat(find(selected)) },
   { id: 'plantab', label: 'Plan tab', run: () => palettePrTab('plan'), when: openHasPr },
   { id: 'files', label: 'Files changed', run: () => palettePrTab('files'), when: openHasPr },
   { id: 'close', label: 'Close tab', keys: IS_MAC ? '⌃W' : '', run: () => closeSession() },
+  { id: 'tableft', label: 'Move tab left', run: () => moveSession(-1), when: () => shownTabs().length > 1 },
+  { id: 'tabright', label: 'Move tab right', run: () => moveSession(1), when: () => shownTabs().length > 1 },
   { id: 'reopen', label: 'Reopen closed tab', keys: IS_MAC ? '⌃⇧T' : '', run: () => reopenSession() },
   { id: 'theme', label: 'Theme light/dark', run: () => byId('themeBtn').click() },
   { id: 'alerts', label: 'Alerts on/off', run: () => byId('alertBtn').click() },
@@ -4620,6 +4703,7 @@ function applyView() {
   const b = byId('boardBtn');
   b.classList.toggle('on', boardOn); b.setAttribute('aria-pressed', String(boardOn));
   byId('bpClose').hidden = !(boardOn && selected);
+  byId('boardExit').hidden = !boardOn;   // the Board button is in the ⋯ menu: the way out stays in the header row
 }
 function showBoard(on) { boardOn = on; applyView(); renderBoard(); }
 function openBoard() {
@@ -4740,7 +4824,7 @@ async function scoutAct(p, act) {
   if (act === 'confirm') {
     if (boardOn) openFromBoard(p.key);
     else { selected = p.key; renderList(); renderDetail(true); }
-    toggleChat(true);
+    focusChat();
   } else if (selected === p.key) selected = null;
   refresh();
 }
@@ -4752,6 +4836,8 @@ const scoutHealth = (s) => !s.config || (s.mac && !s.installed) || s.projects.so
 function paintScoutBtn(s) {
   const h = scoutHealth(s), b = byId('scoutBtn');
   b.textContent = '🔭 Scout' + (h === 'off' ? ' ○' : h === 'warn' ? ' ⚠' : '');
+  // the Scout button is in the ⋯ menu: a dot on the menu button shows that it needs a look
+  byId('hdmenuBtn').classList.toggle('flag', h !== 'ok');
   b.title = h === 'off' ? 'The scout is not fully set up on this Mac: open it for the steps'
     : h === 'warn' ? 'A check failed in the last scout run: open it for the log' : 'The scout: last runs, log and setup';
 }
@@ -4953,9 +5039,8 @@ byId('scoutBtn').addEventListener('click', () => (byId('logpane').classList.cont
 scoutPeek();
 setInterval(scoutPeek, 60000);
 // plan usage in the header: one pill per tool, its logo and the used percent, e.g. "✳ 88%".
-// With two windows each gets its label: "✳ 5h 12% · week 88%". The logos are the ones the
+// With two windows: the 5-hour one first, then the weekly one, "✳ 12% · 88%"; the tooltip names them. The logos are the ones the
 // Claude Code and Codex VS Code extensions ship.
-const USAGE_SHORT = { five_hour: '5h', seven_day: 'week' };
 const USAGE_LONG = { five_hour: '5-hour', seven_day: 'Weekly' };
 const USAGE_ICON = {
   Claude: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#D97757" d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"/></svg>',
@@ -4970,7 +5055,7 @@ const usagePill = (label, u, none) => {
     + (w.reset ? ' (reset since the last reading)' : w.resetsAt ? ', resets ' + usageWhen(w.resetsAt) : '')
     + (w.at ? ' · read ' + ago(w.at) : '')).join('\n') + (u.plan ? '\nPlan: ' + u.plan : '');
   return '<span class="' + (top >= 90 ? 'bad' : top >= 75 ? 'warn' : '') + '" title="' + escA(tip) + '" aria-label="' + escA(tip) + '">'
-    + USAGE_ICON[label] + ws.map((w) => (ws.length > 1 ? (USAGE_SHORT[w.name] || w.name) + ' ' : '') + w.pct + '%').join(' · ') + '</span>';
+    + USAGE_ICON[label] + ws.map((w) => w.pct + '%').join(' · ') + '</span>';
 };
 const usagePeek = async () => {
   let u;
@@ -4982,6 +5067,21 @@ usagePeek();
 setInterval(usagePeek, 60000);
 byId('boardBtn').addEventListener('click', () => boardOn ? leaveBoard() : openBoard());
 byId('bpClose').addEventListener('click', () => goHome());
+byId('boardExit').addEventListener('click', () => leaveBoard());
+// the tab strip has no scrollbar (it covered the tabs): an up/down mouse wheel scrolls it sideways
+byId('stabs').addEventListener('wheel', (e) => {
+  const S = byId('stabs');
+  if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || S.scrollWidth <= S.clientWidth) return;
+  e.preventDefault(); S.scrollLeft += e.deltaY;
+}, { passive: false });
+// the ⋯ menu opens under its button, and a pick in it closes it
+byId('hdmenu').addEventListener('toggle', (e) => {
+  if (e.newState !== 'open') return;
+  const r = byId('hdmenuBtn').getBoundingClientRect(), M = byId('hdmenu');
+  M.style.top = Math.round(r.bottom + 4) + 'px';
+  M.style.left = Math.round(Math.min(r.left, innerWidth - M.offsetWidth - 8)) + 'px';
+});
+byId('hdmenu').addEventListener('click', (e) => { if (e.target.closest('button, a')) byId('hdmenu').hidePopover(); });
 readUrl();
 applyView();
 byId('side').innerHTML = '<div class="dim" style="padding:14px">loading plans…</div>';

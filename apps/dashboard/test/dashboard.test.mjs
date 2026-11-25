@@ -329,7 +329,15 @@ const pageBlock = (page, from, to) => {
 test('session tabs: open, close, number, step, prune, load and the closed stack', async () => {
   const page = await (await get('/')).text();
   const t = new Function(pageBlock(page, '// --- session tabs ---', '// --- end session tabs ---') +
-    'return { tabsOpen, tabsPreview, tabsClose, tabAt, tabStep, tabsPrune, tabsShown, tabsLoad, closedPush };')();
+    'return { tabsOpen, tabsPreview, tabsClose, tabAt, tabStep, tabsPrune, tabsShown, tabsLoad, closedPush, tabsMove };')();
+  // a dragged tab goes before or after the tab it is dropped on
+  const abcd = ['a', 'b', 'c', 'd'];
+  assert.deepEqual(t.tabsMove(abcd, 'd', 'a', false), ['d', 'a', 'b', 'c'], 'tab 4 to the first place');
+  assert.deepEqual(t.tabsMove(abcd, 'a', 'c', true), ['b', 'c', 'a', 'd']);
+  assert.deepEqual(t.tabsMove(abcd, 'a', 'c', false), ['b', 'a', 'c', 'd']);
+  assert.deepEqual(t.tabsMove(abcd, 'b', 'd', true), ['a', 'c', 'd', 'b'], 'to the end');
+  assert.equal(t.tabsMove(abcd, 'b', 'b', true), abcd, 'onto itself: no change');
+  assert.equal(t.tabsMove(abcd, 'x', 'a', false), abcd, 'unknown key: no change');
 
   const ab = ['a', 'b'];
   // browsing the list reuses one preview tab; a kept tab or an open key changes nothing
@@ -398,6 +406,10 @@ test('the palette finds actions and plans, open tabs first, archived last, at mo
   assert.deepEqual(keys(match('boa', plans, actions, [])), ['!board']);
   assert.deepEqual(keys(match('gamma', plans, actions, [])), ['demo/20260101-000002-gamma']);
   assert.deepEqual(keys(match('#12', plans, actions, [])), ['demo/20260101-000001-beta']);
+  // a typed PR number puts that PR first, before an open tab and before a file name with the same digits
+  const nums = [plan('20260101-000012-twelve'), ...plans];
+  assert.deepEqual(keys(match('12', nums, actions, ['demo/20260101-000012-twelve'])), ['demo/20260101-000001-beta', 'demo/20260101-000012-twelve']);
+  assert.deepEqual(keys(match('pr 12', nums, actions, [])), ['demo/20260101-000001-beta']);
   // a pasted PR link finds exactly that PR: not #120, not the same number in another repo
   const more = [...plans, plan('20260101-000003-delta', { pr: { number: 120, title: 'Other', url: 'https://github.com/example/demo/pull/120' } })];
   assert.deepEqual(keys(match('https://github.com/example/demo/pull/12', more, actions, [])), ['demo/20260101-000001-beta']);
@@ -1940,18 +1952,51 @@ test('the page: the merged card shows for a fresh merge or a worktree left on di
 test('the page: the tab label takes a PR number that is a number', () => {
   const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
   const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
-  const body = [pick(/^const esc = .*$/m), pick(/^const tabTitle = .*$/m), pick(/^function tabLabelHtml\(p\) \{[\s\S]*?\n\}$/m)].join('\n');
+  const body = [pick(/^const esc = .*$/m), pick(/^const escA = .*$/m), pick(/^const tabTitle = .*$/m), pick(/^function tabLabelHtml\(p\) \{[\s\S]*?\n\}$/m)].join('\n');
   const label = new Function('projPill', 'tabStatus', body + '\nreturn tabLabelHtml;')(
     (name) => '<span class="ppill">' + name + '</span>', () => ['live', 'working']);
   const html = label({ project: 'acme', title: 'Fix <b> login', slug: '20260101-000000-fix', pr: { number: 873 } });
   assert.match(html, /<span class="stabpr">#873<\/span>/);
-  assert.match(html, /<span class="stabn">Fix &lt;b&gt; login<\/span><span class="chip stabst live">working<\/span>/);
-  assert.ok(!/stabpr/.test(label({ project: 'acme', slug: '20260101-000000-fix' })), 'no PR: no number');
+  // a tab with a PR shows its number, not its title, so more tabs fit in the header row
+  assert.ok(!/stabn|login/.test(html), 'PR: no title');
+  assert.match(html, /<span class="dot stabdot live" title="working"><\/span><span class="srt">working<\/span>/);
+  const noPr = label({ project: 'acme', title: 'Fix <b> login', slug: '20260101-000000-fix' });
+  assert.ok(!/stabpr/.test(noPr), 'no PR: no number');
+  assert.match(noPr, /<span class="stabn">Fix &lt;b&gt; login<\/span>/, 'no PR: the title');
+});
+
+test('the page: the big PR number starts the palette, sidebar, run-strip and worktree rows', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
+  const body = [pick(/^const esc = .*$/m), pick(/^const prStateWord = .*$/m), pick(/^const prNumChip = \(pr\) => \{[\s\S]*?\n\};$/m)].join('\n');
+  const chip = new Function(body + '\nreturn prNumChip;')();
+  assert.equal(chip({ number: 900, state: 'OPEN', isDraft: true }), '<span class="chip palpr">#900 <small>draft</small></span>');
+  assert.equal(chip({ number: 7, state: 'OPEN' }), '<span class="chip palpr ok">#7 <small>open</small></span>');
+  assert.equal(chip({ number: 182, state: 'MERGED' }), '<span class="chip palpr merged">#182 <small>merged</small></span>');
+  // each row puts the number first and does not show the small PR chip again
+  assert.match(src, /<div class="name">\$\{p\.pr \? prNumChip\(p\.pr\) : ''\}/, 'sidebar plan row');
+  assert.match(src, /\$\{autoChips\(\{ \.\.\.p, pr: null \}\)/, 'sidebar plan row: no second PR chip');
+  assert.match(src, /const stripName = \(p\) => \(p\.pr \? prNumChip\(p\.pr\) : ''\)/, 'run strip');
+  assert.ok(!/const stripName = .*prChip\(/.test(src), 'run strip: no second PR chip');
+  assert.match(src, /<div class="name">\$\{w\.pr \? prNumChip\(w\.pr\) : ''\}/, 'worktree row');
+  assert.match(src, /\$\{wtChips\(w, true\)\}/, 'worktree row: no second PR chip');
+  assert.match(src, /\(p\.pr \? prNumChip\(p\.pr\) : ''\) \+\n\s*projPill\(p\.project\)/, 'palette row');
+});
+
+test('the page: the chat is always open for a plan with a session, with no button to open or close it', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  assert.match(src, /function syncChat\(p\) \{\n\s*const show = hasChat\(p\);/, 'shown whenever the plan has a session');
+  assert.ok(!/id="cclose"|data-chat=|dash-chat-open|chatBtn\(/.test(src), 'no Chat button, no close button, no saved on/off');
 });
 
 test('the page: the first paint and Back reveal and scroll to the open plan', () => {
   const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
   assert.match(src, /const reveal = !firstPaint && selected;\n\s*if \(reveal\) revealInSide\(selected\);\n\s*renderList\(\);\n\s*if \(reveal\) scrollToSelected\(\);/);
+  // a plan in the run strip is shown there, not in its project section; a click on a strip row does not scroll
+  assert.match(src, /function scrollToSelected\(\) \{\n[^\n]*\n\s*const strip = byId\('runstrip'\)\.querySelector\('\.rp\.sel'\);\n\s*if \(strip\) \{[\s\S]{0,300}?strip\.scrollIntoView\(\{ block: 'nearest' \}\); return;\n\s*\}/);
+  // each run-strip group is a section, so its caption sticks while its rows scroll
+  assert.match(src, /const stripGroup = \(cls, cap, list, row\) => list\.length \? '<div class="sgsec"><div class="cap '/);
+  assert.match(src, /selected = el\.dataset\.go; revealInSide\(selected\); renderList\(\); renderDetail\(true\);\n/, 'strip click: no scroll');
   // the row lands below its project's sticky header, measured each time
   assert.match(src, /function scrollToSelected\(\) \{[\s\S]*?querySelector\('\.phead'\);\n\s*el\.style\.scrollMarginTop = \(head \? head\.offsetHeight/);
   assert.match(src, /addEventListener\('popstate', \(\) => \{\n\s*readUrl\(\); if \(selected\) revealInSide\(selected\);[^\n]*\n[^\n]*scrollToSelected\(\);/);
@@ -1960,4 +2005,18 @@ test('the page: the first paint and Back reveal and scroll to the open plan', ()
 test('the page: an outdated project with no GitHub origin keeps the copy-prompt chip', () => {
   const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
   assert.match(src, /sp\.bootstrap === 'outdated' && sp\.issuesUrl \? bootstrapUpgradeChip\(pr, sp\)/);
+});
+
+test('the page: the chat pins the last message that scrolled above the view', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const m = src.match(/^function pinnedAsk\(boxes, viewTop\) \{[\s\S]*?\n\}$/m);
+  assert.ok(m, 'app.js has pinnedAsk');
+  const pinnedAsk = new Function(m[0] + '\nreturn pinnedAsk;')();
+  const asks = [{ top: -400, bottom: -350 }, { top: -120, bottom: -60 }, { top: 300, bottom: 340 }];
+  assert.equal(pinnedAsk(asks, 0), 1, 'the newest message above the view, not the one still on screen');
+  assert.equal(pinnedAsk(asks, -380), -1, 'nothing pinned while every message is in or below the view');
+  assert.equal(pinnedAsk([{ top: -40, bottom: 20 }], 0), -1, 'a message cut at the top is still in view');
+  assert.equal(pinnedAsk([], 0), -1);
+  // the chat panel calls it on its log
+  assert.match(src, /jumpToBottom\(L\);\n\s*pinLastAsk\(L\);/);
 });

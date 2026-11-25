@@ -4,18 +4,26 @@
 <title>Plans</title>
 <link rel="icon" id="favicon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Ctext%20x%3D%2232%22%20y%3D%2246%22%20font-size%3D%2256%22%20text-anchor%3D%22middle%22%3E%F0%9F%98%B4%3C%2Ftext%3E%3C%2Fsvg%3E">
 <style><!--@CSS--></style>
-<header class="mainhd"><div class="hleft"><h1><a href="/" id="home" title="close the open plan">🗂 Plans</a></h1><button id="dashCodeBtn" class="hdbtn" title="Open this dashboard's code in VS Code"><svg class="vsc-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="#007ACC" d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z"/></svg> Code</button><button id="boardBtn" class="hdbtn" aria-pressed="false" title="All plans on one board: Backlog, Ready, Running, Needs you, Failed, Done">▦ Board</button><button id="scoutBtn" class="hdbtn" title="The scout: what it found, its last runs, its log and setup">🔭 Scout</button><button id="bpClose" class="hdbtn" hidden title="Close the plan and show the whole board (Esc)">✕ Close plan</button><span class="hdrun" id="hdrun" style="display:none"></span>
-  <span class="hdok" id="hdok" style="display:none"></span>
-  <span class="hdusage" id="hdusage"></span>
-  <span class="dim" id="clock"></span>
-  <span class="hdwarn" id="connmsg" style="display:none"></span>
-  <span class="dim hdnote" aria-live="polite">loading…</span></div>
+<header class="mainhd"><div class="hdl"><h1><a href="/" id="home" title="close the open plan">🗂 Plans</a></h1><button id="hdmenuBtn" class="hdbtn" popovertarget="hdmenu" aria-haspopup="true" title="Board, Scout, QA reports, Add project, Settings, alerts and theme">⋯</button><button id="dashCodeBtn" class="hdbtn" title="Open this dashboard's code in VS Code"><svg class="vsc-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="#007ACC" d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z"/></svg> Code</button></div>
   <div id="hdtabs"></div>
-  <div class="hright"><a class="hdlink" href="http://localhost:{{QA_PORT}}/" target="_blank" rel="noopener" title="report pages of the browser-usability-test skill">QA reports ↗</a>
+  <nav id="stabs" aria-label="Open plans" hidden></nav>
+  <div class="hright"><button id="boardExit" class="hdbtn" hidden title="Leave the board">✕ Board</button><button id="bpClose" class="hdbtn" hidden title="Close the plan and show the whole board (Esc)">✕ Close plan</button>
+  <span class="dim hdnote" aria-live="polite">loading…</span>
+  <span class="hdwarn" id="connmsg" style="display:none"></span>
+  <span class="hdrun" id="hdrun" style="display:none"></span>
+  <span class="hdok" id="hdok" style="display:none"></span>
+  <span class="hdusage" id="hdusage"></span></div></header>
+<div id="hdmenu" class="hdmenu" popover>
+  <button id="boardBtn" aria-pressed="false" title="All plans on one board: Backlog, Ready, Running, Needs you, Failed, Done">▦ Board</button>
+  <button id="scoutBtn" title="The scout: what it found, its last runs, its log and setup">🔭 Scout</button>
+  <a class="hdlink" href="http://localhost:{{QA_PORT}}/" target="_blank" rel="noopener" title="report pages of the browser-usability-test skill">QA reports ↗</a>
+  <hr>
   <button id="guidebtn" title="find repos on this machine and add them; step 1 explains how it works">＋ Add project</button>
-  <button id="settingsbtn" title="projects & settings">⚙ Settings</button>
-  <button id="alertBtn" aria-pressed="false" title="Sound and notification when a run stops or the agent answers">🔕</button>
-  <button id="themeBtn" title="toggle light/dark">🌙</button></div></header>
+  <button id="settingsbtn" title="projects &amp; settings">⚙ Settings</button>
+  <button id="alertBtn" aria-pressed="false" title="Sound and notification when a run stops or the agent answers">🔕 Alerts off</button>
+  <button id="themeBtn" title="toggle light/dark">🌙 Dark theme</button>
+  <div class="hmfoot dim">Last update <span id="clock"></span></div>
+</div>
 <div class="wrap">
   <aside>
     <div class="filters">
@@ -35,7 +43,6 @@
     </div>
   </aside>
   <div class="maincol">
-  <nav id="stabs" aria-label="Open plans" hidden></nav>
   <div class="mainrow">
   <section id="detail"><span class="dim">Select a plan on the left.</span></section>
   <section id="board" hidden aria-label="Board of all plans"></section>
