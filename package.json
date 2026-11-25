@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "restart": "node apps/dashboard/restart.mjs",
+    "build-app": "node apps/plans-mac/build.mjs",
     "test": "node --test apps/*/test/*.test.mjs test/*.test.mjs"
   }
 }

@@ -9,6 +9,7 @@
 # Parts
 #   1. Claude Code config   scripts/setup-claude.sh — CLAUDE.md, skills, settings
 #   2. Plans dashboard      scripts/setup-macos.sh  — runs at login on https://<domain> (macOS)
+#                           then asks to build the Plans Mac app (npm run build-app) when swiftc is there
 #
 # Each part is its own script and still works on its own. Safe to re-run.
 set -euo pipefail
@@ -79,8 +80,23 @@ if [ "${PICKED[1]}" = 1 ]; then
   else
     printf '\nScout: not set up on this Mac. The 🔭 Scout button on the dashboard lists the steps (docs/scout.md).\n'
   fi
-  printf '\nDone. Opening %s — the guide there helps you add your repos.\n' "$url"
-  open "$url" 2>/dev/null || true
+  # --- Mac app ---
+  # the optional Plans app (apps/plans-mac): one window with the ⌘ menu keys; it needs the Swift compiler
+  APP=""
+  # --check prints its own hint; the skipped line below says the same, so its stderr is dropped
+  if node "$REPO/apps/plans-mac/build.mjs" --check 2>/dev/null; then
+    ans=y
+    [ "$YES" = 1 ] || read -r -p "Build and install the Plans Mac app (~/Applications/Plans.app)? [Y/n] " ans
+    case "${ans:-y}" in
+      [Nn]*) ;;
+      *) if node "$REPO/apps/plans-mac/build.mjs"; then APP="$HOME/Applications/Plans.app"; else printf 'Mac app: the build failed; setup goes on. Run npm run build-app to try again.\n'; fi ;;
+    esac
+  else
+    printf 'Mac app: skipped (no Swift compiler; xcode-select --install, then npm run build-app).\n'
+  fi
+  # --- end Mac app ---
+  printf '\nDone. Opening %s — the guide there helps you add your repos.\n' "${APP:-$url}"
+  open "${APP:-$url}" 2>/dev/null || true
 else
   printf '\nDone. To try the dashboard: node %s/apps/dashboard/server.mjs\n' "$REPO"
 fi

@@ -175,7 +175,7 @@ Each plan or worktree you open becomes a tab in the strip under the header. You 
 
 The tabs are kept in this browser (`localStorage` key `dash-tabs`). A tab goes away when its plan is gone from a project that the dashboard still shows. The closed-tab list is kept only until the page reloads.
 
-The page gives the Mac app its hooks in `window.dashboard`: `switchSession(n)`, `nextSession(d)`, `closeSession()`, `reopenSession()` and `openSearch()`.
+The page gives the Mac app its hooks in `window.dashboard`: `switchSession(n)`, `nextSession(d)`, `closeSession()`, `reopenSession()`, `openSearch()`, `focusChat()`, `toggleBoard()` and `openSettings()`.
 
 Known limits:
 
@@ -184,6 +184,42 @@ Known limits:
 - Back or Forward to a closed plan opens it as a tab again.
 - macOS can take Ctrl+1 … Ctrl+9 when "Switch to Desktop N" is on (System Settings → Keyboard → Keyboard Shortcuts → Mission Control).
 - On Windows and Linux the browser keeps Ctrl+1 … Ctrl+8, Ctrl+W and Ctrl+Shift+T for itself. There, use Ctrl+K and clicks.
+
+## Mac app
+
+Plans (`~/Applications/Plans.app`) is an optional Mac app: one window that shows the dashboard page, with the ⌘ keys that a browser keeps for itself. The code is in `apps/plans-mac/` (AppKit and WebKit, no Xcode project).
+
+Run `npm run build-app` to build and install it. It needs the Swift compiler of the Command Line Tools (`xcode-select --install`). `scripts/setup.sh` asks before it builds the app. To use a new build, quit Plans (⌘Q) and open it again.
+
+The app opens the domain of the installed dashboard (from `~/.claude/pipeline-dashboard/caddy-site.caddy`), else https://plans.test. `node apps/plans-mac/build.mjs --url https://<domain>` builds it for another https domain.
+
+| Key | What it does |
+|---|---|
+| ⌘1 … ⌘8 | Open tab 1 … 8 |
+| ⌘9 | Open the last tab |
+| ⇧⌘[ / ⇧⌘] | Open the previous / next tab |
+| ⌘W | Close the open tab |
+| ⇧⌘T | Open the last closed tab again |
+| ⌘K | Open the palette |
+| ⌘L | Open the chat of the open plan and put the cursor in its message box |
+| ⌘B | Open or close the board |
+| ⌘, | Open Settings |
+| ⌘R | Reload the page |
+| ⇧⌘W | Hide the window |
+| ⌘Q | Quit the app |
+
+Closing the window hides it. The app keeps running in the background, and it never stops a run or a chat: they run under the dashboard service. Click the Dock icon to show the window again, at the same size and place. While the window is hidden, the menu keys do nothing; a question from the page (for example "Compact this chat?") shows the window. ⌘Q quits the app; runs and chats keep going then too.
+
+Links to other sites (GitHub, QA reports, `vscode:` links) open in the default browser or app. Links to the dashboard stay in the window. When the dashboard does not answer, the window shows "Waiting for the dashboard…" and loads the page again every 5 s.
+
+The app shows no notifications of its own. The page's 🔔 sound rings, and the server's notifications come as before.
+
+Known limits:
+
+- The app and a browser tab keep separate storage (tabs, settings, 🔔). With both open, the sound can ring twice.
+- While the Files changed diff editor has the focus, it can take ⌘K, ⌘L and ⌘B before the menu.
+- On macOS 13 a hidden window can slow the page's timers, as a background browser tab does, so the 🔔 sound can be late.
+- ⇧⌘W hides the window, as the red button does.
 
 ## Alerts
 

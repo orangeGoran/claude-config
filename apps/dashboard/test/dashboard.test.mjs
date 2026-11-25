@@ -415,8 +415,12 @@ test('the page has the tab strip, the palette and the window.dashboard hooks', a
   // each hook calls its own function, and each goes through the gate that the keyboard path uses
   const body = hooks[1].replace(/\s+/g, ' ');
   for (const [name, target] of [['switchSession', 'tabHook(switchSession)'], ['nextSession', 'tabHook(nextSession)'],
-    ['closeSession', 'tabHook(() => closeSession())'], ['reopenSession', 'tabHook(reopenSession)'], ['openSearch', 'searchHook']])
+    ['closeSession', 'tabHook(() => closeSession())'], ['reopenSession', 'tabHook(reopenSession)'], ['openSearch', 'searchHook'],
+    ['focusChat', 'tabHook(focusChat)'], ['toggleBoard', 'tabHook(toggleBoard)'], ['openSettings', 'tabHook(() => openSettings())']])
     assert.ok(body.includes(name + ': ' + target), `${name}: ${target}`);
+  // the Mac app's ⌘L opens the chat only when the plan has one; ⌘B works as the Board button
+  assert.match(page, /function focusChat\(\) \{ if \(hasChat\(find\(selected\)\)\) toggleChat\(true\); \}/);
+  assert.match(page, /function toggleBoard\(\) \{ byId\('boardBtn'\)\.click\(\); \}/);
   // the gates: tab hooks do nothing under an overlay or the open palette; the palette hook only under an overlay
   assert.match(page, /const tabHook = \(f\) => \(\.\.\.a\) => \{ if \(!keysOwned\(\) && !paletteOpen\(\)\) f\(\.\.\.a\); \};/);
   assert.match(page, /const searchHook = \(\) => \{ if \(!keysOwned\(\)\) openSearch\(\); \};/);

@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +27,14 @@ const runPart = (from, to, env, tail) => {
   return spawnSync('bash', ['-euo', 'pipefail', '-c', lines.slice(a, b + 1).join('\n') + '\n' + tail], { env: { ...process.env, ...env }, encoding: 'utf8' });
 };
 const isMac = process.platform === 'darwin';
+// the twin of runPart for setup.sh: its blocks are indented, so the marker lines are matched after trim()
+const runSetupPart = (from, to, env, stdin) => {
+  const lines = read('scripts/setup.sh').split('\n');
+  const a = lines.findIndex((l) => l.trim().startsWith(from)), b = lines.findIndex((l, i) => i > a && l.trim().startsWith(to));
+  assert.ok(a >= 0 && b > a, `setup.sh has the lines ${from} … ${to}`);
+  return spawnSync('bash', ['-euo', 'pipefail', '-c', lines.slice(a, b + 1).join('\n') + '\nprintf "APP=%s\\n" "$APP"'],
+    { env: { ...process.env, ...env }, input: stdin ?? '', encoding: 'utf8' });
+};
 
 test('setup-macos.sh writes the path of the dashboard server into the login service, also when the path has & or |', { skip: !isMac }, () => {
   const sh = read('scripts/setup-macos.sh');
@@ -73,6 +81,52 @@ test('setup.sh installs the scout and names the dashboard server from this check
   const tryLine = /To try the dashboard: node %s\/([^\\]+)\\n' "\$REPO"/.exec(sh);
   assert.ok(tryLine, 'the "To try the dashboard" line prints a path under $REPO');
   assert.ok(existsSync(path.join(REPO, tryLine[1])), `${tryLine[1]} exists`);
+});
+
+test('setup.sh asks to build the Mac app, skips it without swiftc, and goes on when the build fails', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'setup-app-'));
+  try {
+    // a fake build.mjs: it writes its arguments to a file, and exits FAKE_CHECK for --check, else FAKE_BUILD
+    mkdirSync(path.join(dir, 'repo', 'apps', 'plans-mac'), { recursive: true });
+    const calls = path.join(dir, 'calls.txt');
+    writeFileSync(path.join(dir, 'repo', 'apps', 'plans-mac', 'build.mjs'),
+      `import { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n`
+      + `process.exit(+(process.argv[2] === '--check' ? process.env.FAKE_CHECK : process.env.FAKE_BUILD));\n`);
+    const home = path.join(dir, 'home');
+    const run = (env, stdin) => {
+      rmSync(calls, { force: true });
+      const r = runSetupPart('# --- Mac app ---', '# --- end Mac app ---', { REPO: path.join(dir, 'repo'), HOME: home, ...env }, stdin);
+      const ran = existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : [];
+      return { ...r, ran, app: /^APP=(.*)$/m.exec(r.stdout)?.[1] };
+    };
+
+    let r = run({ YES: '1', FAKE_CHECK: '0', FAKE_BUILD: '0' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.ran, [['--check'], []], 'the build runs with no arguments');
+    assert.equal(r.app, path.join(home, 'Applications', 'Plans.app'));
+
+    r = run({ YES: '0', FAKE_CHECK: '0', FAKE_BUILD: '0' }, 'n\n');
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.ran, [['--check']], 'no build after "n"');
+    assert.equal(r.app, '');
+
+    r = run({ YES: '1', FAKE_CHECK: '1', FAKE_BUILD: '0' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.ran, [['--check']]);
+    assert.match(r.stdout, /Mac app: skipped/);
+
+    r = run({ YES: '1', FAKE_CHECK: '0', FAKE_BUILD: '1' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /the build failed; setup goes on/);
+    assert.equal(r.app, '');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  // at the end, setup opens the app when it was built, else the dashboard URL
+  const sh = read('scripts/setup.sh');
+  assert.ok(sh.includes('open "${APP:-$url}" 2>/dev/null || true'));
+  assert.ok(sh.includes(`printf '\\nDone. Opening %s — the guide there helps you add your repos.\\n' "\${APP:-$url}"`));
+  assert.ok(!sh.includes('open "$url" 2>/dev/null'));
 });
 
 test('npm test runs every test file of the repo, and npm run restart names a file that exists', () => {

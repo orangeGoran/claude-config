@@ -4409,12 +4409,17 @@ document.addEventListener('keydown', (e) => {
   if (ctrlOnly && e.code === 'KeyW') { e.preventDefault(); return closeSession(); }
   if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && e.code === 'KeyT') { e.preventDefault(); return reopenSession(); }
 }, true);
-// the hooks the Mac app calls from its menu shortcuts. They obey the same gates as the keys:
+/** Opens the chat of the open plan and puts the cursor in its message box. Does nothing when the plan has no chat. */
+function focusChat() { if (hasChat(find(selected))) toggleChat(true); }
+/** Opens the board, or closes it when it is open. */
+function toggleBoard() { byId('boardBtn').click(); }
+// the hooks the Mac app (apps/plans-mac) calls from its menu shortcuts. They obey the same gates as the keys:
 // nothing while an overlay owns the keys, and no tab hook while the palette is open
 const tabHook = (f) => (...a) => { if (!keysOwned() && !paletteOpen()) f(...a); };
 const searchHook = () => { if (!keysOwned()) openSearch(); };
 window.dashboard = { switchSession: tabHook(switchSession), nextSession: tabHook(nextSession),
-  closeSession: tabHook(() => closeSession()), reopenSession: tabHook(reopenSession), openSearch: searchHook };
+  closeSession: tabHook(() => closeSession()), reopenSession: tabHook(reopenSession), openSearch: searchHook,
+  focusChat: tabHook(focusChat), toggleBoard: tabHook(toggleBoard), openSettings: tabHook(() => openSettings()) };
 // --- Board: every plan of every project in one column, by where it stands. Every column fills in by itself:
 // from the run, the PR, archiving and the validation rounds. The sidebar is hidden (the board is the list), and
 // a card opens its plan in a panel beside the board (#detail), so the board stays in view. The filters, the
