@@ -161,7 +161,10 @@ Every column fills in by itself. Tick **queue** on a Ready card and use **▶ La
 
 ## Tabs and keyboard shortcuts
 
-Each plan or worktree you open becomes a tab in the strip under the header. You open it from the sidebar, the run strip, a board card, an alert, a link or the palette. Click a tab to open its plan, and **×** to close the tab. Closing a tab never stops an agent or a run: the plan stays in the sidebar and in the run strip. Esc closes the open plan, and its tab stays.
+Each plan or worktree you open becomes a tab in the strip under the header. You open it from the sidebar, the run strip, a board card, an alert, a link or the palette. Click a tab to open its plan, and **×** to close the tab.
+A plan you open from the sidebar, a board card or the drawer goes into the preview tab (its title is in italics). The next plan you open that way takes its place, so you can look through plans without making a tab for each one. Double-click the row, click the preview tab, or send a chat message in it, to keep it as a normal tab. The box on a row (not a double-click) queues the plan for ▶ Launch queued.
+A tab shows the project label, the PR number, the plan title and a status word: working, asks you, your turn, failed, answered, merged or idle. A chat whose turn ended while a background agent or shell still runs counts as working; the chat says "waiting for a background task…" until it ends. The tab strip sits above the plan, right of the sidebar.
+When the open plan's PR is merged, a card on the right says so. **🧹 Clean up worktree and branch** runs the project's `auto-pipeline.sh --cleanup <slug>` (the run report stays; it refuses when the worktree has changes that are not committed). **Okay, close** closes the card and the tab; the card does not come back for that plan. The card shows for a merge of the last 7 days, or while the worktree is still on disk. Closing a tab never stops an agent or a run: the plan stays in the sidebar and in the run strip. Esc closes the open plan, and its tab stays.
 
 | Key | What it does |
 |---|---|
@@ -169,7 +172,7 @@ Each plan or worktree you open becomes a tab in the strip under the header. You 
 | Ctrl+9 | Open the last tab |
 | Ctrl+W | Close the open tab; the tab to its right opens (else the one to its left) |
 | Ctrl+Shift+T | Open the last closed tab again |
-| ⌘K (macOS), Ctrl+K (other systems) | Open the palette: find a plan or a worktree, or run a header action (Board, Scout, Settings, Add project, Chat, Plan tab, Files changed, Close tab, Reopen closed tab, Theme, Alerts) |
+| ⌘K (macOS), Ctrl+K (other systems) | Open the palette: find a plan or a worktree (by title, file, project, `#<PR number>` or a pasted GitHub PR link), or run a header action (Board, Scout, Settings, Add project, Chat, Plan tab, Files changed, Close tab, Reopen closed tab, Theme, Alerts). A row shows the project, the PR tag (`PR #283 · open`), the title and the status word. |
 | Arrow Up / Arrow Down, Enter | In the palette: pick a row, run it |
 | Esc | In the palette: close it; the focus goes back where it was |
 
@@ -189,7 +192,7 @@ Known limits:
 
 **🔔** in the header turns on a short sound when a run stops (needs you, failed or finished) the chat agent finishes an answer, or the chat agent asks for permission. When the dashboard tab is not in front, a desktop notification comes too; clicking it opens that plan. The browser asks once for permission to show notifications. The setting is remembered in this browser, and alerts need the dashboard open in a tab (a background tab can be up to a minute late).
 
-The dashboard server also sends macOS notifications, with no page open: when it starts a plan by itself, when such a start fails, when a `Waits for:` line has an error that you must fix, and when a run of a pipeline project (with `.claude/scripts/auto-pipeline.sh`) needs you or failed. A click opens that plan; this needs `terminal-notifier` (`brew install terminal-notifier`), because an `osascript` notification opens Script Editor. With 🔔 on and the page open, a run that stops gives two notifications: one from the page and one from the server. `DASH_NO_NOTIFY=1` turns the server's notifications off.
+The dashboard server also sends macOS notifications, with no page open: when it starts a plan by itself, when such a start fails, when a `Waits for:` line has an error that you must fix, and when a run of a pipeline project (with `.claude/scripts/auto-pipeline.sh`) needs you or failed. A notification reads like a tab: the title has the project label, what happened and the PR number (`acme-web · your turn · PR #903`), the line under it has the plan title, and the text has the detail without links. A click opens that plan; this needs `terminal-notifier` (`brew install terminal-notifier`), because an `osascript` notification opens Script Editor. With 🔔 on and the page open, a run that stops gives two notifications: one from the page and one from the server. `DASH_NO_NOTIFY=1` turns the server's notifications off.
 
 ## Pull requests
 

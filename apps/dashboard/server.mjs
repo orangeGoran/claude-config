@@ -526,7 +526,7 @@ const listPlans = async (proj) => {
         tags: meta[slug]?.tags || [],
         ...planSessions(proj, slug),
         asked: existsSync(chatFile(proj, slug)),
-        chatting: !!chats.get(key)?.busy,
+        chatting: !!(chats.get(key)?.busy || chats.get(key)?.bg.size),
         chatWaits: chats.get(key)?.waits.size || 0,
         pr: prOf(slug),
       };
@@ -549,11 +549,11 @@ const listPlans = async (proj) => {
         slug, file: slug + '.md', key, title,
         summary: summaries[slug] || null, summarizing: false,
         validations: validationRounds(proj, slug),
-        run: null, live: false, worktree: false, archived: true, reportAt: null, waits: null,
+        run: null, live: false, worktree: !!proj.hasPipeline && existsSync(worktreeOf(proj, slug)), archived: true, reportAt: null, waits: null,
         status: meta[slug]?.status || null, tags: meta[slug]?.tags || [],
         ...planSessions(proj, slug),
         asked: existsSync(chatFile(proj, slug)),
-        chatting: !!chats.get(key)?.busy,
+        chatting: !!(chats.get(key)?.busy || chats.get(key)?.bg.size),
         chatWaits: chats.get(key)?.waits.size || 0,
         pr: prOf(slug),
       };
@@ -1817,16 +1817,27 @@ const dashUrl = () => {
   try { host = (readFileSync(path.join(CENTRAL, 'caddy-site.caddy'), 'utf8').match(/^([^\s{]+)\s*\{/m) || [])[1] || ''; } catch {}
   return host ? 'https://' + host : 'http://127.0.0.1:' + PORT;
 };
-/** Shows a macOS notification. A click opens `query` on the dashboard (needs terminal-notifier). */
-const notifyMac = (title, text, query) => {
+/**
+ * Gives { title, subtitle, message } of a plan notification, read like a dashboard tab: the project
+ * label, what happened and the PR number in the title, the plan title under it, and the detail
+ * without links (a click on the notification opens the plan).
+ */
+const notifyParts = (proj, slug, plan, what, detail) => {
+  const pr = plan && plan.pr && plan.pr.number;
+  const name = String(plan && plan.title && plan.title !== slug ? plan.title : slug).replace(/^\d{8}-\d{6}-/, '');
+  const msg = String(detail || '').replace(/\s*[—–-]?\s*https?:\/\/\S+/g, '').trim();
+  return { title: [proj.short || proj.name, what, pr ? 'PR #' + pr : ''].filter(Boolean).join(' · '), subtitle: name, message: msg || what };
+};
+/** Shows a macOS notification of notifyParts(). A click opens `query` on the dashboard (needs terminal-notifier). */
+const notifyMac = ({ title, subtitle, message }, query) => {
   if (process.env.DASH_NO_NOTIFY) return;
   const custom = process.env.DASH_NOTIFIER;
   if (!custom && process.platform !== 'darwin') return;
   fence();
   const tn = custom || NOTIFIERS.find((f) => existsSync(f));
-  const msg = redact(text);
-  if (tn) execFile(tn, ['-title', title, '-message', msg, '-open', dashUrl() + '/' + query, '-group', 'plans-' + query], () => {});
-  else execFile('osascript', ['-e', `display notification ${JSON.stringify(msg)} with title ${JSON.stringify(title)}`], () => {});
+  const msg = redact(message);
+  if (tn) execFile(tn, ['-title', title, '-subtitle', subtitle, '-message', msg, '-open', dashUrl() + '/' + query, '-group', 'plans-' + query], () => {});
+  else execFile('osascript', ['-e', `display notification ${JSON.stringify(msg)} with title ${JSON.stringify(title)} subtitle ${JSON.stringify(subtitle)}`], () => {});
 };
 const selQuery = (proj, slug) => '?sel=' + encodeURIComponent(proj.name + '/' + slug);
 
@@ -2041,18 +2052,18 @@ const watchProject = async (proj, projects, cache) => {
   for (const k of [...launchedNow.keys()]) if (k.startsWith(proj.name + '/')) launchedNow.delete(k);
   for (const [slug, rec] of Object.entries(next.launched)) launchedNow.set(proj.name + '/' + slug, rec);
   addEvents(proj, events);
-  const title = 'Plans: ' + proj.name;
+  const note = (slug, what, detail) => notifyMac(notifyParts(proj, slug, bySlug.get(slug), what, detail), selQuery(proj, slug));
   for (const e of events) {
-    if (e.type === 'auto-launch') notifyMac(title, 'Started ' + e.slug, selQuery(proj, e.slug));
-    else if (e.type === 'auto-launch-failed') notifyMac(title, e.slug + ' did not start: ' + e.output, selQuery(proj, e.slug));
+    if (e.type === 'auto-launch') note(e.slug, 'started', 'Started by the plans watcher');
+    else if (e.type === 'auto-launch-failed') note(e.slug, 'did not start', e.output);
     else if (e.type === 'run-outcome' && (e.outcome === 'needs-you' || e.outcome === 'failed')) {
       const was = (saved.outcomes || {})[e.slug];
       const prOpen = (s) => /^PR OPEN/i.test(String(s || ''));
       if (e.previous !== e.outcome || (prOpen(e.status) && !prOpen(was && was.status)))
-        notifyMac(title, e.slug + ': ' + e.status, selQuery(proj, e.slug));
+        note(e.slug, e.outcome === 'failed' ? 'run failed' : 'your turn', e.status);
     }
   }
-  for (const n of newErrors) notifyMac(title, n.slug + ' cannot start by itself: ' + n.reason, selQuery(proj, n.slug));
+  for (const n of newErrors) note(n.slug, 'cannot start by itself', n.reason);
 };
 let watching = false, lockNoted = false;
 /** One watcher tick over every project. Only the server that holds watcher.lock does the work. */
@@ -2401,6 +2412,20 @@ const chatReattach = () => {
     console.log('Chat ' + key + ' reconnected.');
   }
 };
+/**
+ * Keeps bg, the set of the chat's background tasks (agents and shells) that still run, up to date from
+ * one stream message j. claude sends the whole list in background_tasks_changed; task_started and
+ * task_notification add and remove one. While bg has one, the agent is not done: the plan shows
+ * "working", and the idle close waits. Gives true when bg changed.
+ */
+const bgTrack = (bg, j) => {
+  if (j.type !== 'system') return false;
+  const was = [...bg].join();
+  if (j.subtype === 'background_tasks_changed' && Array.isArray(j.tasks)) { bg.clear(); for (const t of j.tasks) if (t && t.task_id) bg.add(t.task_id); }
+  else if (j.subtype === 'task_started' && j.is_backgrounded && j.task_id) bg.add(j.task_id);
+  else if (j.subtype === 'task_notification' && j.task_id) bg.delete(j.task_id);
+  return [...bg].join() !== was;
+};
 // a background shell (Bash run_in_background) is a zsh/bash/sh child of claude; its MCP servers are not shells
 const shellsRunning = (pid) => new Promise((resolve) => {
   if (!pid) return resolve(false);
@@ -2717,7 +2742,7 @@ const chatKill = (ch) => { ch.closing = true; ch.child.kill(); };
 const chatIdle = (ch) => {
   clearTimeout(ch.idleTimer);
   ch.idleTimer = setTimeout(async () => {
-    if (ch.busy || ch.waits.size || await shellsRunning(ch.child.pid)) return chatIdle(ch);
+    if (ch.busy || ch.waits.size || ch.bg.size || await shellsRunning(ch.child.pid)) return chatIdle(ch);
     if (chats.get(ch.key) !== ch || ch.busy) return;
     chatKill(ch);
   }, CHAT_IDLE_MS);
@@ -2832,6 +2857,7 @@ const chatOnLine = (ch, j) => {
     chatMetaSave(ch);
     chatEmitState(proj, slug);
   }
+  if (bgTrack(ch.bg, j)) chatEmitState(proj, slug);
   if (j.type === 'system' && j.subtype === 'init' && CHAT_MODES.includes(j.permissionMode) && j.permissionMode !== ch.mode) {
     ch.mode = j.permissionMode;
     chatEmitState(proj, slug);
@@ -2919,7 +2945,7 @@ const chatStart = (proj, slug, b) => {
 const chatAttach = (proj, slug, child, { session, fork, mode, model, metaFile, fresh }) => {
   const key = proj.name + '/' + slug, { wtPath } = planSessions(proj, slug);
   const ch = { key, proj, slug, child, metaFile, session, fork: !!fork, mode, model: model || 'default', busy: false,
-    closing: false, turnsEnded: 0, partial: '', landing: [], landed: 0, waits: new Map(), pending: new Map(), err: '', last: null };
+    closing: false, turnsEnded: 0, partial: '', landing: [], landed: 0, waits: new Map(), pending: new Map(), bg: new Set(), err: '', last: null };
   chats.set(key, ch);
   chatNotes.delete(key);
   const gone = () => { try { unlinkSync(metaFile); } catch {} };
@@ -3120,7 +3146,7 @@ const chatState = (proj, slug) => {
   const key = proj.name + '/' + slug, ch = chats.get(key), a = followVscodeCopy(proj, slug, loadChat(proj, slug));
   const latest = (planSessions(proj, slug).sessions.at(-1) || {}).id || null;
   return {
-    live: !!ch, busy: !!(ch && ch.busy), mode: ch ? ch.mode : null, model: ch ? ch.model : null,
+    live: !!ch, busy: !!(ch && ch.busy), bg: ch ? ch.bg.size : 0, mode: ch ? ch.mode : null, model: ch ? ch.model : null,
     session: ch && ch.session ? ch.session : a.current ? a.current.id : latest,
     current: a.current || null, latest, fork: !!a.fork,
     waits: ch ? [...ch.waits].map(([id, r]) => waitView(id, r)) : [],

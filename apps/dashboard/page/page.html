@@ -16,7 +16,6 @@
   <button id="settingsbtn" title="projects & settings">⚙ Settings</button>
   <button id="alertBtn" aria-pressed="false" title="Sound and notification when a run stops or the agent answers">🔕</button>
   <button id="themeBtn" title="toggle light/dark">🌙</button></div></header>
-<nav id="stabs" aria-label="Open plans" hidden></nav>
 <div class="wrap">
   <aside>
     <div class="filters">
@@ -35,11 +34,16 @@
       <button class="primary" id="launchbtn">▶ Launch queued in parallel</button>
     </div>
   </aside>
+  <div class="maincol">
+  <nav id="stabs" aria-label="Open plans" hidden></nav>
+  <div class="mainrow">
   <section id="detail"><span class="dim">Select a plan on the left.</span></section>
   <section id="board" hidden aria-label="Board of all plans"></section>
   <div class="csplit" id="csplit" role="separator" aria-orientation="vertical" tabindex="0" hidden
     aria-label="Divider between the page and the chat" title="Drag to resize the chat. Double-click: default width."></div>
   <section id="chat" hidden aria-label="Chat with the agent"></section>
+  </div>
+  </div>
 </div>
 <div id="logpane">
   <header><h1 id="logtitle"></h1><span style="margin-left:auto"></span>
@@ -60,6 +64,7 @@
   <button class="ccopy" id="seldlgcopy">Copy</button><button class="onb-x" id="seldlgx" title="Close (Esc)">✕</button></div>
   <p id="seldlgnote" hidden></p><pre id="seldlgbody"></pre></dialog>
 <div id="palette" class="palette" role="dialog" aria-modal="true" aria-label="Command palette" hidden><input id="palq" type="search" autocomplete="off" spellcheck="false" aria-label="Search plans and actions" placeholder="Search plans and actions…"><div id="pall" role="listbox"></div></div>
+<div id="mergedcard" role="dialog" aria-label="PR merged" hidden></div>
 <div id="toasts" role="status" aria-live="polite"><div id="toastList"></div><button id="toastPill" class="toastPill" hidden></button></div>
 <div id="tour"><div id="tourblock"></div><div id="tourhole"></div>
   <div id="tourpop" role="dialog" aria-live="polite"></div></div>
