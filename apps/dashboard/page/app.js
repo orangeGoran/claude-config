@@ -1335,8 +1335,14 @@ async function chatLoadEnd(c, how) {
   if (!c.total) box.innerHTML = '<div class="dim askempty">No messages in this session yet.</div>';
   // a sent message leaves the live area once the session log has it; when the agent is idle, it has read them all
   const said = Object.values(c.items).filter((it) => it.k === 'you');
-  c.sent = c.sent.filter((s) => !(s.ok && !c.st.busy) && !said.some((it) => it.i >= s.from && it.text.trim() === s.text));
+  c.sent = c.sent.filter((s) => !(s.ok && !c.st.busy) && !said.some((it) => sentLanded(s, it)));
   paintLive();
+}
+// True when the log message `it` is the sent message `s`. The spaces are compared loosely: the log
+// writes "/cmd\n\nargs" as "/cmd args", so an exact compare kept the bubble at the bottom for good.
+function sentLanded(s, it) {
+  const flat = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+  return it.i >= s.from && flat(it.text) === flat(s.text);
 }
 const chatTime = (at) => at ? new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 // the hover time of an answer, a tool or a note: seconds, and the day only when it is not today

@@ -1785,6 +1785,19 @@ test('the page: the upgrade chip shows the run state, and only an open PR for th
   assert.match(failed, /title="git fetch &quot;origin&quot; &lt;failed&gt; — click to start again"/);
 });
 
+test('the page: a sent slash command with args on new lines leaves the live area when the log has it', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const m = src.match(/^function sentLanded\(s, it\) \{[\s\S]*?\n\}$/m);
+  assert.ok(m, 'app.js has sentLanded');
+  const sentLanded = new Function(m[0] + '\nreturn sentLanded;')();
+  const sent = { text: '/merge-parent\n\nFix findings from the report.', from: 10 };
+  // the server writes a command as "<command-name> <command-args>"
+  assert.equal(sentLanded(sent, { i: 12, text: '/merge-parent Fix findings from the report.' }), true);
+  assert.equal(sentLanded({ text: 'plain text', from: 3 }, { i: 3, text: 'plain text\n' }), true);
+  assert.equal(sentLanded(sent, { i: 9, text: '/merge-parent Fix findings from the report.' }), false, 'an older message with the same text');
+  assert.equal(sentLanded(sent, { i: 12, text: '/merge-parent Something else' }), false);
+});
+
 test('the page: an outdated project with no GitHub origin keeps the copy-prompt chip', () => {
   const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
   assert.match(src, /sp\.bootstrap === 'outdated' && sp\.issuesUrl \? bootstrapUpgradeChip\(pr, sp\)/);
