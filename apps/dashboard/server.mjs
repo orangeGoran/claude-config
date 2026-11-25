@@ -268,7 +268,7 @@ const lanesFixPrompt = (missing, model) => [
   '',
   '`node .claude/scripts/plan-lanes.mjs --json` must print one JSON object with:',
   '- schedulableCount, laneCount, maxParallel: numbers',
-  '- recommendedBatch: [{ slug, file, areas: [string], validation: { claude, codex } }], the plans to start now, at most one per lane',
+  '- recommendedBatch: [{ slug, file, areas: [string], validation: { claude, codex, rounds } }], the plans to start now, at most one per lane',
   '- lanes: [{ lane, label, members: [slug] }]',
   '- inFlight: [{ slug, autoRunStatus }], plans already running or waiting for review',
   '',
@@ -322,11 +322,19 @@ const ownBranch = (proj, slug) => {
   const b = (planBranches[proj.root] || {})[slug];
   return b && b !== 'auto/' + slug ? b : null;
 };
+// Counts the rounds of a plan that have at least one validator report, with the new
+// (`validation-claude`, `validation-codex`) and old (`validation`, `codex-raw`) names.
+// A report name belongs to one plan only, so no list of plans is needed.
+const VALIDATOR_REPORT = /^(?:validation-claude|validation-codex|validation|codex-raw)-(\d+)\.md$/;
 const validationRounds = (proj, slug) => {
   try {
-    return readdirSync(proj.validDir).filter(
-      (f) => f.startsWith(slug + '-validation-') || f.startsWith(slug + '-codex-'),
-    ).length;
+    const rounds = new Set();
+    for (const f of readdirSync(proj.validDir)) {
+      if (!f.startsWith(slug + '-')) continue;
+      const m = f.slice(slug.length + 1).match(VALIDATOR_REPORT);
+      if (m) rounds.add(m[1]);
+    }
+    return rounds.size;
   } catch { return 0; }
 };
 

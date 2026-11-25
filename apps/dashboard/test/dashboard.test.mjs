@@ -264,6 +264,8 @@ test('the all-projects batch is refused with a fix prompt until every project ha
   assert.deepEqual(d.missing.map((m) => m.name), ['demo']);
   assert.match(d.prompt, /create \.claude\/scripts\/plan-lanes\.mjs/);
   assert.ok(d.prompt.includes(repo), 'the prompt names the repo to fix');
+  // the checker it asks for gives the same validation shape as the bootstrap template
+  assert.match(d.prompt, /validation: \{ claude, codex, rounds \}/);
 
   const lanes = path.join(repo, '.claude', 'scripts', 'plan-lanes.mjs');
   mkdirSync(path.dirname(lanes), { recursive: true });
@@ -429,6 +431,38 @@ test('stores status and tags', async () => {
   const p = await onlyPlan();
   assert.equal(p.status, 'in review');
   assert.deepEqual(p.tags, ['api', 'api']);
+});
+
+test('the validated count is the number of rounds, with old and new report names', async () => {
+  const vdir = path.join(plansDir, '.validations');
+  mkdirSync(vdir, { recursive: true });
+  const reports = ['demo-plan-validation-claude-1.md', 'demo-plan-validation-codex-1.md', 'demo-plan-validation-round-1.md',
+    'demo-plan-validation-2.md', 'demo-plan-codex-raw-2.md', 'demo-plan-round-2.md', 'demo-plan-pre-round-3.md',
+    'demo-plan-external-1.md',
+    // rounds with one report form each (6, 7, 8), and round 9 with only a decision log
+    'demo-plan-validation-claude-6.md', 'demo-plan-validation-codex-7.md', 'demo-plan-validation-8.md', 'demo-plan-validation-round-9.md',
+    'demo-plan-validation-codex-raw-5.md'];
+  const secondPlan = path.join(plansDir, 'demo-plan-validation.md');
+  const bySlug = async (slug) => (await state())[0].plans.find((p) => p.slug === slug);
+  try {
+    for (const f of reports.slice(0, -1)) writeFileSync(path.join(vdir, f), '# report\n');
+    assert.equal((await bySlug('demo-plan')).validations, 5, 'rounds 1, 2, 6, 7 and 8; logs, snapshot and external do not count');
+    // one owner per name: -validation-codex-1 stays with demo-plan, -codex-raw-5 belongs to demo-plan-validation
+    writeFileSync(secondPlan, '# Plan: Demo validation\n');
+    writeFileSync(path.join(vdir, reports.at(-1)), '# report\n');
+    assert.equal((await bySlug('demo-plan')).validations, 5);
+    assert.equal((await bySlug('demo-plan-validation')).validations, 1);
+  } finally {
+    for (const f of reports) rmSync(path.join(vdir, f), { force: true });
+    rmSync(secondPlan, { force: true });
+  }
+});
+
+test('the docs demo writes validation reports with the new names, one round for split-inventory-reads', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), '..', '..', 'scripts', 'docs-media.mjs'), 'utf8');
+  const reports = [...src.matchAll(/'\.plans\/\.validations\/([^']+)'/g)].map((m) => m[1]);
+  assert.deepEqual(reports, ['checkout-idempotency-keys-validation-claude-1.md',
+    'split-inventory-reads-validation-claude-1.md', 'split-inventory-reads-validation-codex-1.md']);
 });
 
 test('records a generic run exit code, and keeps it after a restart', async () => {
