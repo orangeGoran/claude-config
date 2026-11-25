@@ -1,0 +1,21 @@
+kind: added
+audience: internal
+scope: bootstrap-project
+summary: |
+  On a GitHub project, one click on the dashboard chip "bootstrap update" now upgrades the
+  scaffolding with no chat and ends in a draft PR. A headless Claude session decides merge, keep or
+  replace for each changed file in a temp folder, and a script writes, verifies, commits
+  and pushes. Items that only the owner can decide go into the PR body as checkboxes.
+internal: |
+  New skills/bootstrap-project/scripts/upgrade-run.mjs <repo> [--no-push]: lock and status
+  file in .plans/auto-runs/ (bootstrap-upgrade.lock, bootstrap-upgrade.json), the worktree
+  ../worktrees/<repo>/bootstrap-upgrade-<hash> on auto/bootstrap-upgrade-<hash>, a run
+  folder with numbered files (task.json, decisions.json), verify.mjs before and after, one
+  commit, push, draft PR and the no-changelog label. A retry continues from the push or the
+  PR; an open PR for the same hash is never made twice. New references/unattended.md and
+  an "Unattended mode" section in SKILL.md. render.mjs exports isExecutable and baseBranch.
+  Dashboard: POST /api/bootstrap-upgrade (removes a stale lock, refuses a second click while
+  its run is live), bootstrapRun and bootstrapHash in /api/state, and the chip states
+  upgrading…, upgrade PR #n, upgrade merged — pull and upgrade failed, for projects with a
+  GitHub origin (others keep the copy-prompt chip). Tests in test/bootstrap-upgrade-run.test.mjs
+  and apps/dashboard/test/.

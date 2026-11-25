@@ -579,6 +579,9 @@ const fullState = async () => {
       bootstrap: boot && !boot.ok ? boot.state : '',
       // the chip copies this prompt on click, the same text the setup guide shows
       bootstrapPrompt: boot && !boot.ok ? boot.fixPrompt : '',
+      // the unattended upgrade run (upgrade-run.mjs) and the hash the templates make now
+      bootstrapRun: proj.root === DASH_REPO ? null : bootstrapRunOf(proj.root),
+      bootstrapHash: proj.root === DASH_REPO ? null : bootstrapStatus(proj.root)?.hash ?? null,
       plans: await listPlans(proj),
       // a worktree on a branch that a plan names shows as that plan, not twice
       worktrees: proj.issuesUrl ? worktreesFor(proj)
@@ -908,7 +911,7 @@ const bootstrapSkillMtime = () => {
 const bootstrapCache = new Map();   // root -> { key, at, busy, result }
 let bootstrapQueue = Promise.resolve();
 const BOOTSTRAP_TTL = 10 * 60 * 1000;
-// { state: 'missing' | 'ok' | 'outdated' | 'error', differ, saved, error }, or null while the first check runs
+// { state: 'missing' | 'ok' | 'outdated' | 'error', differ, saved, hash, error }, or null while the first check runs
 const bootstrapStatus = (root) => {
   let mtime;
   try { mtime = statSync(path.join(root, '.claude', 'bootstrap.json')).mtimeMs; } catch { return { state: 'missing' }; }
@@ -926,7 +929,8 @@ const bootstrapStatus = (root) => {
           // config = only a hand-tuned CONFIG block differs, orphan = a turned-off module: neither needs an upgrade
           const differ = (n.changed || 0) + (n.new || 0) + (n.merge || 0);
           // with a saved hash, only a change in the templates or the answers counts, not the repo's own edits
-          result = { state: (s.saved ? s.saved !== s.hash : differ > 0) ? 'outdated' : 'ok', differ, saved: !!s.saved };
+          // hash: the page compares it with the hash of an upgrade PR (bootstrapRun)
+          result = { state: (s.saved ? s.saved !== s.hash : differ > 0) ? 'outdated' : 'ok', differ, saved: !!s.saved, hash: s.hash };
         } catch (e) { result = { state: 'error', error: e.message }; }
         bootstrapCache.set(root, { key, at: Date.now(), busy: false, result });
         resolve();
@@ -950,6 +954,76 @@ const bootstrapCheck = (root) => {
       : bs.state === 'error' ? 'Run /bootstrap-project --upgrade in this repository and fix what render.mjs reports ' +
         'about .claude/bootstrap.json. Do not commit.'
       : 'Run /bootstrap-project --upgrade in this repository. Do not commit.' };
+};
+
+// The unattended upgrade (skills/bootstrap-project/scripts/upgrade-run.mjs): its lock and
+// status file in the repo's .plans/auto-runs/ (references/contracts.md, "Upgrade run status").
+const bootstrapRunFile = (root) => path.join(root, '.plans', 'auto-runs', 'bootstrap-upgrade.json');
+const bootstrapLockFile = (root) => path.join(root, '.plans', 'auto-runs', 'bootstrap-upgrade.lock');
+const pidGone = (pid) => {
+  try { process.kill(pid, 0); return false; } catch (e) { return e.code === 'ESRCH'; }
+};
+// a run ends in well under this time (the Claude session times out after 45 minutes), so an
+// older live PID is another process that got the number after the run was killed
+const BOOTSTRAP_RUN_MAX_MS = 2 * 60 * 60 * 1000;
+
+/** Reads the upgrade run status of a repo: null when there is none; a running run whose PID is gone, or that is older than 2 hours, reads as failed. */
+const bootstrapRunOf = (root) => {
+  let s;
+  try { s = JSON.parse(readFileSync(bootstrapRunFile(root), 'utf8')); } catch { return null; }
+  if (!s || typeof s !== 'object') return null;
+  if (s.state === 'running' && Number.isInteger(s.pid) && pidGone(s.pid))
+    return { ...s, state: 'failed', error: `the run stopped (pid ${s.pid} is gone)` };
+  if (s.state === 'running' && Date.now() - Date.parse(s.startedAt) > BOOTSTRAP_RUN_MAX_MS)
+    return { ...s, state: 'failed', error: 'the run stopped (it started more than 2 hours ago)' };
+  if (s.state === 'pr') return { ...s, prState: prLists[root]?.allByBranch?.[s.branch]?.state };
+  return s;
+};
+
+// root -> the upgrade child this server started and that has not exited: between the spawn and
+// the moment the child takes its lock, a second click must not report "started" too
+const bootstrapChildren = new Map();
+
+/** Starts the unattended upgrade of one project in the background. Gives { ok } or { ok: false, output }. */
+const bootstrapUpgrade = (proj) => {
+  if (proj.root === DASH_REPO) return { ok: false, output: 'this dashboard repo has no bootstrap upgrade' };
+  const bs = bootstrapStatus(proj.root);
+  if (bs?.state !== 'outdated') return { ok: false, output: 'nothing to upgrade' };
+  if (bootstrapChildren.has(proj.root)) return { ok: false, output: 'an upgrade run is already live' };
+  const run = bootstrapRunOf(proj.root);
+  if (run?.state === 'running') return { ok: false, output: 'an upgrade run is already live' };
+  if (run?.state === 'pr' && run.hash === bs.hash && run.prState !== 'CLOSED' && run.prState !== 'MERGED')
+    return { ok: false, output: `upgrade PR #${run.pr?.number} is open` };
+  const lock = bootstrapLockFile(proj.root);
+  if (existsSync(lock)) {
+    let text = '', age = 0;
+    try { text = readFileSync(lock, 'utf8').trim(); age = Date.now() - statSync(lock).mtimeMs; } catch {}
+    const pid = /^\d+$/.test(text) ? Number(text) : null;
+    const stale = pid ? pidGone(pid) || age > BOOTSTRAP_RUN_MAX_MS : age > 60000;
+    if (!stale) return { ok: false, output: 'an upgrade run is already live' };
+    try { unlinkSync(lock); } catch {}
+  }
+  let fd = null;
+  try {
+    mkdirSync(path.dirname(lock), { recursive: true });
+    fd = openSync(path.join(path.dirname(lock), 'bootstrap-upgrade.log'), 'a');
+    const args = [path.join(BOOTSTRAP_SKILL, 'scripts/upgrade-run.mjs'), proj.root];
+    const argv = process.platform === 'darwin'
+      ? ['caffeinate', ['-i', process.execPath, ...args]]   // keep the mac awake while it runs
+      : [process.execPath, args];
+    const child = spawn(argv[0], argv[1], { cwd: proj.root, env: ENV, detached: true, stdio: ['ignore', fd, fd] });
+    child.on('error', (e) => { bootstrapChildren.delete(proj.root); console.error(`bootstrap upgrade of ${proj.name}: ${e.message}`); });
+    child.unref();
+    if (!child.pid) return { ok: false, output: 'the upgrade run could not start' };
+    bootstrapChildren.set(proj.root, child);
+    child.on('exit', () => { if (bootstrapChildren.get(proj.root) === child) bootstrapChildren.delete(proj.root); });
+  } catch (e) {
+    return { ok: false, output: 'the upgrade run could not start: ' + e.message };
+  } finally {
+    // the child holds its own copy; a spawn that throws must not leak it
+    if (fd != null) try { closeSync(fd); } catch {}
+  }
+  return { ok: true };
 };
 
 // What a repo needs before its plans can be launched from here. Every failing check
@@ -3290,6 +3364,10 @@ const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: 'no valid plans' });
         launchPipeline(proj, b.items);
         return json(res, 200, { ok: true });
+      }
+      if (url.pathname === '/api/bootstrap-upgrade') {
+        if (!proj) return json(res, 400, { error: 'unknown project' });
+        return json(res, 200, bootstrapUpgrade(proj));
       }
       if (url.pathname === '/api/registry') {
         if (!Array.isArray(b.projects)) return json(res, 400, { error: 'bad registry' });

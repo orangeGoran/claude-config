@@ -1597,3 +1597,195 @@ test('docs-media copies a dashboard that starts and serves the page, without the
     if (madeNodeModules) rmSync(nodeModules, { recursive: true, force: true });
   }
 });
+
+// ---------- the unattended bootstrap upgrade (skills/bootstrap-project/scripts/upgrade-run.mjs) ----------
+
+const deadPid = async () => {
+  const c = spawn(process.execPath, ['-e', '']);
+  await new Promise((r) => c.once('exit', r));
+  return c.pid;
+};
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+test('the upgrade run status shows in /api/state, and a running run whose PID is gone shows as failed', async () => {
+  const runs = path.join(repo, '.plans', 'auto-runs'), file = path.join(runs, 'bootstrap-upgrade.json');
+  mkdirSync(runs, { recursive: true });
+  try {
+    writeFileSync(file, JSON.stringify({ state: 'pr', hash: 'abc', branch: 'auto/bootstrap-upgrade-abc',
+      pr: { number: 41, url: 'https://github.com/o/r/pull/41' } }));
+    const demo = (await state()).find((p) => p.name === 'demo');
+    assert.equal(demo.bootstrapRun.pr.number, 41);
+    assert.equal(demo.bootstrapRun.state, 'pr');
+    assert.ok('bootstrapHash' in demo);
+    const pid = await deadPid();
+    writeFileSync(file, JSON.stringify({ state: 'running', step: 'claude', pid }));
+    const run = (await state()).find((p) => p.name === 'demo').bootstrapRun;
+    assert.equal(run.state, 'failed');
+    assert.match(run.error, new RegExp(`pid ${pid} is gone`));
+    // a live PID in a run that started 3 hours ago is another process that reused the number
+    writeFileSync(file, JSON.stringify({ state: 'running', step: 'claude', pid: process.pid, startedAt: new Date(Date.now() - 3 * 3600e3).toISOString() }));
+    const old = (await state()).find((p) => p.name === 'demo').bootstrapRun;
+    assert.equal(old.state, 'failed');
+    assert.match(old.error, /more than 2 hours ago/);
+    writeFileSync(file, JSON.stringify({ state: 'running', step: 'claude', pid: process.pid, startedAt: new Date().toISOString() }));
+    assert.equal((await state()).find((p) => p.name === 'demo').bootstrapRun.state, 'running');
+    // the demo repo is shared with other tests: remove only the status file
+  } finally { rmSync(file, { force: true }); }
+});
+
+test('POST /api/bootstrap-upgrade refuses a project with nothing to upgrade, an unknown project and another site', async () => {
+  const r = await post('/api/bootstrap-upgrade', { project: 'demo' });
+  assert.equal(r.ok, false);
+  assert.match(r.output, /nothing to upgrade/);
+  const unknown = await fetch(`http://127.0.0.1:${port}/api/bootstrap-upgrade`, { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: 'no-such-project' }) });
+  assert.equal(unknown.status, 400);
+  assert.equal(await raw('POST', '/api/bootstrap-upgrade', { Host: `127.0.0.1:${port}`, Origin: 'https://evil.example',
+    'Content-Type': 'text/plain' }, JSON.stringify({ project: 'demo' })), 403);
+});
+
+test('POST /api/bootstrap-upgrade starts a run, removes a stale lock and refuses a live one', async () => {
+  const root = path.join(tmp, 'upgrade-repo');
+  mkdirSync(path.join(root, '.claude'), { recursive: true });
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+  writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'acme-api', private: true }));
+  const example = JSON.parse(readFileSync(path.join(path.dirname(SCRIPT), '../../skills/bootstrap-project/references/bootstrap.example.json'), 'utf8'));
+  example.git.base = 'main';
+  writeFileSync(path.join(root, '.claude/bootstrap.json'), JSON.stringify(example, null, 2));
+  execFileSync(process.execPath, [path.join(path.dirname(SCRIPT), '../../skills/bootstrap-project/scripts/render.mjs'), root,
+    '--stage', path.join(tmp, 'upgrade-stage'), '--apply', 'new'], { stdio: 'ignore' });
+  // one answer changes after the apply: the saved hash no longer matches
+  const params = JSON.parse(readFileSync(path.join(root, '.claude/bootstrap.json'), 'utf8'));
+  params.stack.commands.lint = 'node --check index.mjs';
+  writeFileSync(path.join(root, '.claude/bootstrap.json'), JSON.stringify(params, null, 2) + '\n');
+  const runs = path.join(root, '.plans', 'auto-runs');
+  const lock = path.join(runs, 'bootstrap-upgrade.lock'), file = path.join(runs, 'bootstrap-upgrade.json');
+  const reg = path.join(home, '.claude', 'pipeline-projects.json'), was = readFileSync(reg, 'utf8');
+  writeFileSync(reg, JSON.stringify({ projects: [...JSON.parse(was).projects,
+    { name: 'upgdemo', client: 'Test', root, plansDir: path.join(root, '.plans'), launchers: [] }] }));
+  // the project has no origin, so each run fails at the fetch and ends at once
+  const ran = async (prev) => {
+    for (const end = Date.now() + 10000; Date.now() < end; await sleep(100)) {
+      let s = null;
+      try { s = JSON.parse(readFileSync(file, 'utf8')); } catch {}
+      if (s && s.pid && s.pid !== prev && !pidAlive(s.pid) && s.state !== 'running') return s;
+    }
+    assert.fail('the upgrade run did not end in 10 s');
+  };
+  try {
+    let p;
+    for (const end = Date.now() + 15000; Date.now() < end; await sleep(200)) {
+      p = (await state()).find((x) => x.name === 'upgdemo');
+      if (p && p.bootstrap === 'outdated') break;
+    }
+    assert.equal(p.bootstrap, 'outdated');
+    assert.match(p.bootstrapHash, /^[0-9a-f]{16}$/);
+    assert.equal(existsSync(runs), false, 'no auto-runs folder before the first run');
+    assert.deepEqual(await post('/api/bootstrap-upgrade', { project: 'upgdemo' }), { ok: true });
+    let s = await ran(null);
+    assert.equal(s.state, 'failed');
+    assert.equal(existsSync(path.join(runs, 'bootstrap-upgrade.log')), true);
+
+    // a lock with a dead PID is stale: removed, and the run starts
+    writeFileSync(lock, String(await deadPid()));
+    assert.deepEqual(await post('/api/bootstrap-upgrade', { project: 'upgdemo' }), { ok: true });
+    s = await ran(s.pid);
+    // a lock of a live process, and an empty young lock, are live
+    writeFileSync(lock, String(process.pid));
+    assert.match((await post('/api/bootstrap-upgrade', { project: 'upgdemo' })).output, /already live/);
+    writeFileSync(lock, '');
+    assert.match((await post('/api/bootstrap-upgrade', { project: 'upgdemo' })).output, /already live/);
+    // an empty lock older than 60 s is stale
+    const old = (Date.now() - 120000) / 1000;
+    utimesSync(lock, old, old);
+    assert.deepEqual(await post('/api/bootstrap-upgrade', { project: 'upgdemo' }), { ok: true });
+    s = await ran(s.pid);
+    // a live PID in a lock older than 2 hours is a reused number: stale
+    writeFileSync(lock, String(process.pid));
+    const veryOld = (Date.now() - 3 * 3600e3) / 1000;
+    utimesSync(lock, veryOld, veryOld);
+    assert.deepEqual(await post('/api/bootstrap-upgrade', { project: 'upgdemo' }), { ok: true });
+    s = await ran(s.pid);
+    // two clicks at once, before the child takes its lock: only one starts a run
+    const both = await Promise.all([post('/api/bootstrap-upgrade', { project: 'upgdemo' }), post('/api/bootstrap-upgrade', { project: 'upgdemo' })]);
+    assert.equal(both.filter((x) => x.ok).length, 1, JSON.stringify(both));
+    assert.match(both.find((x) => !x.ok).output, /already live/);
+    s = await ran(s.pid);
+    // after the child exits, a click starts a run again
+    for (const end = Date.now() + 5000; Date.now() < end; await sleep(100)) {
+      const r = await post('/api/bootstrap-upgrade', { project: 'upgdemo' });
+      if (r.ok) break;
+    }
+    s = await ran(s.pid);
+    // a running status with a live PID refuses a second run
+    writeFileSync(file, JSON.stringify({ state: 'running', step: 'claude', pid: process.pid }));
+    assert.equal(existsSync(lock), false);
+    const r = await post('/api/bootstrap-upgrade', { project: 'upgdemo' });
+    assert.equal(r.ok, false);
+    assert.match(r.output, /already live/);
+    assert.equal((await state()).find((x) => x.name === 'upgdemo').bootstrapRun.state, 'running');
+    // the refusal came from the status file: the same status, failed, lets a click start a run
+    writeFileSync(file, JSON.stringify({ state: 'failed', step: 'claude', pid: process.pid }));
+    assert.deepEqual(await post('/api/bootstrap-upgrade', { project: 'upgdemo' }), { ok: true });
+    s = await ran(process.pid);
+    // an open upgrade PR for the hash the templates make now refuses a new run
+    writeFileSync(file, JSON.stringify({ state: 'pr', hash: p.bootstrapHash, branch: `auto/bootstrap-upgrade-${p.bootstrapHash}`,
+      pr: { number: 41, url: 'https://github.com/o/r/pull/41' } }));
+    const open = await post('/api/bootstrap-upgrade', { project: 'upgdemo' });
+    assert.equal(open.ok, false);
+    assert.match(open.output, /upgrade PR #41 is open/);
+    // a PR for an older hash does not: the templates changed since
+    writeFileSync(file, JSON.stringify({ state: 'pr', hash: '0000000000000000', branch: 'auto/bootstrap-upgrade-0000000000000000',
+      pr: { number: 40, url: 'https://github.com/o/r/pull/40' } }));
+    assert.deepEqual(await post('/api/bootstrap-upgrade', { project: 'upgdemo' }), { ok: true });
+    await ran(process.pid);
+  } finally { writeFileSync(reg, was); }
+});
+
+test("the dashboard's own repo has no upgrade run: no run fields, and POST refuses", async () => {
+  const root = path.resolve(path.dirname(SCRIPT), '..', '..');
+  const reg = path.join(home, '.claude', 'pipeline-projects.json'), was = readFileSync(reg, 'utf8');
+  writeFileSync(reg, JSON.stringify({ projects: [...JSON.parse(was).projects,
+    { name: 'dashself', client: 'Test', root, plansDir: path.join(root, '.plans'), launchers: [] }] }));
+  try {
+    const p = (await state()).find((x) => x.name === 'dashself');
+    assert.equal(p.bootstrapRun, null);
+    assert.equal(p.bootstrapHash, null);
+    const r = await post('/api/bootstrap-upgrade', { project: 'dashself' });
+    assert.equal(r.ok, false);
+    assert.match(r.output, /this dashboard repo has no bootstrap upgrade/);
+  } finally { writeFileSync(reg, was); }
+});
+
+// the page's bootstrapUpgradeChip() from app.js, with its escape helpers
+const upgradeChip = (() => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
+  const body = [pick(/^const esc = .*$/m), pick(/^const escA = .*$/m),
+    pick(/^function bootstrapUpgradeChip\(project, sp\) \{[\s\S]*?\n\}$/m)].join('\n');
+  return new Function(body + '\nreturn bootstrapUpgradeChip;')();
+})();
+
+test('the page: the upgrade chip shows the run state, and only an open PR for the current hash', () => {
+  const sp = (run) => ({ bootstrap: 'outdated', bootstrapHash: 'abc', bootstrapRun: run });
+  const pr = (extra) => ({ state: 'pr', hash: 'abc', pr: { number: 41, url: 'https://github.com/o/r/pull/41' }, ...extra });
+  assert.match(upgradeChip('acme', sp(null)), /data-bsupgrade="acme"[^>]*>bootstrap update ▶</);
+  assert.match(upgradeChip('acme', sp({ state: 'running', step: 'claude' })), />upgrading…</);
+  assert.ok(!/data-bsupgrade/.test(upgradeChip('acme', sp({ state: 'running' }))), 'a live run has no click');
+  const open = upgradeChip('acme', sp(pr()));
+  assert.match(open, /href="https:\/\/github\.com\/o\/r\/pull\/41"[^>]*>upgrade PR #41</);
+  for (const other of [pr({ prState: 'CLOSED' }), pr({ hash: 'old' }), pr({ hash: 'old', prState: 'MERGED' })])
+    assert.match(upgradeChip('acme', sp(other)), />bootstrap update ▶</, JSON.stringify(other));
+  // merged on GitHub but not pulled yet: no click, a run would fail at the answers check
+  const merged = upgradeChip('acme', sp(pr({ prState: 'MERGED' })));
+  assert.match(merged, />upgrade merged — pull</);
+  assert.ok(!/data-bsupgrade/.test(merged), 'no click before the pull');
+  const failed = upgradeChip('acme', sp({ state: 'failed', error: 'git fetch "origin" <failed>' }));
+  assert.match(failed, /data-bsupgrade="acme"[^>]*>upgrade failed</);
+  assert.match(failed, /title="git fetch &quot;origin&quot; &lt;failed&gt; — click to start again"/);
+});
+
+test('the page: an outdated project with no GitHub origin keeps the copy-prompt chip', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  assert.match(src, /sp\.bootstrap === 'outdated' && sp\.issuesUrl \? bootstrapUpgradeChip\(pr, sp\)/);
+});
