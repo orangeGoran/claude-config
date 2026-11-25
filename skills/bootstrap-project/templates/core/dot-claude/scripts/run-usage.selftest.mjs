@@ -320,7 +320,7 @@ test('the cross-check line sums total_cost_usd per stream; the thinking-token ca
     init(S1, 2),
     result({ min: 3, models: { 'model-b': { costUSD: 0.4, thinkingTokens: 2 } }, total: 0.4 }),
   ], dir);
-  assert.match(r.text, /^cross-check \(last total_cost_usd of each stream, summed\): 1\.00$/m);
+  assert.match(r.text, /^cross-check \(total_cost_usd of each stream, summed; a resumed session adds only its new cost\): 1\.00$/m);
   assert.match(r.text, /thinking tokens of the whole run \(result lines\): 42\./);
   rmSync(dir, { recursive: true, force: true });
 });
@@ -376,6 +376,26 @@ test('an unattributed row keeps the total minutes; --projects-dir without a fold
   const noDir = runCli([log, '--projects-dir']);
   assert.equal(noDir.status, 1);
   assert.match(noDir.stderr, /--projects-dir needs a folder/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('a resumed session continues its running total: the cross-check adds only the new cost of each resume', () => {
+  const dir = tmp();
+  // one session, resumed three times; total_cost_usd keeps counting across the resumes
+  const r = analyze([
+    init(S1, 0),
+    asst({ id: 'msg-1', min: 0, inp: 1, tools: [skill('skill-2-implement')] }),
+    result({ min: 1, models: cost(8.74), total: 8.74 }),
+    init(S1, 2),
+    result({ min: 3, models: cost(3.36), total: 12.10 }),
+    init(S1, 4),
+    result({ min: 5, models: cost(10.59), total: 22.69 }),
+    result({ min: 6, total: 22.69 }),
+    init(S1, 7),
+    result({ min: 8, models: cost(0.25), total: 22.94 }),
+  ], dir);
+  assert.match(r.text, /^total cost: 22\.94$/m);
+  assert.match(r.text, /a resumed session adds only its new cost\): 22\.94$/m);
   rmSync(dir, { recursive: true, force: true });
 });
 
