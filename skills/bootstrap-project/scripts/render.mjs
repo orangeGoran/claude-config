@@ -189,7 +189,7 @@ export const moduleOn = (p, m) => p.modules?.[m] !== false;
 
 // What each module does for the owner, in plain words (the "not used" list of the hand-off)
 const MODULE_INFO = {
-  codex: 'Codex checks the plan a second time with another AI, and the finished code once in the decision sheet (.codex/skills/validate-plan, validate-implementation)',
+  codex: 'Codex checks the plan a second time with another AI, and the finished code in each verify round (unless pipeline.codexInVerify is false) (.codex/skills/validate-plan, validate-implementation)',
   changelog: 'a changelog entry for each PR, the changelog-entry skill and a GitHub check that blocks a PR without an entry (changelog.d/)',
   'decision-sheet': 'a PR decision sheet: at most 5 yes/no questions only a person can answer, plus what the machines already checked',
   'test-review': 'an independent review of the tests of a change, with revert checks (test-review skill, test-reviewer agent)',
@@ -231,7 +231,7 @@ export function unusedParts(p, repo = null) {
   }
   const t = p.git?.tickets || {};
   if (t.evidence !== true) out.push({ group: 'setting', key: 'tickets.evidence', what: 'a comment with the run evidence on the GitHub issue of each PR', turnOn: 'git.tickets.evidence = true' });
-  if (moduleOn(p, 'codex') && p.pipeline?.codexInVerify !== true) {
+  if (moduleOn(p, 'codex') && p.pipeline?.codexInVerify === false) {
     out.push({ group: 'setting', key: 'codexInVerify', what: 'a Codex review in each verify round, next to the Claude code review (more tokens per run)', turnOn: 'pipeline.codexInVerify = true' });
   }
   if (!t.board) out.push({ group: 'setting', key: 'tickets.board', what: 'move the issue to a status on a GitHub project board when the PR opens', turnOn: 'git.tickets.board = {owner, number, status}' });
@@ -661,8 +661,8 @@ export function buildVars(p, now = new Date()) {
     HAS_CONTRACTS: Boolean(contractSource),
     CONTRACT_IN_RULES: contractInRules,
     MOD_CODEX: moduleOn(p, 'codex'),
-    // Codex in the verify bug hunt; plan validation and the decision sheet use MOD_CODEX
-    CODEX_IN_VERIFY: moduleOn(p, 'codex') && p.pipeline?.codexInVerify === true,
+    // Codex in the verify bug hunt (on unless pipeline.codexInVerify is false); plan validation and the decision sheet use MOD_CODEX
+    CODEX_IN_VERIFY: moduleOn(p, 'codex') && p.pipeline?.codexInVerify !== false,
     MOD_CHANGELOG: moduleOn(p, 'changelog'),
     // the rendered validator always accepts `summary`; a project validator
     // (changelog.validateCmd) has its own field list, so it says so with changelog.summary
