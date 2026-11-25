@@ -202,6 +202,16 @@ The PR's state, **↗ GitHub** and the next step (**Ready for review** for a dra
 
 Everything goes through the `gh` CLI, so it must be installed and logged in. The guide's first step shows a **GitHub CLI** row with the fix when it is not, and a plan in a GitHub repo says why its PRs are not shown. The dashboard checks the list of PRs at most once a minute per project; **⟳** in the PR bar reads the PR, its checks and its diff again right away (for example after a push). PRs on other branches (for example, a PR that you opened by hand) are not shown.
 
+## Upgrade the scaffolding
+
+When the bootstrap-project templates or a project's answers changed since the last apply, the project header of a GitHub repo shows **bootstrap update ▶** (a repo with no GitHub origin shows **bootstrap update**, which copies the `/bootstrap-project --upgrade` prompt). A click starts `skills/bootstrap-project/scripts/upgrade-run.mjs <repo>` in the background, with no chat. The chip then says **upgrading…**.
+
+The run makes the worktree `../worktrees/<repo>/bootstrap-upgrade-<hash>` on the branch `auto/bootstrap-upgrade-<hash>` from `origin/<base>`. A headless Claude session decides merge, keep or replace for each changed file, in a temp run folder only. The script writes the files, runs `verify.mjs`, makes one commit, pushes the branch and opens a draft PR. The chip then says **upgrade PR #n** and opens the PR. The PR body lists each file, and the items only you can decide as checkboxes.
+
+When a run fails, the chip says **upgrade failed** (hover it for the reason). A click starts again: a failure before the commit leaves nothing behind, and a failure after it continues from the push or the PR. When you closed the upgrade PR on purpose, the run stops and names the commands that delete its branch; after them, a click starts again. A run that was stopped while it wrote the files (for example a restart of the Mac) leaves uncommitted files in its worktree: the next click stops and names the worktree. Look at it, then run `git worktree remove --force <worktree>`. After the merge on GitHub, the chip says **upgrade merged — pull** until you pull the main checkout. When the templates change while an upgrade PR is open, the next run opens a new PR whose body asks you to close the older one.
+
+After the merge, run `git pull`, then `bash .claude/scripts/auto-pipeline.sh --cleanup bootstrap-upgrade-<hash>`. When it cannot delete the branch after a squash merge, run `git branch -D auto/bootstrap-upgrade-<hash>`. The log is `.plans/auto-runs/bootstrap-upgrade.log` in the repo, and the status is `.plans/auto-runs/bootstrap-upgrade.json`.
+
 ## Chat with the agent
 
 **💬 Chat** (next to the tabs) opens a chat panel on the right of Files changed and the plan. It works like the Claude Code panel in VS Code. The panel talks to the Claude session that ran the plan, in the plan's own folder (its worktree, or the repo root for a generic project), so the agent has its whole history: the plan, the files it read and what it decided. Ask why it did something, or tell it to do something, for example "merge develop into this branch". The panel stays open when you change files or tabs. Drag its left edge to resize it (double-click puts it back). This browser remembers whether it is open and how wide it is.

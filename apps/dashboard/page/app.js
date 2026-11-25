@@ -512,6 +512,8 @@ function renderList() {
           ' in VS Code" aria-label="Open in VS Code">' + VSCODE_SVG + '</button>' + runBadges +
         (sp.setupLevel === 'red' ? '<span class="chip bad x" data-guide="' + escA(sp.root) +
           '" title="something required is missing — see what and how to fix it">needs setup</span>'
+          // the unattended upgrade ends in a GitHub PR: a repo with no GitHub origin keeps the copy-prompt chip
+          : sp.bootstrap === 'outdated' && sp.issuesUrl ? bootstrapUpgradeChip(pr, sp)
           : sp.bootstrap ? '<span class="chip warn x" data-bscopy="' + escA(sp.bootstrapPrompt || '') + '" title="' +
             (sp.bootstrap === 'missing' ? 'never set up with /bootstrap-project'
               : sp.bootstrap === 'error' ? 'render.mjs could not check .claude/bootstrap.json'
@@ -540,6 +542,15 @@ function renderList() {
       el.textContent = ok ? '✓ copied' : 'copy failed';
       setTimeout(() => { el.textContent = was; }, 1400);
     }));
+  byId('side').querySelectorAll('[data-bsupgrade]').forEach((el) =>
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      el.textContent = 'starting…';
+      await post('/api/bootstrap-upgrade', { project: el.dataset.bsupgrade }, true);
+    }));
+  // the PR link opens in a new tab; the click must not fold the project card
+  byId('side').querySelectorAll('[data-bspr]').forEach((el) =>
+    el.addEventListener('click', (e) => e.stopPropagation()));
   byId('side').querySelectorAll('[data-suggest]').forEach((el) =>
     el.addEventListener('click', (e) => { e.stopPropagation(); openSuggest(el.dataset.suggest); }));
   byId('side').querySelectorAll('[data-pull]').forEach((el) =>
@@ -3187,6 +3198,24 @@ async function openLauncherSetup(projName, back) {
 }
 // --- settings panel: edit the project registry from the app ---
 const escA = (x) => esc(x).replace(/"/g, '&quot;');
+// the "bootstrap update" chip of an outdated project: it starts the unattended upgrade
+// (POST /api/bootstrap-upgrade) and then shows the state of that run
+function bootstrapUpgradeChip(project, sp) {
+  const run = sp.bootstrapRun || null;
+  if (run && run.state === 'running')
+    return '<span class="chip warn" title="the upgrade runs in a worktree (step ' + escA(run.step || '') + ')">upgrading…</span>';
+  if (run && run.state === 'pr' && run.pr && run.hash === sp.bootstrapHash && run.prState !== 'CLOSED' && run.prState !== 'MERGED')
+    return '<a class="chip warn x" data-bspr="1" href="' + escA(run.pr.url) + '" target="_blank" rel="noopener" title="open the draft PR of the upgrade">upgrade PR #' +
+      esc(String(run.pr.number)) + '</a>';
+  // merged on GitHub, not pulled yet: a new run would fail ("push or pull .claude/bootstrap.json first")
+  if (run && run.state === 'pr' && run.pr && run.hash === sp.bootstrapHash && run.prState === 'MERGED')
+    return '<span class="chip warn" title="upgrade PR #' + escA(String(run.pr.number)) +
+      ' is merged: pull the main checkout (📥 Pull)">upgrade merged — pull</span>';
+  if (run && run.state === 'failed')
+    return '<span class="chip bad x" data-bsupgrade="' + escA(project) + '" title="' + escA(run.error || 'the upgrade failed') +
+      ' — click to start again">upgrade failed</span>';
+  return '<span class="chip warn x" data-bsupgrade="' + escA(project) + '" title="upgrade in a worktree and open a draft PR">bootstrap update ▶</span>';
+}
 async function openSettings() {
   logKey = null;
   setBack(null);

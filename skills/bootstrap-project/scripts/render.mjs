@@ -323,11 +323,14 @@ export function mergeLimits(limits, tmpl) {
   return lines;
 }
 
+/** Gives the base branch of the answers: `git.base`, or `develop` when it is not set. */
+export const baseBranch = (p) => str(p?.git?.base, 'develop');
+
 /** Turns the interview answers into the placeholder values. */
 export function buildVars(p, now = new Date()) {
   const pr = p.project, g = p.git || {}, st = p.stack || {}, r = p.rules || {}, ly = p.layout || {};
   const cmd = st.commands || {};
-  const base = str(g.base, 'develop'), prod = str(g.prod, 'main'), staging = str(g.staging);
+  const base = baseBranch(p), prod = str(g.prod, 'main'), staging = str(g.staging);
   // details: the project's own checks for a rule (what to look for, which values pass);
   // tests: the tests a change that touches the rule must have. Both are kept on every
   // re-render, so project text never needs a hand merge.
@@ -750,7 +753,8 @@ function walk(dir, rel = '') {
   });
 }
 
-const isExecutable = (p) => /^\.claude\/scripts\/.*\.(sh|mjs)$/.test(p);
+/** Gives true when the repo path is a script in .claude/scripts/ (.sh or .mjs) that must be executable. */
+export const isExecutable = (p) => /^\.claude\/scripts\/.*\.(sh|mjs)$/.test(p);
 
 /** Renders every enabled template. Returns [{ path, content, kind }]. */
 export function renderAll(params, { upgrade = false, now = new Date(), repo = null } = {}) {

@@ -123,6 +123,30 @@ The dashboard's "⚡ All" refuses until every registered project has this script
 | `registry.{dashboard,color,browserTest,role,appUrl}` | mixed | no | Registrations. `browserTest: true` with a role other than `backend` and an `appUrl` (the app the owner runs, the "old code" side) also turns on the browser-test step (`skill-1-plan` section, `skill-3-test` Step 2.5), the ship gate (`skill-5-ship` Step 5.5), the run allow rules for the skill's scripts by full path (`$HOME`, expanded by bash) and `curl -s -o /dev/null -w *`, and the profile check of the launch preflight. Without `appUrl` all of it stays off |
 | `renderHash` | string | no | Written by `render.mjs --apply`, never by hand: a fingerprint of the template output for these answers. The plans dashboard compares it with `render.mjs --status` and shows "bootstrap update" when the templates or the answers changed since the last apply. Missing = the dashboard counts the files that differ instead |
 
+## Upgrade run status
+
+`scripts/upgrade-run.mjs <repo>` writes these files in `<repo>/.plans/auto-runs/` (gitignored). The plans dashboard reads them.
+
+- `bootstrap-upgrade.lock`: one line `<pid>`, made with `openSync(…, 'wx')`. Only the lock holder writes the status file. The script removes only its own lock. The dashboard removes a stale lock (a dead PID, a PID in a lock older than 2 hours, or a file with no PID that is older than 60 s) right before it starts a run.
+- `bootstrap-upgrade.json`: the run status, `{ state, step, hash, base, branch, worktree, runDir, pid, pr, error, startedAt, endedAt, replaces }`.
+  - `replaces`: `{ number, hash }` of the PR of an earlier run, or `null`. A run keeps it across failed runs; a PR for another hash gets the owner checkbox "close #<number> without a merge".
+  - `state`: `running` | `pr` | `committed` | `same` | `failed`.
+  - `step`: the last step that started: `prepare`, `render`, `claude`, `apply`, `verify`, `commit`, `push`, `pr`.
+  - `pr`: `{ number, url }` or `null`. `error`: redacted, at most 500 characters; a failure in the render to commit steps starts with the run folder path. In state `pr`, `error` is `null`, or a note when the owner must add the label `no-changelog` by hand (gh could not add it, and could not put the checkbox into the PR body).
+- `bootstrap-upgrade-pr-body-<hash>.md`: the PR body, one file per hash, written right before the commit. Its first line is `<!-- bootstrap-upgrade <hash> -->`. A resumed run uses it only for the same hash. The text from Claude is redacted.
+- `bootstrap-upgrade.log`: the output of the script and of the Claude session.
+- The worktree is `<parent of repo>/worktrees/<repo name>/bootstrap-upgrade-<hash>` on the branch `auto/bootstrap-upgrade-<hash>`, so `auto-pipeline.sh --cleanup bootstrap-upgrade-<hash>` removes it after the merge.
+- The dashboard adds `bootstrapRun` (this status, with `prState` from its PR cache for state `pr`, and `failed` for a `running` run whose PID is gone or that started more than 2 hours ago) and `bootstrapHash` (the `--status` hash) to each project in `/api/state`. `POST /api/bootstrap-upgrade { project }` starts a run.
+
+## Upgrade task and decisions
+
+The run folder (`runDir`, a temp folder) is the only working folder of the Claude session. It holds only `task.json`, `current/<n>`, `stage/<n>`, `refs/unattended.md`, `refs/lessons.md`, and what Claude writes: `merged/<n>` and `decisions.json`. `<n>` is the 1-based index of the file in `task.json` `changed`. The render stages stay in a separate work folder that Claude does not see.
+
+- `task.json` (written by the script): `{ changed: [{ n, path, current: 'current/<n>', stage: 'stage/<n>', merged: 'merged/<n>', note, diff }], orphans: [path] }`. All its paths are relative to the run folder; `path` is the repo path.
+- Before the Claude session, the script stops the run when a file it would write (changed, new or merge) is a symlink or lies under a symlinked folder: a write through a symlink can land outside the worktree.
+- `decisions.json` (written by Claude): `{ files: [{ path, decision: 'merge' | 'keep' | 'replace', added: [string], kept: [string], dropped: [string] }], templateUpdates: [{ path, feature, why }], questions: [string] }`.
+- The script refuses the decisions (and writes nothing) when the file is missing or not JSON, the `files` paths are not exactly the `changed` paths, a decision is unknown, `merged/` or a `merged/<n>` is a symlink, a `merge` entry has no `merged/<n>`, `merged/` holds another file, or a merged file has a `@@NAME@@` placeholder.
+
 ## Template syntax
 
 Only in `templates/`. `render.mjs` fails on an unknown name, an unclosed block, or any leftover `@@…@@` in the output.
