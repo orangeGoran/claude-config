@@ -1028,11 +1028,13 @@ try { diffFull = localStorage.getItem('dash-diff-full') !== '0'; } catch {}
 // Without inBar: the switch row of a plan with no PR
 const prTabs = (p, tab, inBar) => !p.pr && !hasChat(p) ? '' : '<div class="prtabs">' + [
   // the plan and its PR are one tab; in the review bar it is the way back, beside ‹ Plan
-  (!inBar || p.pr) && ['plan', (p.kind === 'wt' ? 'Worktree' : 'Plan') + (p.pr ? ' · PR <span class="n">#' + p.pr.number + '</span>' : '')],
-  p.pr && ['files', 'Files changed' + ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
+  // short labels ("Plan #292", "Files 50"); the hover title keeps the full meaning
+  (!inBar || p.pr) && ['plan', (p.kind === 'wt' ? 'Worktree' : 'Plan') + (p.pr ? ' <span class="n">#' + p.pr.number + '</span>' : ''),
+    (p.kind === 'wt' ? 'Worktree' : 'Plan') + (p.pr ? ' and PR #' + p.pr.number : '')],
+  p.pr && ['files', 'Files' + ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
     prData[p.key] && prData[p.key].changedFiles != null ? prData[p.key].changedFiles
-      : prDiff[p.key] && prDiff[p.key].files ? prDiff[p.key].files.length : null)],
-].filter(Boolean).map(([id, label]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '">' + label + '</button>').join('') + '</div>';
+      : prDiff[p.key] && prDiff[p.key].files ? prDiff[p.key].files.length : null), 'Files changed in the PR'],
+].filter(Boolean).map(([id, label, title]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '" title="' + title + '">' + label + '</button>').join('') + '</div>';
 // the same switch in the main header, so the plan view has it where Files changed has it
 function drawHdTabs(p) {
   setSelTitle(p);
@@ -1040,7 +1042,7 @@ function drawHdTabs(p) {
   if (!h) return;
   // an open plan with no PR gets the switch greyed out: its place in the row stays filled, and the tabs do not move
   h.innerHTML = p && p.pr ? prTabs(p, 'plan', 'hd') : p ? '<div class="prtabs off" title="No PR yet: Files changed opens when the plan has a PR">' +
-    '<button class="on" disabled>' + (p.kind === 'wt' ? 'Worktree' : 'Plan') + ' · no PR</button><button disabled>Files changed</button></div>' : '';
+    '<button class="on" disabled>' + (p.kind === 'wt' ? 'Worktree' : 'Plan') + '</button><button disabled>Files</button></div>' : '';
   h.querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => {
     prTab[p.key] = el.dataset.tab; lastPrDraw = null; renderDetail(false);
   }));
