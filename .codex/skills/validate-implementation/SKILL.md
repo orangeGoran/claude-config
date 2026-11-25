@@ -17,8 +17,9 @@ Optional: a plan file path under `.plans/` and a base ref. The default base is `
    - `git diff <base>...HEAD`
    - `git diff`
    - `git diff --cached`
+   - `git ls-files --others --exclude-standard`
 
-   If the current branch is the base branch, review only the uncommitted changes.
+   Read each untracked file it lists in full: before the pipeline's commit, a new file of the plan is untracked, and the diffs above do not show it. If the current branch is the base branch, review only the uncommitted changes.
 2. **The plan (context):** the given plan file, else the most recently modified `.plans/*.md` (not in `.plans/done/`, `.plans/.validations/` or `.plans/.workflow-state/`). If no plan matches the diff, say so and review the diff by itself.
 
 Say which base and which plan you use before you continue.
@@ -61,6 +62,7 @@ A finding is each place where the code breaks or skips one of these rules:
 ### Discrepancies
 - The code differs from the plan or from the files of its **Reference implementation** section: deviations without a reason, renamed fields, dropped steps.
 - Registration gaps: a new module, entity, route or event that is not added to the place where the project registers it (the plan's **Wiring & registration** section, `AGENTS.md`).
+- HTTP setup (a global pipe, filter, guard, middleware, prefix or CSRF check) changed in one caller, for example in one test or one entry point, instead of in the shared app setup that the server and the tests both use.
 
 ### Performance
 - N+1 queries: a query inside a loop where one query with `IN (...)` or a join is enough.
@@ -75,6 +77,8 @@ A finding is each place where the code breaks or skips one of these rules:
 ### Tests
 - Changed behavior without a test; a test that checks the mock and not the behavior; old names in test helpers or seeds.
 - An expected result or UI text that comes from what the app shows, not from the spec or the plan.
+- A test file that uses the runner's globals (`describe`, `it`, `expect`, mocks) without an import, when the project imports them explicitly in each test folder.
+- An end-to-end test that builds its own app instead of the shared test-app helper, so it skips the shared HTTP setup.
 - Use made-up test data only. Never put real customer data, real names, real addresses or real secrets in a test or a fixture. Example: `"Ana Example"`, `ana@example.test`, a fake key `sk-test-0000`.
 
 ### Release note

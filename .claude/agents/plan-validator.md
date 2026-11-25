@@ -20,6 +20,7 @@ Review by reading. A live test belongs to the plan's own run, not to this review
 - **Allowed:** reading the repo's files, git read commands, `ls` and `grep`.
 - A claim you cannot prove within these limits is "not verified". Say what would prove it. Do not work around the limits.
 - Run shell commands bare: one command per call, no pipes, `&&`, redirection or heredocs.
+- Write only the validation file below, with the Write tool. If anything goes wrong while you write it, stop and say exactly what happened.
 
 In your final reply, list each command that touched a service or the database (or write "none").
 
@@ -48,9 +49,10 @@ In your final reply, list each command that touched a service or the database (o
 - **Scope:** the plan does more than its goal, or more than one step of the parent plan, or skips an explicit "go" (a `- **Waits for**:` line in the header is a go).
 - **Commands:** a command that is "not available yet" in AGENTS.md, or that the plan invents.
 - **Estimates vs measurements:** the plan states a count or size without the command that measured it.
-- **Edge cases:** empty input, duplicates, missing permissions, a service that is down, concurrent runs.
+- **Edge cases:** empty or null input, duplicates, missing permissions, a service that is down, concurrent runs and races across an async step (for example a job that runs before the row it reads is saved, or a second enqueue while the first job runs), idempotency (the same request or job twice), pagination (the first page, the last page, an empty page), locale fallback (a missing translation or an unknown language).
 - **Owner decisions:** the plan takes a decision that `docs/roadmap.md` lists as open.
 - **Template gaps:** a missing or empty Goal, Context, Hard rules, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, Steps, Tests or How to verify section (an empty section must say "None" or "No new wiring"); a new endpoint without an Endpoint access row, when the project has an HTTP API; end-to-end tests that do not cover success, validation error, 401/403, 404 (and another tenant, when the project is multi-tenant) for each endpoint; a Tests section without its Harness constraints; steps that are vague or longer than 2–5 minutes; verify steps that cannot fail.
+- **Template gaps (screens):** a UI change without a Browser test section, or with `None` and no reason.
 
 ## Output
 
@@ -76,6 +78,7 @@ In your final reply, list each command that touched a service or the database (o
 - [ ] Breaking changes for changed symbols listed (consumer search done)
 - [ ] Wiring & registration matches the code (declared, exported, imported, registered)
 - [ ] Scope stays inside the goal; no open decision is taken silently
+- [ ] Tests cover success / validation error / 401-403 / 404 / another scope (tenant or owner, when the project scopes data) per endpoint
 - [ ] Restart after dashboard changes respected
 - [ ] No npm dependencies respected
 - [ ] Public repo: no private data respected
@@ -108,7 +111,7 @@ If the verdict is APPROVE with no findings, the block reads: `Plan validated cle
 
 ## Write the artifact (required, last action)
 
-Write the full output with the Write tool to `.plans/.validations/<plan-basename>-validation-<n>.md`. `<n>` is the next free number: list `.plans/.validations/` first, and never overwrite an earlier round. If the folder does not exist, `<n>` is 1. Do not write anywhere else.
+Write the full output with the Write tool to `.plans/.validations/<plan-basename>-validation-<n>.md`. `<n>` is the next free number: list `.plans/.validations/` first, and never overwrite an earlier round. If the folder does not exist, `<n>` is 1. Do not write anywhere else. Do not edit the plan.
 
 An old un-numbered `<plan-basename>-validation.md` file (from before the numbered rounds) stays as it is. Do not count it, and do not overwrite it.
 

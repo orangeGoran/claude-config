@@ -1,7 +1,7 @@
 ---
 name: skill-2-implement
 description: Implement one saved .plans/ plan in this repository step by step — production code and its unit tests together, with a scoped test run after each step — update the registration points, run lint and the related checks with the repo's real commands, and end with a short summary. Use when given a plan file path; also called by /skill-auto-pipeline. It never commits.
-argument-hint: "<plan file>"
+argument-hint: "<plan file> [--unattended]"
 ---
 
 Plan: $ARGUMENTS
@@ -12,11 +12,13 @@ You run the **Implement** step: `/skill-1-plan` → `/skill-2-implement` → `/s
 
 - The first argument is the plan file path. If it is only a name, look for it in `.plans/`.
 - If no plan matches, or the plan is in `.plans/done/`, stop and say so. Do not pick another plan.
+- If `$ARGUMENTS` is empty and the session is interactive, list the plans in `.plans/` (not `.plans/done/`) and let the owner pick one with AskUserQuestion (a trivial pick). No plan exists → tell the owner to run `/skill-1-plan <feature>` first, and stop. A headless run with no argument stops and says so.
 
 ## Step 1: Read the rules
 
 - Root `AGENTS.md` is already in context through `CLAUDE.md`. Follow it, especially **Hard rules**.
-- Read the parts of `docs/roadmap.md` that the plan cites, and the parent plan named in its `- **Parent**:` line when it has one, and every nested `AGENTS.md` in the folders the plan touches.
+- Read the parts of `docs/roadmap.md` that the plan cites, and the parent plan named in its `- **Parent**:` line when it has one.
+- A nested `AGENTS.md` loads by itself when you read a file in its folder and a `CLAUDE.md` with `@AGENTS.md` sits next to it. Before you create a file in a folder where you read no file yet, read one file there (for example a neighbouring test), so its rules load first. Read the `AGENTS.md` itself only when no such `CLAUDE.md` sits next to it, or the folder has no other file.
 
 ## Step 2: Check the plan against the code
 
@@ -31,7 +33,7 @@ For each step, do this loop, then go to the next step:
 
 1. **Code.** Write the production code of the step.
 2. **Unit test.** Write the unit tests for that code, for the cases in the plan's **Tests** section. Follow the specs next to it.
-3. **Scoped run.** Run only the tests of this step (AGENTS.md, **Commands**, "Test (one file)"; when that row is "not available yet", say so once and run "Test (full)" at the end of the plan instead). Never run the full suite here. A failure → fix it before the next step.
+3. **Scoped run.** Run only the tests of this step (AGENTS.md, **Commands**, "Test (one file)"; when that row is "not available yet", say so once and run "Test (full)" at the end of the plan instead (with `--unattended`, skip that run too: `/skill-3-test` Step 3 runs it)). Never run the full suite here. A failure → fix it before the next step.
 
 **What gets unit tests:** code with logic — services and use cases, data access with queries, request handlers and controllers, models with validation or mapping, and UI components and hooks with logic.
 
@@ -42,6 +44,7 @@ Also:
 - Follow existing patterns. The project has no shared contract source yet. When one exists, add it here and take types and enum values only from it.
 - Write doc comments for new public functions as `AGENTS.md` says.
 - After each fix, search sibling code for the same defect, and fix it or report it.
+- Do not change an existing test file unless the plan changes that behavior. If a change is necessary and the plan does not cover it, write it as an open question (Step 6) with what must change and why.
 - Install packages with the package manager at their latest version. Never type a version by hand.
 - If you find something the plan does not cover, do not deviate. Write it as an open question (Step 6) and continue with the steps that do not depend on it.
 
@@ -61,7 +64,7 @@ Some files are lists that many plans append to: a registry of models or modules,
 1. **Lint.** After all code changes, run the "Lint" and "Format" commands (AGENTS.md, **Commands**) on the changed files, then the "Lint (check only)" row when the table has one. **Judge by the exit code and the error count, never by the last lines of the output**; search a long output with the Grep tool for the error marker of the linter. Fix lint errors in the code, never in the lint config. After a lint fix, run the scoped tests of the touched files again.
 2. Run the other checks related to the change (type check, build), from `AGENTS.md`, **Commands**, and `package.json`.
 3. If a check has no command yet ("not available yet"), say so. Do not invent one.
-4. Run every command in the plan's **How to verify** section that this step can run, and record the result.
+4. Run every command in the plan's **How to verify** section that this step can run, and record the result. With `--unattended` (set by `/skill-auto-pipeline`), skip the full "Test (full)" and "Test (end to end)" runs: `/skill-3-test` Step 3 runs them after the test phase changes the tree. Without it, run them.
 5. **Step gate.** When the plan's steps are done and the related checks pass, run `bash .claude/scripts/workflow-complete-step.sh <plan-basename> implement` (`<plan-basename>` without `.md`). The commit guard (`workflow-guard.sh`) reads this mark.
 
 ## Step 5: Never

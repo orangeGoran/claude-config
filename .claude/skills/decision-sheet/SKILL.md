@@ -55,7 +55,7 @@ Skip it with `--no-codex`. Otherwise:
    ```
    Keep `</dev/null` (without it, `codex exec` waits for input forever). A non-zero exit, a timeout, an empty `-o` file, or output that mentions a quota, a usage limit, a rate limit or billing → **Codex OFF** with that reason in a few words (`quota: usage limit until 14:00`).
 3. **Codex OFF never fails this skill.** Record the reason and continue.
-4. Codex ON: check each finding against the code as `/apply-validation` does (VALID / PARTIALLY VALID / INVALID with evidence). With `--fix`, fix the VALID findings (max 1 round), then run the scoped tests and lint for the touched files again (AGENTS.md, Commands; a missing command is "not available yet"). A VALID finding that you did not fix becomes an open item (Step 3, kind 6). Its "Present but not planned" list feeds kind 5.
+4. Codex ON: check each finding against the code as `/apply-validation` does (VALID / PARTIALLY VALID / INVALID with evidence). With `--fix`, fix the VALID findings (max 1 round), then run the scoped tests and lint for the touched files again (AGENTS.md, Commands; a missing command is "not available yet"). A fixed finding is not a question: it is listed on the Codex line with its `file:line`, so the reviewer sees it without a checkbox. Name the files your fixes touched at the end of your output for this skill (the caller reads it; when the pipeline follows this file, continue with its next item), and say whether their scoped tests and lint passed. A VALID finding that you did not fix becomes an open item (Step 3, kind 6). Its "Present but not planned" list feeds kind 5.
 
 ## Step 3 — Pick the questions
 
@@ -111,7 +111,7 @@ Disagree? Untick or comment, then run `/pr-feedback <PR#>`.
 ℹ️ Contract changes: <one short item per change, or "none">
 ✅ Browser test: <rounds>, <n> findings fixed, <n> open; report page <link>
 ⏭ Codex: skipped (<reason>). Run `/pr-feedback <PR#> --codex` to add it later.
-(or, when Codex ran: `✅ Codex: <n> findings fixed, <n> open`, or `✅ Codex: ran in verify, <n> fixed, <n> open`)
+(or, when Codex ran: `✅ Codex: <n> findings fixed (<file:line> — <one-line gist>, …), <n> open`, or `✅ Codex: ran in verify, <n> fixed, <n> open`)
 <!-- decision-sheet:end -->
 ```
 

@@ -1,6 +1,6 @@
 ---
 name: skill-auto-validate-plan
-description: Automated validation loop for a .plans/ file — runs the Claude plan-validator agent and the repo's Codex validate-plan skill (through codex exec) in parallel, checks all findings against the repo and docs/roadmap.md, applies the valid fixes to the plan, and validates again. When one validator is not available, it continues with the other and says so. Each round leaves the raw reports and one decision log. Max 4 rounds. Ends with READY + a commit message, or a list of open items. /skill-1-plan runs it after saving a plan.
+description: Automated validation loop for a .plans/ file — runs the Claude plan-validator agent and the repo's Codex validate-plan skill (through codex exec) in parallel, checks all findings against the repo and docs/roadmap.md, applies the valid fixes to the plan, and validates again. When one validator is not available, it continues with the other and says so. Each round leaves the raw reports and one decision log. Max 2 rounds. Ends with READY + a commit message, or a list of open items. /skill-1-plan runs it after saving a plan.
 argument-hint: "[plan file]"
 ---
 
@@ -28,7 +28,7 @@ Either validator can be unavailable: Codex (CLI missing, not logged in, network,
 - Never write a substitute review for an OFF validator. Its slot in the round stays empty.
 - Both OFF in the same round → stop with status `BLOCKED` and the two reasons.
 
-## Rounds (max 4)
+## Rounds (max 2)
 
 For round `n` = 1, then each next round only if the previous round changed the plan:
 
@@ -48,9 +48,9 @@ diff -u .plans/.validations/<plan-base>-pre-round-<n-1>.md .plans/.validations/<
 
 You wrote these edits, so read them the hardest. Each hunk must do what its finding asked and must not break what was correct. Run these three checks:
 
-1. **Citations.** Open each `file:line` and section reference in or next to an edited hunk again.
+1. **Citations.** Open each `file:line` and section reference in or next to an edited hunk again. Edits move anchors: a line number that was right before the edit can be wrong after it.
 2. **Cross-references.** If a step was added, removed or renumbered, find each `step <n>` in the plan and confirm it still points at the right step.
-3. **Propagation.** For each fix, find each place the plan mentions that subject (Goal, Hard rules, Endpoint access, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, Steps, Migrations, Tests, How to verify, and any doc-update step) and confirm the fix reached all of them.
+3. **Propagation.** For each fix, find each place the plan mentions that subject (Goal, Context, Hard rules, Endpoint access, Contracts, Reference implementation, Affected files, Wiring & registration, Breaking changes, Steps, Migrations, Tests, Browser test (when the plan has one), How to verify, and any doc-update step) and confirm the fix reached all of them.
 
 Tag each problem `REGRESSION` in this round's decision log. If a round's edits are a net loss, restore its snapshot instead of patching forward: `cp .plans/.validations/<plan-base>-pre-round-<n>.md <plan-file>`.
 
@@ -72,7 +72,7 @@ Wait for both. When one fails, apply "Validator availability" and continue with 
 
 ### c. Reconcile the findings
 
-Read the raw reports you have (`-codex-raw-<n>.md` and `-validation-<n>.md`). Process each finding from each report as `/apply-validation` says: number it, check it against the repo, `AGENTS.md` and `docs/roadmap.md`, classify it VALID / PARTIALLY VALID / INVALID with evidence, and apply the valid fixes **to the plan file**.
+Read the raw reports you have (`-codex-raw-<n>.md` and `-validation-<n>.md`). Process each finding from each report as `/apply-validation` says: number it, check it against the repo, `AGENTS.md` and `docs/roadmap.md`, classify it VALID / PARTIALLY VALID / INVALID with evidence, and apply the valid fixes **to the plan file**. A Claude `APPROVE` with zero findings needs no work: only the Codex findings are left.
 
 Write one decision log with the Write tool at `.plans/.validations/<plan-base>-round-<n>.md`: the round header (each validator `ON` or `OFF (<reason>)`), the findings table with the validator that raised each finding, the regressions from step a, and the "## Validation response" block of `/apply-validation`. Record the findings that only one validator found: that difference is the reason to run two.
 
@@ -83,8 +83,8 @@ Never put one validator's findings into a file named after the other validator (
 ### d. Converge or continue
 
 - Each validator that ran is clean (Claude says APPROVE, Codex has no VALID blocking finding), no `REGRESSION` is open, and the plan was not edited this round → **READY**, stop. If a validator was OFF this round, the status is `READY (<Codex|Claude> OFF)`, never a plain `READY`.
-- The round edited the plan and `n` < 4 → run round `n+1`. A later round validates every fix; never finish on edits that no round validated while a round remains.
-- Round 4 is still not clean → stop with status `OPEN ITEMS`. Never run a fifth round.
+- The round edited the plan and `n` < 2 → run round `n+1`. A later round validates every fix; never finish on edits that no round validated while a round remains.
+- Round 2 is still not clean → stop with status `OPEN ITEMS`. Never run a third round.
 
 ## Final report
 

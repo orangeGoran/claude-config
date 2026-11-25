@@ -53,14 +53,14 @@ Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS
 - `/skill-1-plan` asks the owner one decision at a time, saves `.plans/<file>.md`, then runs `/skill-auto-validate-plan`.
 - `/skill-auto-validate-plan` loops (max 2 rounds): the `plan-validator` agent and Codex (when `codex` is installed) each write a report in `.plans/.validations/`, the valid findings go into the plan, and each round leaves a `-round-<n>.md` decision log. `/skill-validate-plan` is one Claude round with no edits.
 - `/apply-validation` checks a pasted review (another agent, another session, a person) against the repo and writes `-external-<n>.md`.
-- The dashboard runs `.claude/scripts/auto-pipeline.sh <mode> <plan>`. It creates a worktree `../worktrees/claude-config/<slug>` on branch `auto/<slug>` from `origin/main` and runs `/skill-auto-pipeline` headless: `/skill-2-implement` → `/skill-3-test` → `/skill-4-verify` (`/code-review` loop + rule audit, then `/test-review --fix`) → plan to `.plans/done/` and one commit for the whole plan → `/decision-sheet` → `/skill-5-ship` (draft PR). Modes: stop at verify (nothing committed), full (one local commit), to PR. The report is `.plans/auto-runs/<slug>.md`.
+- The dashboard runs `.claude/scripts/auto-pipeline.sh <mode> <plan>`. It creates a worktree `../worktrees/claude-config/<slug>` on branch `auto/<slug>` from `origin/main` and runs `/skill-auto-pipeline` headless: `/skill-2-implement` → `/skill-3-test` → `/skill-4-verify` (`/code-review` loop + rule audit, then `/test-review --fix`) → plan to `.plans/done/` → `/decision-sheet` ("to PR" mode) → one commit for the whole plan → `/skill-5-ship` (draft PR). Modes: stop at verify (nothing committed), full (one local commit), to PR. The report is `.plans/auto-runs/<slug>.md`.
 - `/skill-2-implement <plan file>` alone implements one plan in the current tree, with no commits.
 - `/skill-3-test` and `/skill-4-verify` also run alone, after a manual `/skill-2-implement`.
 - `/skill-4-verify` runs a review loop of max 2 rounds, each round one Claude `/code-review` and then one Codex review (`.codex/skills/validate-implementation`, when `codex` is installed; `--no-codex` skips it), then the rule audit. A missing Codex never blocks it.
 - `/skill-5-ship` merges `main`, runs the checks, pushes the branch and opens a draft PR. Only when the owner asks.
 - `/test-review` checks the tests of a change against the plan (the `test-reviewer` agent). The pipeline runs it inside `/skill-4-verify`.
 - `/changelog-entry` writes the `changelog.d/` entry of a change. Every PR adds one, or carries the `no-changelog` label.
-- `/decision-sheet` writes the decisions of a change for the reviewer. The pipeline runs it after the commit, before `/skill-5-ship`, which adds it to the PR.
+- `/decision-sheet` writes the decisions of a change for the reviewer. In "to PR" mode the pipeline runs it before the commit (its fixes go into the one commit); `/skill-5-ship` adds it to the PR.
 - `/plans-parallel` reads `node .claude/scripts/plan-lanes.mjs --json` and proposes which plans can run at the same time.
 - `/pr-feedback <PR>` works the review comments of a PR in its run worktree.
 - The skill names are a contract with the plans dashboard (it looks for `/skill-auto-pipeline <slug>.md` to see a live run, and copies `/skill-auto-validate-plan`). Do not rename them.
@@ -89,6 +89,8 @@ The stack: Node.js 18+ ES-module scripts with no dependencies, Bash, and a plain
 | Format | not available yet |
 | Type check | not available yet |
 | Build | not available yet |
+| Run usage (one pipeline run) | `node .claude/scripts/run-usage.mjs <run .log>` |
+| Test run-usage.mjs | `node --test .claude/scripts/run-usage.selftest.mjs` |
 | Restart the dashboard service | `npm run restart` (check pgrep -fl chat-relay.mjs first) |
 | Run a test dashboard by hand | `DASH_PORT=4911 DASH_NO_OPEN=1 DASH_WATCH_MS=0 node apps/dashboard/server.mjs` (stop it by its PID) |
 

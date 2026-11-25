@@ -32,7 +32,7 @@ Save its reply word for word in the report, under `## Reviewer report`. If the a
 For each revert check, before you run it:
 
 - Grep the file: `find` must occur **exactly once**. If not, skip the check as `INVALID (find not unique)`.
-- Make sure that `file` is production code from the diff, not a test file, a fixture or a migration. If not, skip the check as `INVALID (not production code)`.
+- Make sure that `file` is production code from the diff. These paths are not production code: a test file (`*.spec.*`, `*.test.*`, `*.e2e-spec.*`, a file under a test folder such as `test/`, `tests/` or `__tests__/`), a test helper, a fixture or seed file, a snapshot, a migration (a file in the migrations folder) and a generated file. If `file` is one of them, skip the check as `INVALID (not production code)`.
 
 Keep the first `--max-checks` valid checks. At most 3 of them may use a slow end-to-end test.
 
@@ -61,7 +61,7 @@ At most 2 rounds. For each MISSING behavior, each WEAK test and each SURVIVED ch
 
 1. Write the test, or make it stronger. Follow the pattern of the tests next to it and the nested `AGENTS.md` of the test folder, if there is one.
 2. Run it against the unchanged code. It must pass. **If a new or stronger test fails against the real code, do not change the production code and do not make the test weaker.** Record it as `POSSIBLE PRODUCTION BUG` with the failure output. A person must decide about it.
-3. Run the matching revert check again (Step 3). It must now be KILLED.
+3. Run the matching revert check again (Step 3), when one exists. It must now be KILLED.
 
 At the end, lint and format **only the changed test files**: give their paths to the lint and format commands, one command per call (for example the per-file commands of the post-edit lint hook, when the repo has one). Never run a whole-repo command with `--fix` here: it changes files outside this review. When the repo has no per-file form, run the check-only form and fix the reported lines by hand. Judge by the exit code and the error count, not by the last lines of the output.
 

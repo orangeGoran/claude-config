@@ -85,6 +85,7 @@ Steps 1, 1.5 and 2 all raise questions, and so do the open decisions this plan n
 
 - Propose 2–3 approaches. For each: what it does, pros, cons, size (low / medium / high).
 - Recommend one. Ask the owner to pick, as one question in the queue.
+- Go to Step 2 only after the owner agrees on an approach.
 
 ## Step 2 — Hard-rule check
 
@@ -237,6 +238,7 @@ Before you show the plan, check it. Fix the plan if any item fails.
 - [ ] The scope is one change that one PR can carry
 - [ ] No open decision is taken without the owner's answer in this session
 - [ ] The Hard rules section answers every rule
+- [ ] The last code step adds the release note, or the plan says why `no-changelog` applies
 - [ ] Every new or changed endpoint has an Endpoint access row (when the project has an HTTP API)
 - [ ] The Contracts and Breaking changes sections are filled (even if "None")
 - [ ] The Reference implementation section names the closest pattern, the files read end to end, the mirror mapping and the deviations (or "No close reference exists")
@@ -262,7 +264,7 @@ Before you show the plan, check it. Fix the plan if any item fails.
 Run `/skill-auto-validate-plan` on the saved plan yourself. Do not ask first.
 
 - Use the Skill tool: `skill: "skill-auto-validate-plan"`, `args: ".plans/<plan-file>.md"`. Always pass the plan path, so it cannot pick a different plan.
-- Follow it to the end: all rounds (max 4), the owner questions, and its final report.
+- Follow it to the end: all rounds (max 2), the owner questions, and its final report.
 - Ask its owner questions through the question queue, in the decision format: show the list first, then one question per message. Never use AskUserQuestion for them. Do not guess.
 - Skip this step only in these cases, and say in one line why:
   - The owner said "draft only" or "skip validation".

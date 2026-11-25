@@ -8,6 +8,9 @@
 # .plans/.workflow-state/<plan-name>/ (implement, test, verify, document), written
 # by .claude/scripts/workflow-complete-step.sh.
 #
+# The guard checks only the repo that holds this script. A `git -C <other repo>
+# commit` passes, because the other repo has its own rules.
+#
 # Allowed without flags:
 #   - commits on an auto/* branch (the pipeline makes one commit for the plan there),
 #   - commits that stage only files under .plans/ (plans and validation files),
@@ -16,15 +19,13 @@
 #
 set -euo pipefail
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo ".")"
-STATE_DIR="$REPO_ROOT/.plans/.workflow-state"
-
 # --- EDIT 1: the base branch that PRs go to ----------------------------------
 BASE_BRANCH="main"
 
 # Parse the command with a real JSON parser. A regex stops at the first escaped
 # quote and misses a commit later in the command.
 # Prints nothing for no commit, "commit" for a commit, "commit all" with -a/--all.
+# A second line holds the folder of `git -C <folder> commit`, when there is one.
 INPUT=$(cat)
 # shellcheck disable=SC2016
 CLASSIFY='
@@ -48,14 +49,31 @@ process.stdin.on("end", () => {
   if (!hits.length && !nested) return;
   const all = nested || hits.some((s) => /(?:^|\s)(?:--all|-[A-Za-z]*a[A-Za-z]*)(?:\s|$)/.test(s));
   console.log(all ? "commit all" : "commit");
+  // The -C folder of the commit, read from the full command (a quoted path is kept).
+  const opts = cmd.match(/\bgit((?:\s+(?:-c\s+\S+|-C\s+(?:"[^"]*"|\x27[^\x27]*\x27|\S+)|--\S+))*)\s+commit(?:\s|$)/);
+  const dirs = opts ? [...opts[1].matchAll(/-C\s+("[^"]*"|\x27[^\x27]*\x27|\S+)/g)].map((m) => m[1].replace(/^["\x27]|["\x27]$/g, "")) : [];
+  if (dirs.length && !nested) console.log(dirs[dirs.length - 1]);
 });
 '
-VERDICT=$(printf '%s' "$INPUT" | node -e "$CLASSIFY")
+CLASSIFIED=$(printf '%s' "$INPUT" | node -e "$CLASSIFY")
+VERDICT=$(printf '%s\n' "$CLASSIFIED" | sed -n 1p)
+COMMIT_DIR=$(printf '%s\n' "$CLASSIFIED" | sed -n 2p)
 
 # Only a git commit can be blocked (not git status, diff, log, and so on).
 if [ -z "$VERDICT" ]; then
   exit 0
 fi
+
+# This guard owns only its own repo: the repo that holds this script. A commit in
+# another repo (`git -C <other repo> commit`) passes; that repo's own guard checks it.
+GUARD_ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || echo "")"
+case "$COMMIT_DIR" in "~"|"~/"*) COMMIT_DIR="$HOME${COMMIT_DIR#\~}" ;; esac
+REPO_ROOT="$(git -C "${COMMIT_DIR:-.}" rev-parse --show-toplevel 2>/dev/null || echo "")"
+if [ -n "$GUARD_ROOT" ] && [ -n "$REPO_ROOT" ] && [ "$REPO_ROOT" != "$GUARD_ROOT" ]; then
+  exit 0
+fi
+REPO_ROOT="${REPO_ROOT:-${GUARD_ROOT:-.}}"
+STATE_DIR="$REPO_ROOT/.plans/.workflow-state"
 
 # Allow commits on a pipeline branch. /skill-auto-pipeline makes one commit for
 # the whole plan on auto/<slug>; the review is the PR.

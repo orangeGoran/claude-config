@@ -1,6 +1,6 @@
 ---
 name: skill-auto-pipeline
-description: Unattended pipeline runner. Runs /skill-2-implement → /skill-3-test → /skill-4-verify (/code-review loop + rule audit) → plan to done/ and one commit for the whole plan → optionally /skill-5-ship to a draft PR, for one plan inside a dedicated auto/* worktree, and keeps a status report. Launched headlessly by .claude/scripts/auto-pipeline.sh — not for interactive use.
+description: Unattended pipeline runner. Runs /skill-2-implement → /skill-3-test → /skill-4-verify (/code-review loop + rule audit) → plan to done/ (and in "to PR" mode the decision sheet) → one commit for the whole plan → optionally /skill-5-ship to a draft PR, for one plan inside a dedicated auto/* worktree, and keeps a status report. Launched headlessly by .claude/scripts/auto-pipeline.sh — not for interactive use.
 disable-model-invocation: true
 argument-hint: "<plan-file> --report=<abs-path> --stop-after=verify|commit|pr [--base=<branch>] [--resume]"
 ---
@@ -47,6 +47,7 @@ Preflight (on failure: status `FAILED: preflight` with the reason, then end):
 - Set the report status to `RUNNING` and add a Timeline entry.
 
 **Resume:** read the report's Status and Timeline, `git status` and `git diff` (the work of finished phases is uncommitted until the Commit phase). Continue from the first incomplete phase. Do not redo completed phases. Add a Timeline entry that says where you resumed and why the earlier session stopped.
+In "to PR" mode, a resumed run that has its commit runs item 5.2 (Which case → After the commit, unless the sheet is done) before it ships.
 
 ## Report protocol
 
@@ -60,7 +61,7 @@ The report is the owner's window into this run. The plans dashboard reads it. Af
 
 ## Phases
 
-1. **Implement** — invoke `/skill-2-implement <plan-file>`. It commits nothing. Copy its summary into the report under `## Implementation`. Status `IMPLEMENTED`.
+1. **Implement** — invoke `/skill-2-implement <plan-file> --unattended`. It commits nothing. Copy its summary into the report under `## Implementation`. Status `IMPLEMENTED`.
    - If it reports open questions, go to **Needs decision**.
 2. **Test** — invoke `/skill-3-test <plan-file> --unattended`. It writes the missing tests, runs the scoped fix loop and one full run as evidence. Copy its summary under `## Tests`. Status `TESTED`. Tests still failing → `FAILED: test`. Open questions → **Needs decision**.
    - It also runs the plan's browser test. Copy its browser-test lines (rounds, report page link, findings fixed, findings listed, test data made) under `## Browser test`. In-scope findings still open after 3 rounds do not fail the run: they go to the PR as open points.
@@ -69,8 +70,8 @@ The report is the owner's window into this run. The plans dashboard reads it. Af
    - Each round of the loop is one Claude review, then one Codex review of the code that Claude's fixes left (max 2 rounds: Claude, Codex, Claude, Codex). It fixes the valid findings of both. Codex OFF (missing, not logged in, quota) never fails the phase: write one Timeline line with the reason.
    - It also runs `/test-review --fix`. Copy its `## Summary for the PR` under `## Test review`.
    - A `POSSIBLE PRODUCTION BUG` from the test review does not stop the run. A revert check that did not put a file back byte for byte (its `git hash-object` before and after differ) does: set `FAILED: test-review`, name the file under `## Diagnosis`, and end the session.
-   - Run every command in the plan's "How to verify" yourself, as bare commands.
-   - If its code-review loop, its Codex fixes or its test review changed a file, run the full test command once (AGENTS.md, **Commands**, "Test (full)"; skip it when that row is "not available yet") as a regression gate. The skill runs only the scoped tests. A failure counts toward the failure budget.
+   - If its review loop (with the lint run after it) or its test review changed a file, run the full test command once (AGENTS.md, **Commands**, "Test (full)"; skip it when that row is "not available yet") as a regression gate. The skill runs only the scoped tests. A failure counts toward the failure budget. When the plan's "How to verify" also lists the "Test (full)" command, this run counts for it: do not run it twice on the same tree. A fix round of this phase changes the tree: run it again after that round.
+   - Run every command in the plan's "How to verify" yourself, as bare commands (except a "Test (full)" command that the regression gate already ran on the same tree).
    - Copy its review order, table, rounds, numbered findings (`F1`, `F2`, …, with file:line and state) and open items (each question exactly as written) under `## Verification` and `## Code review`, plus its **Security: needs validation** block when there is one.
    - Any row still Fail after its fixes → `FAILED: verify`. Open items that need the owner → **Needs decision**. Otherwise status `VERIFIED`.
 
@@ -101,8 +102,26 @@ To ship: resume this run in "to PR" mode. It makes the one commit, then opens th
 4. **Document** — run `bash .claude/scripts/workflow-complete-step.sh <slug> document`. After the fourth step mark, the script moves the plan to `.plans/done/` itself. Do not run `git mv`, and do not commit yet. If the plan is still in `.plans/`, a step mark is missing: run the missing marks (`implement`, `test`, `verify`) only when that phase passed, else `FAILED: document`. Status `DOCUMENTED`.
    - Record the new conventions now: read `.claude/skills/skill-5-ship/SKILL.md` and do its **Docs** step (Step 1.5) without its commit item, so the doc edits are part of the one commit. Write the files you changed, or "nothing to record", in the Timeline.
    - When the work adds no file under `changelog.d/`, read `.claude/skills/changelog-entry/SKILL.md` and follow it now, so the entry is part of the one commit. If it decides that no entry is necessary, write that in the Timeline.
-5. **Commit** — one commit for the whole plan:
-   1. `git status --porcelain`. Every path must belong to this plan: the files it changed, its tests, the plan's move to `.plans/done/`, the doc edits of the Document phase, and a changelog entry (with its version raise) if one was written. A path that does not belong (for example a tool's output file) → `FAILED: commit`, with the list under `## Diagnosis`.
+5. **Decision sheet** — `--stop-after=pr` only.
+   The sub-items are 5.1 to 5.7; "item 6" and "item 7" alone are the Commit and Ship items.
+   1. **Tree mark.** The tree mark follows the contents of every changed file. Run `git status --porcelain --untracked-files=all` (without it, a new folder shows as one `?? <folder>/` line, and `git hash-object` cannot hash a folder), then `git hash-object -- <path> <path> …` for each listed path that exists (a deleted path has no hash; for a rename line `R  <old> -> <new>`, use `<new>`). Write the status lines and the hashes with the Write tool to `<report dir>/<slug>-tree.txt`, then run `git hash-object <report dir>/<slug>-tree.txt`: its output is the mark. An edit inside a tracked or an untracked file changes the mark. Each `decision sheet: done` entry ends with `tree: <mark>`, the mark of the tree when you write the entry.
+   2. **Which case.** Decide from facts that survive a resume (the preflight sets the Status to `RUNNING`, so a Status such as `DOCUMENTED`, `COMMITTED — READY TO PUSH` or `FAILED: decision sheet` does not tell). In this order:
+      - `git log --format=%s <base>..HEAD` lists the plan's commit, and a Timeline entry, after its `- HH:MM:SS — ` prefix, starts with `decision sheet: done` → done; go to the Ship item (the sheet ran before the commit, or after it in an earlier resume).
+      - Else `git log --format=%s <base>..HEAD` lists the plan's commit → item 5.6 (After the commit).
+      - Else a Timeline entry, after its `- HH:MM:SS — ` prefix, starts with `decision sheet: done` and its `tree:` mark equals the mark now → done; go to the Commit item.
+      - Else a Timeline entry starts (after the prefix) with `decision sheet: gate failed` and no `decision sheet: done` entry follows it → item 5.7 (After a failed gate).
+      - Else → item 5.3 (Before the commit; this also covers a tree that changed after an earlier `done` entry).
+   3. **Before the commit.** Take the tree mark (item 5.1) and keep the list of `git status --porcelain`. Read `.claude/skills/decision-sheet/SKILL.md` and follow it with `--base <base> --plan .plans/done/<plan-file> --report <report> --out <report dir>/<slug>-decision-sheet.md`.
+      Add `--fix`, so its fixes are part of the one commit.
+      When the Verify phase ran Codex (row 1 says `Codex ON`), add `--codex-report <path>` with the Codex report that row 1 names (`.plans/.code-reviews/<branch-with-slashes-as-dashes>-codex.md`, which holds the last round), so Codex does not review the same code twice.
+      Then take the tree mark again.
+   4. **No change** (the sheet names no file that its fixes touched, and the tree mark and the list are the same as before the sheet: its Codex part was OFF, found nothing to fix, or the sheet failed before it changed a file) → write `decision sheet: done (<status>, <n> questions, <path>; tree: <mark>)`, or `decision sheet: done (failed: <reason>; tree: <mark>)`. A sheet failure without a changed file never blocks the run. Any change (a file the sheet names, or a changed mark or list, also from a sheet that failed after it changed a file) → item 5.5 (Test gate).
+   5. **Test gate.** Run "Test (one file)" and the check-only lint (or "Lint") for each file that changed, then the "Test (full)" command once (a row that is "not available yet" is skipped with that reason). A failure → fix it, at most the failure budget. Still failing → write `decision sheet: gate failed (<files>)`, set status `FAILED: decision sheet`, put the files and the output under `## Diagnosis`; do not commit, and end the session. Passed → take the tree mark again (the gate's fixes change it) and write `decision sheet: done (<status>, <n> questions, <n> fixed, <path>; tree: <mark>)`.
+   6. **After the commit** (a run resumed from "commit" mode into "to PR" mode). Follow the sheet as in item 5.3, without `--fix` (its VALID Codex findings stay open items for the reviewer, so the one commit stays one commit), and write `decision sheet: done (after the commit, no fixes; tree: <mark>)`.
+   7. **After a failed gate.** Do not run the sheet again (its sheet file and its fixes are there). Run item 5.5 (Test gate) again on the files that `decision sheet: gate failed` names.
+6. **Commit** — one commit for the whole plan:
+   In `--stop-after=pr` mode, before the commit, do item 5.2 (Which case); it goes on to the commit only when a `decision sheet: done` entry has the tree mark of now.
+   1. `git status --porcelain`. Every path must belong to this plan: the files it changed, its tests, the plan's move to `.plans/done/`, the doc edits of the Document phase, the decision sheet's fixes, and a changelog entry (with its version raise) if one was written. A path that does not belong (for example a tool's output file) → `FAILED: commit`, with the list under `## Diagnosis`.
    2. `git add -- <path> <path> …`, naming every path (a deleted or moved path too). Never `git add -A` or `git add .`.
    3. `git commit -m "<type>(<scope>): <what the plan does, in plain words>"`. Conventional Commits, no AI attribution. One commit: never split the work into several.
 
@@ -125,9 +144,6 @@ After the merge, from the main checkout: `git pull`, then `bash .claude/scripts/
 
 **pr mode:**
 
-6. **Decision sheet** — read `.claude/skills/decision-sheet/SKILL.md` and follow it with `--base <base> --plan .plans/done/<plan-file> --report <report> --out <report dir>/<slug>-decision-sheet.md`.
-   When the Verify phase ran Codex (row 1 says `Codex ON`), add `--codex-report <path>` with the Codex report that row 1 names (`.plans/.code-reviews/<branch-with-slashes-as-dashes>-codex.md`, which holds the last round), so Codex does not review the same code twice.
-   Write one Timeline line with its status, the number of questions and its path. It never blocks: when it fails, write one Timeline line and continue.
 7. **Ship** — `/skill-5-ship` cannot be invoked as a skill from here (`disable-model-invocation`). Read `.claude/skills/skill-5-ship/SKILL.md` and follow it end to end with `--unattended --report <report> --base <base>`. It sets the final status: `PR OPEN — <url>` (with a `PR: <url>` line) or `BLOCKED: …`.
    - Its browser-test gate can stop the ship with `BLOCKED — browser test (<reason>)` and no PR. Copy the reason under `## Diagnosis`: the test did not run, it has no report page, or the PR body does not link it.
 8. On `PR OPEN`, append and end the session:

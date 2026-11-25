@@ -44,7 +44,7 @@ Files marked `??` are new and untracked. Read them.
 5. **Propose revert checks** for the top behaviors (max 10, highest risk first). A revert check is one small edit to **production code** that undoes exactly one behavior, so the test for that behavior must fail. Rules:
    - `find` is an exact text copied from the **current** file (with its whitespace) that occurs **once** in that file. Keep it short: 1–6 lines.
    - `replace` must still load and run: no undefined name, no syntax error. Otherwise the test fails for the wrong reason. A type mismatch or an unused variable is fine when the test runner does not type-check (for example a transpile-only setup); a crash on load is not. Good edits: remove one condition from a filter, invert a guard, return early, remove one field from a mapper, change the error that is thrown.
-   - Never change a test file, a migration, a fixture or a comment.
+   - Never change a test file, a migration, a fixture or a comment. These paths are not production code: a test file (`*.spec.*`, `*.test.*`, `*.e2e-spec.*`, a file under a test folder such as `test/`, `tests/` or `__tests__/`), a test helper, a fixture or seed file, a snapshot, a migration (a file in the migrations folder) and a generated file. The caller rejects a check on one of them as `INVALID (not production code)`.
    - `command` is one bare test command that runs the test that must fail. Take its form from `AGENTS.md`, section **Commands** ("Test (one file)", or "Test (end to end)" for an end-to-end test), and add a test-name filter when the runner has one. When the row says "not available yet", use "Test (full)" and say so in Notes. At most 3 of the 10 may be slow end-to-end tests.
 
 ## Output (return this, nothing else)

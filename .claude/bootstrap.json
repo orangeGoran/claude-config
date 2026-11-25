@@ -173,6 +173,7 @@
   },
   "pipeline": {
     "defaultMode": "pr",
+    "codexInVerify": true,
     "runAllow": [],
     "preflight": [],
     "services": []
@@ -186,5 +187,5 @@
     "appUrl": "http://127.0.0.1:4899"
   },
   "firstPlanTs": "20261122-110845",
-  "renderHash": "13727b92d9391fa9"
+  "renderHash": "fdab2f8ad84f6344"
 }

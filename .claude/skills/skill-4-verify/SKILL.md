@@ -1,6 +1,6 @@
 ---
 name: skill-4-verify
-description: Verify step of the workflow (step 4). Runs a bug-hunt loop of max 2 rounds; each round is one Claude /code-review and then one Codex review (the repo's validate-implementation skill; skipped when Codex is missing or out of quota), and it fixes and re-tests their valid findings (it stops when it converges or only deferrals are left), then audits the result against the hard rules in AGENTS.md (Restart after dashboard changes; No npm dependencies; Public repo: no private data; Global rules affect every project; Never stop processes by name; Tests for logic changes; Docs: current state only), contracts, doc comments, tests, secrets, security and plan scope, and reports an evidence table. Use after /skill-3-test; /skill-auto-pipeline calls it unattended.
+description: Verify step of the workflow (step 4). Runs a bug-hunt loop of max 2 rounds; round 2 only after a behaviour fix; each round is one Claude /code-review and then one Codex review (the repo's validate-implementation skill; skipped when Codex is missing or out of quota), and it fixes and re-tests their valid findings (it stops when it converges or only deferrals are left), then audits the result against the hard rules in AGENTS.md (Restart after dashboard changes; No npm dependencies; Public repo: no private data; Global rules affect every project; Never stop processes by name; Tests for logic changes; Docs: current state only), contracts, doc comments, tests, secrets, security and plan scope, and reports an evidence table. Use after /skill-3-test; /skill-auto-pipeline calls it unattended.
 argument-hint: "[plan file | files] [--unattended] [--no-codex]"
 ---
 
@@ -26,7 +26,6 @@ These rules apply to every summary, report section, PR body, comment and status 
 - **An odd value is a finding until you prove that it is harmless:** a count of 0, a skipped test, an empty file or section, a link that does not load, a status that does not match the plan. Write what you checked to clear it, or list it as open.
 - **Count the real state.** A summary gives the count of the whole, for example "41 passed, 2 skipped". Never write "all done", "everything works" or "complete" unless the count shows it.
 - **"Skipped" is not a result** for a check that the plan or this skill requires. A required check that did not run is open, with the reason.
-- **When the evidence changes after the PR opened** (a new test result, a fix, a new browser-test report), rebuild the decision sheet and update the PR body. Each line of the sheet (for example "Browser test") must match the PR body.
 
 ## Step 0 — Scope
 
@@ -41,7 +40,7 @@ The rule audit (Step 2) checks compliance, not logic. Run the bug hunt yourself;
 ### One round
 
 1. **Claude.** Invoke the code-review skill: `Skill(skill: "code-review", args: "high --fix")`. You wrote this code, so do not review it inline yourself.
-2. **Re-test Claude's fixes.** They are not checked yet. List the files it touched (`git diff --name-only`). For each one, run the scoped tests (AGENTS.md, **Commands**, "Test (one file)") and the check-only lint and format commands again. When it touched an entry point that an end-to-end test covers (a route, a handler, a public interface), also run the matching end-to-end test ("Test (end to end)"). A command that is "not available yet" is skipped with that reason. Fix a failure before the Codex part.
+2. **Re-test Claude's fixes.** They are not checked yet. List the files it touched (`git diff --name-only`). For each one, run the scoped tests (AGENTS.md, **Commands**, "Test (one file)") again. When it touched an entry point that an end-to-end test covers (a route, a handler, a public interface), also run the matching end-to-end test ("Test (end to end)"). A command that is "not available yet" is skipped with that reason. Fix a failure before the Codex part.
 3. **Record Claude's part:** findings fixed, findings deferred, files touched, re-test result. Number each finding `F1`, `F2`, … in the order found.
 4. **Codex** (skip with `--no-codex`, or when Codex is OFF for the run):
    1. **Find the CLI (round 1 only).** `command -v codex`, else `test -x ~/.local/bin/codex` (the Bash tool does not load `~/.zshrc`). Use the one you found as `<codex>`. Write the path exactly as `codex` or `~/.local/bin/codex` (with the `~`, not the expanded home folder): the allow rules match that text. Then run `<codex> login status`. Missing or not logged in → **Codex OFF for the run** ("Codex not available"; the fix for the owner: `npm install -g @openai/codex`, then `codex login`). A command that the session refuses ("requires approval") is not a missing CLI: record `permission denied: <command>`.
@@ -57,10 +56,11 @@ The rule audit (Step 2) checks compliance, not logic. Run the bug hunt yourself;
 
 ### When to stop
 
-Stop the loop after a round as soon as one of these is true. An early stop is the normal result:
+Stop the loop after a round as soon as any of these is true. An early stop is the normal result:
 
 - **Converged:** in this round, neither Claude nor Codex fixed anything or found anything new. A finding that repeats an earlier deferred finding is not new.
 - **Only deferrals left:** the round found problems but could fix none of them. They need a person; more rounds do not help.
+- **No behaviour fix:** round 1 applied no finding that changed production behaviour: each applied fix changed only tests, comments or doc comments. Judge each fix from its diff hunk, not from its file name. A hunk that mixes a comment and code is a behaviour fix. When unsure, it is a behaviour fix.
 
 **Hard cap: 2 rounds** (Claude, Codex, Claude, Codex). Never run a third. If round 2 still fixed something, stop anyway, say that the loop hit the cap, and list what round 2 changed, so the owner looks at it first.
 
@@ -69,9 +69,11 @@ Stop the loop after a round as soon as one of these is true. An early stop is th
 - **Oscillation:** a reviewer undoes or argues against an earlier fix (its own or the other reviewer's). Report both versions and which one is in the tree. A person decides.
 - **A test keeps failing:** the same test still fails after two fix attempts. Report it; do not keep patching.
 
+**After the loop:** when the Commands table has no "Lint (check only)" row and the loop changed a file, run the "Lint" command once on the files the loop touched. When it changed a file, run the scoped tests of those files again ("Test (one file)"); a failure → fix it, as in the re-test item. The Step 2 lint row uses this lint output.
+
 ## Step 2 — Rule audit
 
-Read the nested `AGENTS.md` files of the touched folders. Then check the post-review tree. Run the Grep and Read checks in parallel subagents if the scope is large; run all Bash commands yourself (subagents do not get the run's Bash permissions).
+A nested `AGENTS.md` loads by itself when you read a file in its folder and a `CLAUDE.md` with `@AGENTS.md` sits next to it; do not read it again. Read only a nested `AGENTS.md` of a touched folder that has no such `CLAUDE.md`. Check the post-review tree. Run the Grep and Read checks in parallel subagents if the scope is large; run all Bash commands yourself (subagents do not get the run's Bash permissions).
 
 | # | Check | How |
 | --- | --- | --- |
@@ -86,11 +88,12 @@ Read the nested `AGENTS.md` files of the touched folders. Then check the post-re
 | 10 | Contracts | The project has no shared contract source yet. When one exists, add it here and take types and enum values only from it. |
 | 11 | JSDoc | Every new or changed public function has a doc comment in ASD-STE100. Report only what the diff added or changed. |
 | 12 | Tests | Every test in the plan's **Tests** list exists, and each rule above that the change touches has a test that fails when the rule breaks. |
-| 13 | Secrets | No keys, passwords, tokens or private paths in the code or fixtures. Fixtures use made-up data only. Evidence: the secrets scan of Step 2 (files scanned, findings or "clean"). |
-| 14 | Security | No `confirmed` finding from the security pass of Step 2. Evidence: the checklists used, the files reviewed, and each finding with its attacker, victim and result. A `needs_validation` item does not fail the row. |
-| 15 | Plan scope | Every plan step is done. No file outside **Affected files** changed without a reason in the summary. No open owner decision taken silently. |
+| 13 | E2E type safety | When the end-to-end tests are written in a typed language: each valid request body that a changed test sends is checked against its request type (for example `satisfies <RequestDto>`), and each response body is cast to its response type before the test reads a field. A test that sends an invalid body on purpose is exempt. List each violation with file:line and the fix. |
+| 14 | Secrets | No keys, passwords, tokens or private paths in the code or fixtures. Fixtures use made-up data only. Evidence: the secrets scan of Step 2 (files scanned, findings or "clean"). |
+| 15 | Security | No `confirmed` finding from the security pass of Step 2. Evidence: the checklists used, the files reviewed, and each finding with its attacker, victim and result. A `needs_validation` item does not fail the row. |
+| 16 | Plan scope | Every plan step is done. No file outside **Affected files** changed without a reason in the summary. No open owner decision taken silently. |
 
-- **Lint and format are check-only here.** Use the "Lint (check only)" row of the `AGENTS.md` **Commands** table when it has one, and a format command that only checks. Give them the changed file paths when they take paths. Never run a command with `--fix` (or a script that runs one) in this step: an audit that changes files proves nothing. When the repo has only a fixing command, report "check-only command not available yet" and use the output of the post-review re-run. Judge by the exit code and the error count, never by the last lines of the output; search a long output with the Grep tool for the error marker of the linter.
+- **Lint and format are check-only here.** Use the "Lint (check only)" row of the `AGENTS.md` **Commands** table when it has one, and a format command that only checks. Give them the changed file paths when they take paths. Never run a command with `--fix` (or a script that runs one) in this step: an audit that changes files proves nothing. When the repo has only a fixing command, report "check-only command not available yet" and use the output of the lint run after the Step 1 loop. Judge by the exit code and the error count, never by the last lines of the output; search a long output with the Grep tool for the error marker of the linter.
 - **One check, one place.** When a hard-rule row already covers a topic of a later row (for example secrets or contracts), the later row reuses that evidence and says so. Do not run the same check twice.
 
 **Evidence gate.** A row is Pass only when you looked: name the files and lines, or the command and its counts. "Lint passed" does not prove a hard-rule row. An auto-fixed file gets the same audit.
@@ -133,7 +136,7 @@ Do not fix its findings automatically. A `confirmed` finding fails the Security 
 
 ## Step 2.5 — Test review
 
-Invoke `Skill(skill: "test-review", args: "--fix --base main --plan <plan file>")` (leave out `--plan` when there is no plan file). It writes `.plans/.test-review/<branch-with-slashes-as-dashes>.md`. Carry its `## Summary for the PR` section into your report; `/skill-5-ship` and `/decision-sheet` read the file.
+Invoke `Skill(skill: "test-review", args: "--fix --max-checks 3 --base main --plan <plan file>")` (leave out `--plan` when there is no plan file). It writes `.plans/.test-review/<branch-with-slashes-as-dashes>.md`. Carry its `## Summary for the PR` section into your report; `/skill-5-ship` and `/decision-sheet` read the file.
 
 The **Tests** row fails when the summary lists a `POSSIBLE PRODUCTION BUG`, or a SURVIVED or MISSING item that `--fix` did not fix. Each such item also goes under **Open items**. A `Test review: OFF (<reason>)` summary fails the row with that reason.
 
@@ -161,11 +164,11 @@ Then the table:
 | # | Check | Result | Evidence |
 | --- | --- | --- | --- |
 | 1 | Code review | Pass/Fail | rounds, fixed, deferred, re-test result; per round `Codex ON: <n> VALID, <n> fixed, <n> deferred` or `Codex OFF: <reason>`; the Codex report path (`.plans/.code-reviews/<branch-with-slashes-as-dashes>-codex.md`) when a round ran Codex |
-| 2–15 | (as above) | Pass/Fail/N/A | files and lines, or command and counts |
+| 2–16 | (as above) | Pass/Fail/N/A | files and lines, or command and counts |
 
 Codex OFF does not make row 1 Fail.
 
-Then **Code review rounds** (per round one line for Claude and one line for Codex: ON with its counts and the report path, or OFF with the reason; then why the loop stopped: converged, only deferrals left, hit the cap, or escalated), **Findings**, **Violations** (file, line, what is wrong, the fix, and whether you fixed it), and **Open items**.
+Then **Code review rounds** (per round one line for Claude and one line for Codex: ON with its counts and the report path, or OFF with the reason; then why the loop stopped: converged, only deferrals left, no behaviour fix, hit the cap, or escalated), **Findings**, **Violations** (file, line, what is wrong, the fix, and whether you fixed it), and **Open items**.
 
 - **Findings:** every code-review finding of every round, numbered `F1`, `F2`, … in the order found: `F<n>. file:line — one-line gist — fixed | deferred | decided (<by whom>)`. Keep the numbers when you report again, so that "F3" means the same finding in the report, the PR and a follow-up chat.
 - **Security: needs validation:** when the security pass returned `needs_validation` items, one line per item below the table: its title, the missing fact, and who can answer it. These items are questions for a person, not failures. Leave the block out when there are none.
@@ -173,7 +176,7 @@ Then **Code review rounds** (per round one line for Claude and one line for Code
 
 After any fix in this step, run the scoped tests and the check-only lint for the touched files again. Do not start the Step 1 loop again for rule fixes.
 
-The step is complete only when rows 1–15 are Pass or N/A, and each N/A has its reason. These rows may be N/A: rows 3–9 (the hard rules), only when the scope has nothing the rule checks, with that reason; row 10 (Contracts), when the change does not touch a contract; row 14 (Security), only when no changed path matches the table of the security pass; row 15 (Plan scope), only when there is no plan file. Rows 1 (Code review), 2 (Lint and format), 11 (JSDoc), 12 (Tests), 13 (Secrets) are never N/A. Otherwise report what is left and stop.
+The step is complete only when rows 1–16 are Pass or N/A, and each N/A has its reason. These rows may be N/A: rows 3–9 (the hard rules), only when the scope has nothing the rule checks, with that reason; row 10 (Contracts), when the change does not touch a contract; row 13 (E2E type safety), when the change adds or changes no end-to-end test, or the tests are not typed; row 15 (Security), only when no changed path matches the table of the security pass; row 16 (Plan scope), only when there is no plan file. Rows 1 (Code review), 2 (Lint and format), 11 (JSDoc), 12 (Tests), 14 (Secrets) are never N/A. Otherwise report what is left and stop.
 
 When the step is complete, run `bash .claude/scripts/workflow-complete-step.sh <plan-basename> verify` (`<plan-basename>` without `.md`).
 

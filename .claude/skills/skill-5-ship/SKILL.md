@@ -2,12 +2,12 @@
 name: skill-5-ship
 description: Ship the current branch — record new conventions in the right AGENTS.md, merge the base branch and resolve the conflicts (stop only on product, migration, dependency or rule-document decisions), run the checks, push the branch and open a draft PR. Run only when the owner asks for it, or from /skill-auto-pipeline in "to PR" mode.
 disable-model-invocation: true
-argument-hint: "[topic] [--base <branch>] [--skip-docs] [--unattended --report <path>]"
+argument-hint: "[topic] [--base <branch>] [--skip-docs] [--skip-verification] [--unattended --report <path>]"
 ---
 
 Ship: $ARGUMENTS
 
-`--base` defaults to `main` (strip a leading `origin/`). `--unattended --report <path>` is set by `/skill-auto-pipeline`. `--skip-docs` skips Step 1.5. Any other text is a documentation topic for Step 1.5.
+`--base` defaults to `main` (strip a leading `origin/`). `--unattended --report <path>` is set by `/skill-auto-pipeline`. `--skip-docs` skips Step 1.5. `--skip-verification` skips the plan check of Step 1.6 (item 1). Any other text is a documentation topic for Step 1.5.
 
 ## Rules
 
@@ -32,7 +32,7 @@ These rules apply to every summary, report section, PR body, comment and status 
 ## Step 1 — Preflight
 
 1. `git branch --show-current`. Stop if it is `main`.
-2. **A merge in progress.** `git status`. When it says "You have unmerged paths" or "All conflicts fixed but you are still merging", an earlier run stopped during a merge, or the owner merged by hand. Do not start a new merge. Resolve the files of `git diff --name-only --diff-filter=U` as **Resolve the conflicts** says (Step 2), and keep the files the owner already staged as they are. Then continue at its "commit the merge" item.
+2. **A merge in progress.** `git rev-parse -q --verify MERGE_HEAD`. When it prints a hash, an earlier run stopped during a merge, or the owner merged by hand. Do not read this from the text of `git status`: the text changes with the git version and the language. Do not start a new merge. Resolve the files of `git diff --name-only --diff-filter=U` as **Resolve the conflicts** says (Step 2), and keep the files the owner already staged as they are. Then continue at its "commit the merge" item.
 3. `git status --porcelain`. Interactive: a change that belongs to this work and is not committed goes into the commit of Step 1.6. Unattended: `/skill-auto-pipeline` made the one commit of the plan already, so such a change → stop and name the files. A file that never ships (`.env*`, `.claude/settings.local.json`, the files of another plan) does not stop the ship: leave it unstaged and note it for Step 7.
 4. Step 1.6 checks that there are commits to ship.
 5. **Re-run detection.** An earlier ship attempt can have done part of the work. Each step checks its own result first and does not do it twice: Step 1.5 skips a convention that an `AGENTS.md` already holds,
@@ -48,7 +48,9 @@ Skip this step with `--skip-docs`, and when `/skill-auto-pipeline` runs this ski
 3. **Place.** A rule for one folder goes in the `AGENTS.md` of that folder. When the folder has none, create the pair: `AGENTS.md` with the rule, and `CLAUDE.md` next to it that holds only `@AGENTS.md`. Add one row for the new file to the **Layout** table of the root `AGENTS.md`. The root `AGENTS.md` loads in every session: put a rule there only when it applies to the whole repo.
 4. **Write short.** One bullet per rule: a bold name, at most 3 sentences, and a pointer to one file that shows the pattern. Present tense, no history, no ticket or plan numbers. A rule lives in one place; elsewhere, point to it. When you update a bullet, rewrite it to fit, do not append.
 5. When the repo records architecture decisions (a decisions folder that the root `AGENTS.md` names), a changed rule follows that process.
-6. Commit the doc files by path: `git add -- <file> <file>`, then `git commit -m "docs(<scope>): record conventions from <slug>"`. Nothing to record → say so in one line and skip the commit.
+6. Do not commit the doc files in this step. Step 1.6 commits them together with the work and the plan's move to `.plans/done/`.
+   A separate docs commit before the plan is in `.plans/done/` does not finish a plan, so the commit guard (`workflow-guard.sh`) refuses it on a branch that is not `auto/*`.
+   Nothing to record → say so in one line.
 
 Interactive: ask the owner only for a real either/or that the conversation does not answer, or for a rule that contradicts a documented rule. Otherwise apply and report.
 
@@ -56,9 +58,9 @@ Interactive: ask the owner only for a real either/or that the conversation does 
 
 The order is important. Commit the work **before** you merge the base, and run the checks (Step 3) **after** the merge. Git refuses to merge over an uncommitted edit to a file that the base also changed, and a version file changes on every PR. This commit is a local checkpoint: nothing is pushed until the checks pass on the merged tree.
 
-1. **The plan is in `.plans/done/`.** When the branch has a plan, run `ls .plans/done/<plan-file>`. When it is missing, run `bash .claude/scripts/workflow-complete-step.sh <slug> document`, then `ls .plans/done/<plan-file>` again. Still missing → a step mark is missing: stop, run `ls .plans/.workflow-state/<slug>/` to name the marked steps, and list the steps that are missing. The commit guard refuses the commit until the plan is in `.plans/done/`.
+1. **Guardrail: the plan is in `.plans/done/`.** Skip this item with `--skip-verification`. When the branch has a plan, run `ls .plans/done/<plan-file>`. When it is missing, run `bash .claude/scripts/workflow-complete-step.sh <slug> document`, then `ls .plans/done/<plan-file>` again. Still missing → a step mark is missing: stop, run `ls .plans/.workflow-state/<slug>/` to name the marked steps, list the steps that are missing, and say that `--skip-verification` skips this check. The commit guard refuses the commit until the plan is in `.plans/done/`, except on an `auto/*` branch.
 2. `git status --porcelain` shows nothing of this work → skip to item 5 (a re-run after the work was committed).
-3. Stage only this work, by path (see **Rules**): the changed files, their tests, the doc edits and the plan's move to `.plans/done/`. Then `git diff --cached --stat` to check the staged set.
+3. Stage only this work, by path (see **Rules**): the changed files, their tests, the doc edits of Step 1.5 and the plan's move to `.plans/done/`. Then `git diff --cached --stat` to check the staged set.
 4. `git commit -m "<type>(<scope>): <what the work does, in plain words>"`. Conventional Commits, no AI attribution.
    When `workflow-guard.sh` blocks the commit, stop and report its output.
 5. `git log --oneline origin/<base>..HEAD`. Stop if there are no commits to ship.
@@ -78,11 +80,19 @@ A file without a conflict marker can still be wrong after a merge. List the file
 
 ### Resolve the conflicts
 
+**Understand both sides first.** Run `git merge-base HEAD MERGE_HEAD` and note the hash as `<mb>`. Then read, each in its own call:
+
+- the incoming commit messages: `git log --format=%h%n%s%n%b HEAD..MERGE_HEAD`,
+- the incoming diff of every `AGENTS.md`: `git diff <mb> MERGE_HEAD -- '*AGENTS.md'`,
+- the plans that the base finished: `git diff --name-only --diff-filter=A <mb> MERGE_HEAD -- .plans/done/`. Read each one that touches the same files as this branch.
+
+When our plan says what to do if the other plan landed first, do that.
+
 `git diff --name-only --diff-filter=U` lists the files. For each file, run `git merge-base HEAD MERGE_HEAD`, then `git diff <merge-base> MERGE_HEAD -- <file>` (what the base changed) and `git diff <merge-base> HEAD -- <file>` (what this branch changed). Write a result that keeps both changes:
 
 - **Both sides added different things** (imports, routes, enum members, translations, tests): keep both, in the file's order.
 - **The base renamed or moved something that this branch uses:** apply this branch's change to the new name or place.
-- **A version field that both sides changed** (for example `"version"` in `package.json`): start from the base's version and make this branch's step again (patch or minor, the same kind of step the branch made). Example: base `1.90.0`, branch `1.91.0` from `1.89.0` (a minor step) → `1.91.0`; base `1.91.0` → `1.92.0`.
+- **A version field that both sides changed** (for example `"version"` in `package.json`): resolve it this way only when the version line is the only conflict hunk in that file. Any other hunk in the file is a normal conflict (the rules above and the stop cases below). Start from the base's version and make this branch's step again (patch, minor or major, the same kind of step the branch made). Example: base `1.90.0`, branch `1.91.0` from `1.89.0` (a minor step) → `1.91.0`; base `1.91.0` → `1.92.0`.
   Then the changelog check must pass (see `.claude/skills/changelog-entry/SKILL.md`).
 - **Lockfiles** (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `composer.lock`): take the base's file (`git restore --source=MERGE_HEAD --staged --worktree -- <file>`), then run the package manager's install so it adds this branch's dependencies again. **Generated files:** run the generator instead of editing.
 - **One side deleted code that the other side shows only as unchanged context:** keep the deletion. **Both sides added the same helper:** keep the base's copy and change this branch's callers to use it.
@@ -111,6 +121,11 @@ The decision sheet was built before the merge. When this step resolved conflicts
 
 Run the repo's real checks on the merged tree (AGENTS.md, **Commands**: lint, type check, tests), each as a bare command. If a check is "not available yet", say so. A failing check → stop.
 
+**Nothing is pushed without fresh test and lint evidence from the merged tree.** A result from an earlier step does not count: the docs step, the review loop or the merge can have changed the code. The commit of Step 1.6 is only a local checkpoint. Read the whole output of each check, not only the last line:
+
+- Tests pass when the summary shows 0 failed and 0 errors. A "flaky" test is a failure that you report, not a pass.
+- Lint passes only on exit code 0 and no `: error ` line in the output. Some linters print no summary line, so a missing summary is not a pass. Warnings do not fail the check.
+
 When a check changes a tracked file (for example a lint fix or a formatter):
 
 - After a merge that brought new commits: stage the changed files by path and commit them as one follow-up commit, for example `chore(<scope>): apply the checks after merging <base>`.
@@ -128,7 +143,7 @@ When the branch adds no file under `changelog.d/` (`git diff --name-only --diff-
 
 Write the body with the Write tool. Unattended: to `<report dir>/<slug>-pr-body.md`. Interactive: to a file in the scratchpad.
 
-When the sheet's "Browser test" line does not match the browser-test evidence (the report page, the rounds, the open findings), build the sheet again first: read `.claude/skills/decision-sheet/SKILL.md` and follow it with the same `--out`.
+When the sheet's "Browser test" line does not match the browser-test evidence (the report page, the rounds, the open findings), build the sheet again first: read `.claude/skills/decision-sheet/SKILL.md` and follow it with the same `--out` and `--no-codex`, and copy the Codex line and the Codex questions from the old sheet into the new one.
 
 Sections:
 

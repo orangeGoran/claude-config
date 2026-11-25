@@ -20,6 +20,7 @@
       "Bash(mkdir -p .plans/*)",
       "Bash(gh issue view*)",
       "Bash(gh run view*)",
+      "Bash(node .claude/scripts/run-usage.mjs *)",
       "Bash(npm test*)",
       "Bash(node --test*)",
       "Bash(command -v codex)",

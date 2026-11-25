@@ -20,7 +20,7 @@ Do not validate the plan yourself. The gate exists to get a review from an agent
 
 - `subagent_type: "plan-validator"`
 - `description: "Validate plan"`
-- `prompt`: the plan path, and the instruction to follow its full process: read the plan, `AGENTS.md`, `docs/roadmap.md`, `docs/plans-dashboard.md`, then check every claim against the repository (paths, symbols, signatures, the reference implementation, wiring, consumers of changed symbols, migrations, "How to verify" commands).
+- `prompt`: the plan path, and the instruction to follow its full process: read the plan, `AGENTS.md`, `docs/roadmap.md`, `docs/plans-dashboard.md` and the `AGENTS.md` of each folder the plan touches (and of its parent folders), then check every claim against the repository (paths, symbols, signatures, the reference implementation, wiring, consumers of changed symbols, migrations, "How to verify" commands).
 
 If a parent plan, a roadmap or a related spec belongs with the plan, pass its path too, and tell the agent that it is **context only**: the named plan is the one to validate.
 
@@ -29,7 +29,7 @@ If the agent type is not found (it was created in this session and the session w
 ## Step 2: Present the verdict
 
 - Relay the verdict, the blocking issues, the concerns, the edge cases, the checklist and the copy-paste block **as the agent wrote them**. Do not soften findings.
-- Show the artifact path `.plans/.validations/<plan-basename>-validation-<n>.md` on its own line. If the agent's reply has no path, say that the agent did not complete, and run Step 1 again.
+- Show the artifact path `.plans/.validations/<plan-basename>-validation-<n>.md` on its own line. If the agent's reply has no path, say that the agent did not complete, and run Step 1 again. Never write an inline review in its place.
 
 ## Step 3: Next action
 

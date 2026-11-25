@@ -25,7 +25,6 @@ These rules apply to every summary, report section, PR body, comment and status 
 - **An odd value is a finding until you prove that it is harmless:** a count of 0, a skipped test, an empty file or section, a link that does not load, a status that does not match the plan. Write what you checked to clear it, or list it as open.
 - **Count the real state.** A summary gives the count of the whole, for example "41 passed, 2 skipped". Never write "all done", "everything works" or "complete" unless the count shows it.
 - **"Skipped" is not a result** for a check that the plan or this skill requires. A required check that did not run is open, with the reason.
-- **When the evidence changes after the PR opened** (a new test result, a fix, a new browser-test report), rebuild the decision sheet and update the PR body. Each line of the sheet (for example "Browser test") must match the PR body.
 
 ## Step 0 — Scope
 
@@ -37,7 +36,7 @@ These rules apply to every summary, report section, PR body, comment and status 
 ## Step 1 — Write the missing tests
 
 - `/skill-2-implement` writes the unit tests with each step. Here, compare the plan's **Tests** section with the test files, and write only the missing ones. Write the end-to-end tests here.
-- Put tests where the package's existing tests are. Follow their pattern. If the package has no tests yet, follow the pattern the plan names. Read the nested `AGENTS.md` of the test folder first, if it has one: it lists the traps of the test harness.
+- Put tests where the package's existing tests are. Follow their pattern. If the package has no tests yet, follow the pattern the plan names. A nested `AGENTS.md` of the test folder, if there is one, lists the traps of the test harness. It loads by itself when you read a file in its folder and a `CLAUDE.md` with `@AGENTS.md` sits next to it: before you create a test file there, read one file in that folder. When no such `CLAUDE.md` sits next to it, or the folder has no other file, read the `AGENTS.md` itself.
 - **End-to-end tests are mandatory for each new or changed endpoint** when the project has an HTTP API. Each endpoint gets tests for: success, a validation error, 401 and 403 for each role that the plan's access rules name, 404 for a missing or foreign resource, and, when the project is multi-tenant, a request from another tenant that gets no data. Use the shared test helpers that the existing end-to-end tests use. When the repo has no end-to-end command yet ("Test (end to end)" is "not available yet"), write the cases as an open question, not as skipped tests.
 - **Hard rules need a negative test.** When the change touches a hard rule in `AGENTS.md` (Restart after dashboard changes; No npm dependencies; Public repo: no private data; Global rules affect every project; Never stop processes by name; Tests for logic changes; Docs: current state only), add a test that fails when the rule breaks. A test that only checks the happy path is not enough.
 - **The tests this project needs for its rules** (when the change touches the rule):
@@ -82,7 +81,7 @@ Run it when the plan's **Tests** section has an **AI output** subsection that is
 1. Run the "Lint" and "Format" commands on the changed files (a command that fixes files is fine in this step). When the Commands table has a "Lint (check only)" row, run it after the fix: its exit code is the result.
 2. **Judge by the exit code and the error count, never by the tail of the output.** A long output can bury an error under many warnings. Search it with the Grep tool for the error marker of the linter. Exit 0 → go on.
 3. Lint errors (not only warnings) → read them from that output, fix the code (never the lint config), and run the lint command again.
-4. **After any lint fix, run the scoped tests of 2a and 2b again once.** A lint fix can break a test. A failure → back to that loop.
+4. **After any lint fix, run the scoped tests of 2a and 2b again once.** A lint fix can break a test. A failure → back to that loop. Step 3 runs the full suites.
 
 ## Step 2.5 — Browser test
 
@@ -121,9 +120,10 @@ Call the skill's scripts with the home folder written out, for example `node /Us
 
 **No claim without a fresh run.**
 
-1. Run each full test command once, not scoped (AGENTS.md, **Commands**, "Test (full)", and "Test (end to end)" when the scope has end-to-end tests). A row that is "not available yet" is reported as such.
+1. Run each full test command once per tree state, not scoped (AGENTS.md, **Commands**, "Test (full)", and "Test (end to end)" when the plan's **Tests** section lists end-to-end tests, the plan's **How to verify** lists the command, or the change adds or changes an end-to-end test or an entry point that one covers). A row that is "not available yet" is reported as such.
 2. Read every failure from that output; do not run the suite again to find them. Search a long output with the Grep tool for the failure markers: ` FAIL ` and `✗` or `×` lines (Vitest, Jest), `✘` and `<n> failed` lines (Playwright), `FAILED` and `ERROR` lines (pytest).
-3. Read the result counts per command: passed, failed, skipped. Check for 0 failed, and that the count of tests that ran is not 0.
+   2a. A fix in this step changes the tree: after it, run the full commands of item 1 again. A failed full run stays in the evidence: write its counts. A failed suite gets one retry alone (its file with "Test (one file)", or with the file filter of "Test (end to end)") in three cases only: (1) every failing test in it shows a connection sign (`ECONNREFUSED`, `ECONNRESET`, `socket hang up`, a timeout while it connects to a service), and none shows an assertion failure (`expect(`, `Expected`, `Received`, `AssertionError`); (2) the suite crashed with a signal (`SIGSEGV`, `SIGKILL`) before it reported any test; (3) in the same full run, the suite failed after a suite of case 1, with the same connection sign and no assertion failure. Any other failure gets no retry. The gate passes only when each failed suite qualified and its retry passed; write `full run: <counts>; infra: <suite> (<sign>), retried alone: <counts>`. Any other failure, a failed retry, or a retry that cannot start keeps the gate failed: fix it (or report it as open), then run the full command again. Take the counts from the saved output (search it with the Grep tool). Never run a suite again only to read its counts.
+3. Read the result counts per command: passed, failed, skipped. Check for 0 failed (or only infra failures that item 2a cleared), and that the count of tests that ran is not 0.
 4. Only then report. A skipped test is not a pass. Results from an earlier run do not count.
 5. When all tests pass, run `bash .claude/scripts/workflow-complete-step.sh <plan-basename> test` (`<plan-basename>` without `.md`).
 
@@ -136,6 +136,7 @@ Call the skill's scripts with the home folder written out, for example `node /Us
 - Only the unit tests ran, but the scope also needs the end-to-end tests.
 - An existing test was changed to make it pass, and the plan does not change that behavior.
 - A test that would still pass if the feature were not built.
+- A partial run reported as the full run (a retry under item 2a is not a partial run; it adds to the full run).
 
 ## Step 4 — Summary
 
