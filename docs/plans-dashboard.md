@@ -194,6 +194,12 @@ Known limits:
 
 The dashboard server also sends macOS notifications, with no page open: when it starts a plan by itself, when such a start fails, when a `Waits for:` line has an error that you must fix, and when a run of a pipeline project (with `.claude/scripts/auto-pipeline.sh`) needs you or failed. A notification reads like a tab: the title has the project label, what happened and the PR number (`acme-web · your turn · PR #903`), the line under it has the plan title, and the text has the detail without links. A click opens that plan; this needs `terminal-notifier` (`brew install terminal-notifier`), because an `osascript` notification opens Script Editor. With 🔔 on and the page open, a run that stops gives two notifications: one from the page and one from the server. `DASH_NO_NOTIFY=1` turns the server's notifications off.
 
+## Sticky note
+
+**📝 Note** in the header's **⋯** menu (or "Sticky note" in the ⌘K palette) shows or hides one sticky note over the page. It stays on screen on every tab and plan.
+Drag it by its top bar, resize it at its bottom right corner, and pick a color with the dots. × hides it and keeps the text.
+The note is kept in this browser only (localStorage `dash-note`). Another browser does not see it, and clearing the site data removes it.
+
 ## Pull requests
 
 When a plan's branch `auto/<slug>` has a PR on GitHub, the plan shows a `PR #n` chip, and its panel gets two more tabs. The [chat](#chat-with-the-agent) opens beside both. The plan tab itself opens on the summary and the buttons; status, tags and session history are under **⋯ more**, and the plan text is under **Show the full plan**. **Open PR** opens the Pull request tab.

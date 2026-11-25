@@ -16,6 +16,7 @@
 <div id="hdmenu" class="hdmenu" popover>
   <button id="boardBtn" aria-pressed="false" title="All plans on one board: Backlog, Ready, Running, Needs you, Failed, Done">▦ Board</button>
   <button id="scoutBtn" title="The scout: what it found, its last runs, its log and setup">🔭 Scout</button>
+  <button id="noteBtn" aria-pressed="false" title="A sticky note over the page. Drag it by its top bar. It stays in this browser.">📝 Note</button>
   <a class="hdlink" href="http://localhost:{{QA_PORT}}/" target="_blank" rel="noopener" title="report pages of the browser-usability-test skill">QA reports ↗</a>
   <hr>
   <button id="guidebtn" title="find repos on this machine and add them; step 1 explains how it works">＋ Add project</button>
@@ -72,6 +73,10 @@
   <p id="seldlgnote" hidden></p><pre id="seldlgbody"></pre></dialog>
 <div id="palette" class="palette" role="dialog" aria-modal="true" aria-label="Command palette" hidden><input id="palq" type="search" autocomplete="off" spellcheck="false" aria-label="Search plans and actions" placeholder="Search plans and actions…"><div id="pall" role="listbox"></div></div>
 <div id="mergedcard" role="dialog" aria-label="PR merged" hidden></div>
+<div id="note" class="note" role="dialog" aria-label="Sticky note" hidden><div class="notebar" id="notebar" title="Drag to move">
+  <span class="notecolors"><button data-color="yellow" aria-label="Yellow"></button><button data-color="green" aria-label="Green"></button><button data-color="blue" aria-label="Blue"></button><button data-color="pink" aria-label="Pink"></button></span>
+  <span style="flex:1"></span><button class="notex" id="notex" title="Hide the note. Its text stays." aria-label="Hide note">×</button></div>
+  <textarea id="notetext" spellcheck="false" placeholder="Write a note…" aria-label="Note text"></textarea></div>
 <div id="toasts" role="status" aria-live="polite"><div id="toastList"></div><button id="toastPill" class="toastPill" hidden></button></div>
 <div id="tour"><div id="tourblock"></div><div id="tourhole"></div>
   <div id="tourpop" role="dialog" aria-live="polite"></div></div>

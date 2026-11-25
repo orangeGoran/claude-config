@@ -1989,6 +1989,21 @@ test('the page: the chat is always open for a plan with a session, with no butto
   assert.ok(!/id="cclose"|data-chat=|dash-chat-open|chatBtn\(/.test(src), 'no Chat button, no close button, no saved on/off');
 });
 
+test('the page: the sticky note stays inside the window, and the page has its menu button and note', async () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const m = src.match(/^function noteClamp\([\s\S]*?\n\}$/m);
+  assert.ok(m, 'app.js has noteClamp');
+  const noteClamp = new Function(m[0] + '\nreturn noteClamp;')();
+  assert.deepEqual(noteClamp(100, 50, 240, 180, 1440, 900), { x: 100, y: 50 }, 'inside: unchanged');
+  assert.deepEqual(noteClamp(1400, 880, 240, 180, 1440, 900), { x: 1200, y: 720 }, 'past the right and bottom edges');
+  assert.deepEqual(noteClamp(-30, -10, 240, 180, 1440, 900), { x: 0, y: 0 }, 'past the left and top edges');
+  assert.deepEqual(noteClamp(10, 10, 240, 180, 200, 100), { x: 0, y: 0 }, 'a window smaller than the note keeps its top bar visible');
+  const page = await (await get('/')).text();
+  assert.match(page, /id="noteBtn"/);
+  assert.match(page, /id="note" class="note"[^>]*hidden/);
+  assert.match(page, /id="notetext"/);
+});
+
 test('the page: the first paint and Back reveal and scroll to the open plan', () => {
   const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
   assert.match(src, /const reveal = !firstPaint && selected;\n\s*if \(reveal\) revealInSide\(selected\);\n\s*renderList\(\);\n\s*if \(reveal\) scrollToSelected\(\);/);

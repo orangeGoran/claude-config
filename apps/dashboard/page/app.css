@@ -766,6 +766,22 @@
   .toast .tb { color:var(--dim); overflow-wrap:anywhere; }
   .toast .tx, .toast .th { background:none; border:0; color:var(--dim); cursor:pointer; font-size:16px; line-height:1; padding:0 3px; }
   .toast .tx:hover, .toast .th:hover { color:var(--fg); }
+  /* the sticky note: one per browser, over every tab; drag it by its top bar, resize it at the bottom right corner */
+  .note { --nc:#fde68a; position:fixed; z-index:42; width:240px; min-width:160px; min-height:110px; display:flex; flex-direction:column;
+          background:var(--nc); color:#1f2328; border-radius:6px; box-shadow:0 10px 30px rgba(0,0,0,.35); resize:both; overflow:hidden; }
+  .note[hidden] { display:none; }
+  .note[data-color="green"] { --nc:#bbf7d0; } .note[data-color="blue"] { --nc:#bfdbfe; } .note[data-color="pink"] { --nc:#fbcfe8; }
+  .notebar { display:flex; align-items:center; gap:6px; padding:4px 6px; cursor:grab; touch-action:none; user-select:none;
+             background:color-mix(in srgb, var(--nc) 80%, #000 8%); }
+  body.notedrag, body.notedrag .notebar { cursor:grabbing; user-select:none; }
+  .notecolors { display:flex; gap:4px; }
+  .notecolors button { width:14px; height:14px; padding:0; border-radius:50%; border:1px solid rgba(0,0,0,.25); cursor:pointer; }
+  .notecolors [data-color="yellow"] { background:#fde68a; } .notecolors [data-color="green"] { background:#bbf7d0; }
+  .notecolors [data-color="blue"] { background:#bfdbfe; } .notecolors [data-color="pink"] { background:#fbcfe8; }
+  .notex { background:none; border:0; color:#1f2328; opacity:.6; cursor:pointer; font-size:16px; line-height:1; padding:0 3px; }
+  .notex:hover { opacity:1; }
+  .note textarea { flex:1; width:100%; box-sizing:border-box; border:0; outline:0; resize:none; padding:8px 10px; background:transparent;
+                   color:inherit; font:inherit; font-size:calc(13px * var(--fs)); line-height:1.4; }
   /* a merged PR: a card on the right with the git step and Okay, close */
   #mergedcard { position:fixed; right:calc(var(--chatw, 0px) + 16px); top:120px; z-index:45; width:min(340px, calc(100vw - 32px));
                 background:var(--panel); border:1px solid var(--merge); border-left:4px solid var(--merge); border-radius:10px;

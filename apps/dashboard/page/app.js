@@ -4550,6 +4550,7 @@ const openHasPr = () => { const p = find(selected); return !!(p && p.pr); };
 const PALETTE_ACTIONS = [
   { id: 'board', label: 'Board', run: () => byId('boardBtn').click() },
   { id: 'scout', label: 'Scout', run: () => byId('scoutBtn').click() },
+  { id: 'note', label: 'Sticky note: show or hide', run: () => byId('noteBtn').click() },
   { id: 'settings', label: 'Settings', run: () => openSettings() },
   { id: 'guide', label: 'Add project', run: () => openGuide(1) },
   { id: 'chat', label: 'Chat: type a message', run: () => focusChat(), when: () => hasChat(find(selected)) },
@@ -5038,6 +5039,73 @@ let scoutAboutOpen = null;   // null: open until the first run, then folded; aft
 byId('scoutBtn').addEventListener('click', () => (byId('logpane').classList.contains('open') && byId('logtitle').textContent === SCOUT_TITLE ? closeLog() : openScout()));
 scoutPeek();
 setInterval(scoutPeek, 60000);
+// --- sticky note ---
+// One sticky note over the whole page, the same on every tab. It is kept in this browser
+// (localStorage dash-note): { text, color, x, y, w, h, open }. 📝 Note in the ⋯ menu shows or hides it;
+// × hides it and keeps the text. Drag it by its top bar; the browser corner resizes it.
+/** Keeps a note of size w × h fully inside a vw × vh window. Returns the new top-left corner. */
+function noteClamp(x, y, w, h, vw, vh) {
+  return { x: Math.max(0, Math.min(x, vw - w)), y: Math.max(0, Math.min(y, vh - h)) };
+}
+// --- end sticky note math ---
+let note = { text: '', color: 'yellow', x: null, y: null, w: 240, h: 180, open: false };
+try { note = { ...note, ...JSON.parse(localStorage.getItem('dash-note') || '{}') }; } catch {}
+const saveNote = () => { try { localStorage.setItem('dash-note', JSON.stringify(note)); } catch {} };
+function placeNote() {
+  const el = byId('note');
+  if (note.x == null) { note.x = window.innerWidth - note.w - 40; note.y = 90; }
+  const p = noteClamp(note.x, note.y, el.offsetWidth || note.w, el.offsetHeight || note.h, window.innerWidth, window.innerHeight);
+  note.x = p.x; note.y = p.y;
+  el.style.left = p.x + 'px'; el.style.top = p.y + 'px';
+}
+function paintNote() {
+  const el = byId('note');
+  el.hidden = !note.open;
+  el.dataset.color = note.color;
+  el.style.width = note.w + 'px'; el.style.height = note.h + 'px';
+  if (byId('notetext').value !== note.text) byId('notetext').value = note.text;
+  byId('noteBtn').setAttribute('aria-pressed', String(note.open));
+  if (note.open) placeNote();
+}
+function showNote(open) {
+  note.open = open; saveNote(); paintNote();
+  if (open) byId('notetext').focus();
+}
+byId('noteBtn').addEventListener('click', () => showNote(!note.open));
+byId('notex').addEventListener('click', () => showNote(false));
+byId('notetext').addEventListener('input', (e) => { note.text = e.target.value; saveNote(); });
+byId('note').querySelectorAll('[data-color]').forEach((b) => b.addEventListener('click', () => {
+  note.color = b.dataset.color; saveNote(); paintNote();
+}));
+byId('notebar').addEventListener('pointerdown', (e) => {
+  if (e.target.closest('button')) return;
+  e.preventDefault();
+  const el = byId('note'), dx = e.clientX - el.offsetLeft, dy = e.clientY - el.offsetTop;
+  const move = (ev) => { note.x = ev.clientX - dx; note.y = ev.clientY - dy; placeNote(); };
+  document.body.classList.add('notedrag');
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', () => {
+    document.removeEventListener('pointermove', move);
+    document.body.classList.remove('notedrag');
+    saveNote();
+  }, { once: true });
+});
+// the browser's resize corner: keep the new size
+new ResizeObserver(() => {
+  const el = byId('note');
+  if (el.hidden || !el.offsetWidth) return;
+  if (el.offsetWidth === note.w && el.offsetHeight === note.h) return;
+  note.w = el.offsetWidth; note.h = el.offsetHeight; saveNote();
+}).observe(byId('note'));
+window.addEventListener('resize', () => { if (note.open) placeNote(); });
+// another plans.test tab changed the note
+window.addEventListener('storage', (e) => {
+  if (e.key !== 'dash-note') return;
+  try { note = { ...note, ...JSON.parse(e.newValue || '{}') }; } catch {}
+  paintNote();
+});
+paintNote();
+// --- end sticky note ---
 // plan usage in the header: one pill per tool, its logo and the used percent, e.g. "✳ 88%".
 // With two windows: the 5-hour one first, then the weekly one, "✳ 12% · 88%"; the tooltip names them. The logos are the ones the
 // Claude Code and Codex VS Code extensions ship.
