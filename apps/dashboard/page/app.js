@@ -3099,10 +3099,36 @@ function paintMergedCard(p) {
         (mergedBusy === p.key ? ' disabled>⏳ Cleaning up…' : '>🧹 Clean up') + '</button>' : '') +
       '<button class="primary" id="mcOk" title="Closes this card and the plan\u2019s tab. The plan stays in done/.">Okay, close</button></div>';
   M.hidden = false;
+  placeMergedCard();
   byId('mcMin')?.addEventListener('click', () => { mergedSmall.add(p.key); paintMergedCard(p); });
   byId('mcOk')?.addEventListener('click', () => mergedOkay(p.key));
   byId('mcClean')?.addEventListener('click', () => mergedCleanup(p));
 }
+// Drag the card by its title row. The place is kept in this browser (localStorage dash-merged-pos);
+// until you move it, the card stays at its CSS place (top right, left of the chat).
+let mergedPos = null;
+try { mergedPos = JSON.parse(localStorage.getItem('dash-merged-pos') || 'null'); } catch {}
+/** Puts the merged card at the place you dragged it to, kept inside the window (noteClamp). */
+function placeMergedCard() {
+  const M = byId('mergedcard');
+  if (!M || M.hidden || !mergedPos) return;
+  const at = noteClamp(mergedPos.x, mergedPos.y, M.offsetWidth, M.offsetHeight, window.innerWidth, window.innerHeight);
+  M.style.left = at.x + 'px'; M.style.top = at.y + 'px'; M.style.right = 'auto';
+}
+byId('mergedcard')?.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest('.mchead') || e.target.closest('button')) return;
+  e.preventDefault();
+  const M = byId('mergedcard'), r = M.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+  const move = (ev) => { mergedPos = { x: ev.clientX - dx, y: ev.clientY - dy }; placeMergedCard(); };
+  document.body.classList.add('notedrag');
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', () => {
+    document.removeEventListener('pointermove', move);
+    document.body.classList.remove('notedrag');
+    try { localStorage.setItem('dash-merged-pos', JSON.stringify(mergedPos)); } catch {}
+  }, { once: true });
+});
+window.addEventListener('resize', placeMergedCard);
 /** Closes the merged card of key for good, and closes its tab (or the plan when it has no tab). */
 function mergedOkay(key) {
   mergedClosed.add(key);
@@ -5045,7 +5071,7 @@ setInterval(scoutPeek, 60000);
 // One sticky note over the whole page, the same on every tab. It is kept in this browser
 // (localStorage dash-note): { text, color, x, y, w, h, open }. 📝 Note in the ⋯ menu shows or hides it;
 // × hides it and keeps the text. Drag it by its top bar; the browser corner resizes it.
-/** Keeps a note of size w × h fully inside a vw × vh window. Returns the new top-left corner. */
+/** Keeps a note (or the merged card) of size w × h fully inside a vw × vh window. Returns the new top-left corner. */
 function noteClamp(x, y, w, h, vw, vh) {
   return { x: Math.max(0, Math.min(x, vw - w)), y: Math.max(0, Math.min(y, vh - h)) };
 }

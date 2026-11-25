@@ -30,10 +30,11 @@
   /* one header row: Plans, the ⋯ menu, Code, the Plan · PR switch, the open-plan tabs, then the status on the right.
      The buttons used less often are in the ⋯ menu (#hdmenu), so the row also holds the open-plan tabs */
   header.mainhd { padding:5px 14px; gap:10px; min-height:calc(40px * var(--fs)); }
-  /* the Plan · PR / Files changed switch starts at the same x in the header and in the Files changed bar (.rbar):
+  /* the Plan / Files switch starts at the same x in the header and in the Files changed bar (.rbar):
      both bars have the same padding and gap, and a left group of the same fixed width (--hdl). Its slot (--hdsw)
-     stays when the open plan has no PR, so the tabs right of it never move */
-  :root { --hdl:calc(220px * var(--fs)); --hdsw:calc(260px * var(--fs)); }
+     fills the rest of the sidebar width (aside), so the open-plan tabs start at the sidebar's right edge,
+     and stays when the open plan has no PR, so the tabs never move */
+  :root { --asw:calc(400px * var(--fs)); --hdl:calc(184px * var(--fs)); --hdsw:calc(var(--asw) - 14px - var(--hdl) - 20px); }
   .mainhd .hdl { display:flex; align-items:center; gap:10px; width:var(--hdl); flex-shrink:0; white-space:nowrap; }
   #hdtabs { flex-shrink:0; white-space:nowrap; min-width:var(--hdsw); display:flex; }
   .mainhd .hright { display:flex; align-items:center; gap:8px; margin-left:auto; flex-shrink:0; min-width:0; }
@@ -58,7 +59,7 @@
   /* the column right of the sidebar: the tab strip on top, then the plan, the board and the chat side by side */
   .maincol { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; }
   .mainrow { flex:1; min-height:0; display:flex; }
-  aside { width:calc(400px * var(--fs)); border-right:1px solid var(--line); background:var(--panel);
+  aside { width:var(--asw); border-right:1px solid var(--line); background:var(--panel);
           flex-shrink:0; display:flex; flex-direction:column; }
   .filters { padding:10px 12px; display:flex; gap:8px; align-items:center; border-bottom:1px solid var(--line); }
   .filters button { font-size:calc(12px * var(--fs)); }
@@ -792,7 +793,8 @@
   #mergedcard .dim { overflow-wrap:anywhere; }
   #mergedcard pre { margin:0; max-height:140px; overflow:auto; white-space:pre-wrap; font-size:calc(11.5px * var(--fs)); }
   #mergedcard .crow { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
-  #mergedcard .mchead { display:flex; align-items:center; gap:8px; }
+  #mergedcard .mchead { display:flex; align-items:center; gap:8px; cursor:grab; touch-action:none; user-select:none; }
+  body.notedrag #mergedcard .mchead { cursor:grabbing; }
   #mergedcard .mchead h3 { flex:1; }
   #mergedcard .mcmin { background:none; border:0; color:var(--dim); font-size:20px; line-height:1; cursor:pointer; padding:0 4px; }
   #mergedcard .mcmin:hover { color:var(--fg); }
