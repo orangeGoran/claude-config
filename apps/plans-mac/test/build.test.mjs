@@ -51,7 +51,8 @@ test('infoPlist writes the bundle keys and an XML-escaped PlansURL', () => {
 const pageHooks = () => {
   const m = /window\.dashboard = \{([^}]*)\}/.exec(APP_JS);
   assert.ok(m, 'app.js has window.dashboard = { … }');
-  return [...m[1].matchAll(/(\w+):/g)].map((x) => x[1]);
+  // each hook starts the object or follows a comma: `name: value` or the shorthand `name`
+  return [...m[1].matchAll(/(?:^|,)\s*(\w+)/g)].map((x) => x[1]);
 };
 
 test('every hook the Swift menu calls exists in the page, and the menu calls all eight', () => {
@@ -75,6 +76,43 @@ test('each menu key calls its hook', () => {
     k: 'openSearch()', l: 'focusChat()', b: 'toggleBoard()', ',': 'openSettings()',
   };
   for (const [k, hook] of Object.entries(want)) assert.equal(keys[k], hook, `⌘${k} → ${hook}`);
+});
+
+test('⌘0, ⌘+ (also ⌘=) and ⌘− set the page zoom in Safari\'s steps, and the app keeps it', () => {
+  const actions = Object.fromEntries([...SWIFT.matchAll(/@objc func (\w+)\(_ sender: Any\?\) \{ (setZoom\([^)]*\)\)?) \}/g)].map((m) => [m[1], m[2]]));
+  const keys = {};
+  for (const m of SWIFT.matchAll(/NSMenuItem\(title: "[^"]*", action: #selector\((\w+)\(_:\)\), keyEquivalent: "([^"]*)"\)/g))
+    if (actions[m[1]]) keys[m[2]] = actions[m[1]];
+  assert.deepEqual(keys, { 0: 'setZoom(1)', '+': 'setZoom(nextZoom(web.pageZoom, 1))', '=': 'setZoom(nextZoom(web.pageZoom, 1))',
+    '-': 'setZoom(nextZoom(web.pageZoom, -1))' });
+  // the ⌘= item is hidden but still takes its key
+  assert.match(SWIFT, /zoomInEq\.isHidden = true\s*zoomInEq\.allowsKeyEquivalentWhenHidden = true/);
+  assert.match(SWIFT, /let zoomSteps: \[CGFloat\] = \[0\.5, 0\.67, 0\.75, 0\.8, 0\.9, 1, 1\.1, 1\.25, 1\.5, 1\.75, 2, 2\.5, 3\]/);
+  // the zoom is saved, read back at start, and moves the window buttons and the header room
+  assert.match(SWIFT, /func setZoom\(_ z: CGFloat\) \{\s*web\.pageZoom = z\s*UserDefaults\.standard\.set\(Double\(z\), forKey: "PageZoom"\)\s*placeWindowButtons\(\)\s*tellPageInset\(\)/);
+  assert.match(SWIFT, /web\.pageZoom = savedZoom\(\)/);
+});
+
+test('the page header is the title bar: the window buttons sit in it, and its empty part drags and zooms the window', () => {
+  // on only for a dashboard page with the macInset() hook; the waiting page and an older page keep the normal title bar
+  assert.match(SWIFT, /if on \{ window\.styleMask\.insert\(\.fullSizeContentView\) \} else \{ window\.styleMask\.remove\(\.fullSizeContentView\) \}/);
+  assert.match(SWIFT, /window\.titlebarAppearsTransparent = on\s*window\.titleVisibility = on \? \.hidden : \.visible/);
+  assert.match(SWIFT, /evaluateJavaScript\("!!\(window\.dashboard && window\.dashboard\.macInset\)"\) \{ \[weak self\] r, _ in\s*self\?\.headerTitleBar\(r as\? Bool == true\)/);
+  assert.match(SWIFT, /\} else \{\s*headerTitleBar\(false\)\s*\}/);
+  assert.match(SWIFT, /headerTitleBar\(false\)\s*web\.loadHTMLString\(page, baseURL: nil\)/);
+  // the page messages come only from the main frame of the app's origin
+  assert.match(SWIFT, /config\.userContentController\.add\(self, name: "plans"\)/);
+  assert.match(SWIFT, /guard message\.frameInfo\.isMainFrame, sameOrigin\(message\.frameInfo\.request\.url\)/);
+  assert.match(SWIFT, /if what == "drag", let down = web\.lastMouseDown \{ window\.performDrag\(with: down\) \}/);
+  // the page side: the same handler name, the hook the app calls, and drags only from empty header parts
+  assert.match(APP_JS, /const macApp = window\.webkit && window\.webkit\.messageHandlers && window\.webkit\.messageHandlers\.plans;/);
+  assert.match(SWIFT, /window\.dashboard\.macInset\(\\\(px\)\)/);
+  assert.ok(pageHooks().includes('macInset'), 'window.dashboard.macInset');
+  assert.match(APP_JS, /const empty = \(t\) => t === hd \|\| \(t\.matches && t\.matches\('\.hdl, #hdtabs, #stabs, \.hright'\)\);/);
+  assert.match(APP_JS, /if \(e\.button === 0 && e\.detail === 1 && empty\(e\.target\)\) macApp\.postMessage\('drag'\)/);
+  // full screen has no window buttons: the header gets its normal padding
+  assert.match(SWIFT, /window\.styleMask\.contains\(\.fullScreen\) \? 14 :/);
+  for (const ev of ['windowDidResize', 'windowDidExitFullScreen']) assert.match(SWIFT, new RegExp('func ' + ev + '\\([^)]*\\) \\{[^}]*placeWindowButtons\\(\\)'));
 });
 
 test('the delegates are set, and closing the window hides it and keeps the app running', () => {

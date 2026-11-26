@@ -37,6 +37,10 @@
   :root { --asw:calc(400px * var(--fs)); --hdl:calc(184px * var(--fs)); --hdsw:calc(var(--asw) - 14px - var(--hdl) - 20px); }
   .mainhd .hdl { display:flex; align-items:center; gap:10px; width:var(--hdl); flex-shrink:0; white-space:nowrap; }
   #hdtabs { flex-shrink:0; white-space:nowrap; min-width:var(--hdsw); display:flex; }
+  /* the Plans Mac app: the header row is the title bar, so it leaves room on the left for the window buttons
+     (--macinset, set by the app), and the open-plan tabs still start at the sidebar's right edge */
+  .mac-app header.mainhd { padding-left:var(--macinset, 80px); }
+  .mac-app #hdtabs { min-width:calc(var(--asw) - var(--macinset, 80px) - var(--hdl) - 20px); }
   .mainhd .hright { display:flex; align-items:center; gap:8px; margin-left:auto; flex-shrink:0; min-width:0; }
   .mainhd .hright > * { white-space:nowrap; }
   /* shown only while the open plan waits for GitHub or the server (busy), beside the thin bar at the top */

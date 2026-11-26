@@ -7,7 +7,8 @@ The Plans Mac app: a Swift window (`src/main.swift`) around the dashboard page, 
 - Plain AppKit and WebKit only. No SwiftUI, no Swift packages, no Xcode project.
 - Build only with `npm run build-app` (`node apps/plans-mac/build.mjs`). Tests use `--out <tmp> --no-install`.
 - The app calls the page only through the `window.dashboard` hooks in `apps/dashboard/page/app.js`. A new hook needs a page entry and a line in the hook contract test (`test/build.test.mjs`).
-- Each menu item is one `NSMenuItem(title:action:keyEquivalent:)` line, and each menu action is one `@objc func … { call("…") }` line: the key test reads them.
+- Each menu item is one `NSMenuItem(title:action:keyEquivalent:)` line, and each menu action is one `@objc func … { call("…") }` (or `{ setZoom(…) }`) line: the key tests read them.
+- The page talks to the app only through the `plans` message handler (`window.webkit.messageHandlers.plans`): `"drag"` and `"zoom"` from an empty part of its header. The app takes them only from the main frame of its origin.
 - Links to other origins open in the default browser. The menu calls go only to a page of the app's origin, and only while the window is visible.
 - Closing the window hides it. It never stops a run or a chat. A page `alert()` or `confirm()` shows the hidden window first (`showForPanel()`), so the page never waits on a sheet that nobody sees.
 - An API newer than macOS 13 needs `#if compiler(…)` around its `if #available` block, so the app still builds with an older SDK.

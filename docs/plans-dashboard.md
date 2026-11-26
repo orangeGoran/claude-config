@@ -207,9 +207,13 @@ The app opens the domain of the installed dashboard (from `~/.claude/pipeline-da
 | ⌘L | Open the chat of the open plan and put the cursor in its message box |
 | ⌘B | Open or close the board |
 | ⌘, | Open Settings (an open Settings form with unsaved edits stays as it is) |
+| ⌘+ (or ⌘=) / ⌘− | Make the page bigger / smaller (the app keeps the size after a quit) |
+| ⌘0 | Show the page at its normal size |
 | ⌘R | Reload the page |
 | ⇧⌘W | Hide the window |
 | ⌘Q | Quit the app |
+
+The page's header row is the window's title bar: the window buttons sit at its left end. Drag an empty part of the header to move the window, and double-click it to zoom the window (as set in System Settings → Desktop & Dock). The waiting page, and a dashboard that is older than the app, keep the normal title bar.
 
 Closing the window hides it. The app keeps running in the background, and it never stops a run or a chat: they run under the dashboard service. Click the Dock icon to show the window again, at the same size and place. While the window is hidden, the menu keys do nothing; a question from the page (for example "Compact this chat?") shows the window. ⌘Q quits the app; runs and chats keep going then too.
 

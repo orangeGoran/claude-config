@@ -32,9 +32,32 @@ func htmlEscape(_ s: String) -> String {
     .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
+/// The page zoom steps of ⌘+ and ⌘−, as in Safari.
+let zoomSteps: [CGFloat] = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3]
+
+/// Gives the next zoom step up (+1) or down (−1) from a zoom, inside zoomSteps.
+func nextZoom(_ zoom: CGFloat, _ dir: Int) -> CGFloat {
+  if dir > 0 { return zoomSteps.first { $0 > zoom + 0.001 } ?? zoomSteps.last! }
+  return zoomSteps.last { $0 < zoom - 0.001 } ?? zoomSteps.first!
+}
+
+/// The height of the page's header row in points at zoom 1 (header.mainhd in apps/dashboard/page/app.css).
+let headerHeight: CGFloat = 40
+/// The left padding that the header needs in points, so its buttons start right of the window buttons.
+let headerInset: CGFloat = 80
+
+/// A web view that keeps its last mouse-down, so the page can start a window drag from its header.
+final class PageView: WKWebView {
+  var lastMouseDown: NSEvent?
+  override func mouseDown(with event: NSEvent) {
+    lastMouseDown = event
+    super.mouseDown(with: event)
+  }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
   var window: NSWindow!
-  var web: WKWebView!
+  var web: PageView!
   /// The one retry timer of the waiting page.
   var retry: Timer?
   /// The URL that the waiting page loads again: the failed URL when it has the app's origin, else appURL.
@@ -60,9 +83,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
       config.preferences.inactiveSchedulingPolicy = .none
     }
     #endif
-    web = WKWebView(frame: window.contentView?.bounds ?? .zero, configuration: config)
+    // the page posts "drag" (a mouse-down on an empty part of its header) and "zoom" (a double-click there)
+    config.userContentController.add(self, name: "plans")
+    web = PageView(frame: window.contentView?.bounds ?? .zero, configuration: config)
     web.navigationDelegate = self
     web.uiDelegate = self
+    web.pageZoom = savedZoom()
     window.contentView = web
     // the keys go to the page from the start, so ⌘K and ⌘L can put the cursor in a box before the first click
     window.initialFirstResponder = web
@@ -88,6 +114,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     return true
   }
 
+  // the title bar puts the window buttons back after a resize and after full screen
+  func windowDidResize(_ notification: Notification) { placeWindowButtons() }
+  func windowDidEnterFullScreen(_ notification: Notification) { tellPageInset() }
+  func windowDidExitFullScreen(_ notification: Notification) { placeWindowButtons(); tellPageInset() }
+
   func applicationWillTerminate(_ notification: Notification) {
     retry?.invalidate()
     retry = nil
@@ -101,6 +132,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     guard window.isVisible, sameOrigin(web.url) else { return }
     web.evaluateJavaScript("window.dashboard && window.dashboard." + js, completionHandler: nil)
   }
+
+  // --- the title bar: the window buttons in the page's header row
+
+  /// Makes the page's header row the title bar (on), or shows the normal title bar (off).
+  /// It is on only for a dashboard page that has the macInset() hook: a page without it (the waiting page,
+  /// an older dashboard) has no header to drag the window by.
+  func headerTitleBar(_ on: Bool) {
+    if on { window.styleMask.insert(.fullSizeContentView) } else { window.styleMask.remove(.fullSizeContentView) }
+    window.titlebarAppearsTransparent = on
+    window.titleVisibility = on ? .hidden : .visible
+    placeWindowButtons()
+  }
+
+  /// Puts the close, minimize and zoom buttons in the middle of the page's header row (as far as the title bar allows).
+  func placeWindowButtons() {
+    let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].compactMap { window.standardWindowButton($0) }
+    guard let bar = buttons.first?.superview else { return }
+    // the normal title bar: the buttons where AppKit puts them
+    guard window.styleMask.contains(.fullSizeContentView) else { return }
+    let middle = min(headerHeight * web.pageZoom / 2, bar.frame.height - 7)
+    for (i, b) in buttons.enumerated() {
+      b.setFrameOrigin(NSPoint(x: 14 + CGFloat(i) * 20, y: bar.frame.height - middle - b.frame.height / 2))
+    }
+  }
+
+  /// Tells the page how much room its header leaves on the left for the window buttons, in page pixels (none in full screen).
+  func tellPageInset() {
+    guard sameOrigin(web.url) else { return }
+    let px = window.styleMask.contains(.fullScreen) ? 14 : Int((headerInset / web.pageZoom).rounded())
+    web.evaluateJavaScript("window.dashboard && window.dashboard.macInset && window.dashboard.macInset(\(px))", completionHandler: nil)
+  }
+
+  /// Takes the page's "drag" and "zoom" messages from its header, only from the main frame of the app's origin.
+  func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+    guard message.frameInfo.isMainFrame, sameOrigin(message.frameInfo.request.url), let what = message.body as? String else { return }
+    if what == "drag", let down = web.lastMouseDown { window.performDrag(with: down) }
+    if what == "zoom" {
+      // a double-click on the title bar does what System Settings → Desktop & Dock says
+      switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+      case "Minimize": window.performMiniaturize(nil)
+      case "None": break
+      default: window.performZoom(nil)
+      }
+    }
+  }
+
+  // --- page zoom (⌘+, ⌘−, ⌘0); the zoom is kept across a quit
+
+  func savedZoom() -> CGFloat {
+    let z = UserDefaults.standard.double(forKey: "PageZoom")
+    return z >= Double(zoomSteps.first!) && z <= Double(zoomSteps.last!) ? CGFloat(z) : 1
+  }
+
+  /// Sets the page zoom, keeps it, and moves the window buttons and the header room with it.
+  func setZoom(_ z: CGFloat) {
+    web.pageZoom = z
+    UserDefaults.standard.set(Double(z), forKey: "PageZoom")
+    placeWindowButtons()
+    tellPageInset()
+  }
+
+  @objc func zoomIn(_ sender: Any?) { setZoom(nextZoom(web.pageZoom, 1)) }
+  @objc func zoomOut(_ sender: Any?) { setZoom(nextZoom(web.pageZoom, -1)) }
+  @objc func actualSize(_ sender: Any?) { setZoom(1) }
 
   @objc func settings(_ sender: Any?) { call("openSettings()") }
   @objc func board(_ sender: Any?) { call("toggleBoard()") }
@@ -160,6 +255,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     item(view, NSMenuItem(title: "Board", action: #selector(board(_:)), keyEquivalent: "b"))
     item(view, NSMenuItem(title: "Command Palette", action: #selector(palette(_:)), keyEquivalent: "k"))
     item(view, NSMenuItem(title: "Chat Box", action: #selector(chatBox(_:)), keyEquivalent: "l"))
+    view.addItem(.separator())
+    item(view, NSMenuItem(title: "Actual Size", action: #selector(actualSize(_:)), keyEquivalent: "0"))
+    item(view, NSMenuItem(title: "Zoom In", action: #selector(zoomIn(_:)), keyEquivalent: "+"))
+    // ⌘= is ⌘+ without Shift, as in Safari: a hidden item with the same action
+    let zoomInEq = NSMenuItem(title: "Zoom In", action: #selector(zoomIn(_:)), keyEquivalent: "=")
+    zoomInEq.isHidden = true
+    zoomInEq.allowsKeyEquivalentWhenHidden = true
+    item(view, zoomInEq)
+    item(view, NSMenuItem(title: "Zoom Out", action: #selector(zoomOut(_:)), keyEquivalent: "-"))
     view.addItem(.separator())
     item(view, NSMenuItem(title: "Reload", action: #selector(reload(_:)), keyEquivalent: "r"))
 
@@ -254,6 +358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     </style></head><body><main><p>Waiting for the dashboard at <code>\(htmlEscape(appURL.absoluteString))</code>…</p>
     \(hint)</main></body></html>
     """
+    headerTitleBar(false)
     web.loadHTMLString(page, baseURL: nil)
     retry?.invalidate()
     retry = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
@@ -282,6 +387,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     if sameOrigin(webView.url) {
       retry?.invalidate(); retry = nil
+      web.evaluateJavaScript("!!(window.dashboard && window.dashboard.macInset)") { [weak self] r, _ in
+        self?.headerTitleBar(r as? Bool == true)
+        self?.tellPageInset()
+      }
+    } else {
+      headerTitleBar(false)
     }
   }
 
