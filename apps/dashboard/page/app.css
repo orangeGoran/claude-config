@@ -768,7 +768,8 @@
   .toast .tx, .toast .th { background:none; border:0; color:var(--dim); cursor:pointer; font-size:16px; line-height:1; padding:0 3px; }
   .toast .tx:hover, .toast .th:hover { color:var(--fg); }
   /* the sticky note: one per browser, over every tab; drag it by its top bar, resize it at the bottom right corner */
-  /* the paper starts 12px below the top of the box, so the tape sticks out above it; drop-shadow follows the paper and the tape, not the box */
+  /* the paper starts 12px below the top of the box, so the tape sticks out above it; drop-shadow follows the paper and the tape, not the box.
+     The whole note tilts by --tilt, like paper stuck on by hand */
   .note { --nc:#fde68a; position:fixed; z-index:42; width:240px; min-width:160px; min-height:110px; display:flex; flex-direction:column;
           padding-top:12px; box-sizing:border-box; color:#1f2328; resize:both; overflow:hidden; transform:rotate(var(--tilt, -1.5deg)); transition:transform .25s ease;
           border-radius:0 0 3px 22px / 0 0 3px 8px;
