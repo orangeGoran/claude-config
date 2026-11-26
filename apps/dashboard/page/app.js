@@ -1728,6 +1728,32 @@ byId('csplit').addEventListener('keydown', (e) => {
   e.preventDefault();
   setChatWidth(byId('chat').offsetWidth + (e.key === 'ArrowLeft' ? 40 : -40), true);
 });
+// the plan list's width: --asw on the root, so the header's Plan / Files slot follows it. Dragged and remembered.
+function setSideWidth(px, save) {
+  const R = document.documentElement.style;
+  const w = px ? Math.round(Math.max(280, Math.min(px, window.innerWidth * 0.5))) : 0;
+  if (w) R.setProperty('--asw', w + 'px'); else R.removeProperty('--asw');
+  if (save) try { w ? localStorage.setItem('dash-side-w', w) : localStorage.removeItem('dash-side-w'); } catch {}
+}
+try { setSideWidth(+localStorage.getItem('dash-side-w') || 0); } catch {}
+byId('asplit').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  const bar = e.currentTarget;
+  const move = (ev) => setSideWidth(ev.clientX);
+  document.body.classList.add('dragging'); bar.classList.add('on');
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', () => {
+    document.removeEventListener('pointermove', move);
+    document.body.classList.remove('dragging'); bar.classList.remove('on');
+    setSideWidth(document.querySelector('aside').offsetWidth, true);
+  }, { once: true });
+});
+byId('asplit').addEventListener('dblclick', () => setSideWidth(0, true));
+byId('asplit').addEventListener('keydown', (e) => {
+  if (!/^Arrow(Left|Right)$/.test(e.key)) return;
+  e.preventDefault();
+  setSideWidth(document.querySelector('aside').offsetWidth + (e.key === 'ArrowLeft' ? -40 : 40), true);
+});
 async function loadPr(p) {
   const r = await answer(await fetch('/api/pr?project=' + p.project + '&number=' + p.pr.number));
   prData[p.key] = r.ok ? { ...r.pr, from: JSON.stringify(p.pr) } : { error: r.output || r.error, from: JSON.stringify(p.pr) };

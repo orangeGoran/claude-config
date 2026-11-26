@@ -535,7 +535,7 @@
   .dtab tr.hk td { background:var(--thbg); color:var(--dim); padding:3px 8px; }
   .dtab td.a { background:var(--addbg); } .dtab td.d { background:var(--delbg); } .dtab td.e { background:var(--codebg); }
   /* review mode: the PR tabs take the whole window; one thin toolbar: back and title, the tabs in the middle, the actions on the right */
-  body.review > header, body.review aside { display:none; }
+  body.review > header, body.review aside, body.review #asplit { display:none; }
   body.review #detail { padding:0; display:flex; flex-direction:column; }
   .rbar { position:sticky; top:0; z-index:3; display:grid; grid-template-columns:var(--hdl) auto minmax(0,1fr) max-content;
           align-items:center; gap:10px; padding:5px 14px; background:var(--panel); border-bottom:1px solid var(--line); flex-shrink:0; }
@@ -880,7 +880,7 @@
   .bcempty { color:var(--dim); font-size:calc(12px * var(--fs)); padding:4px; }
   section#board .mini { padding:1px 8px; font-size:calc(10.5px * var(--fs)); border-radius:99px; }
   /* board view: the board is the list, so the sidebar goes; an open plan is a panel on the right */
-  body.boardview aside { display:none; }
+  body.boardview aside, body.boardview #asplit { display:none; }
   body.boardview section#board { flex:1; min-width:0; order:-1; }
   body.bpanel:not(.review) section#detail { flex:0 0 clamp(380px, 34vw, 680px); border-left:1px solid var(--line); padding:18px 22px 60px; }
   body.review section#board { display:none; }
