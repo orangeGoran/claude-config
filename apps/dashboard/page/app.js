@@ -1848,7 +1848,12 @@ function drawBarAction(p, tab) {
   const b = document.createElement('button');
   if (d.isDraft) {
     b.textContent = 'Ready for review'; b.className = 'primary';
-    b.addEventListener('click', () => { b.disabled = true; prAct(p, { action: 'ready' }); });
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      const ok = await prAct(p, { action: 'ready' });
+      // in Files changed a PR marked ready sends you back to the plan, like ‹ Plan (only when you still look at this PR's files)
+      if (ok && tab === 'files' && byId('prview')?.dataset.of === p.key + 'files#' + p.pr.number) byId('rback')?.click();
+    });
   } else {
     b.textContent = 'Merge…'; b.className = 'merge';
     b.addEventListener('click', () => {
@@ -1869,6 +1874,7 @@ const knownPr = {};
 let busyN = 0;
 const busy = (on) => { busyN = Math.max(0, busyN + (on ? 1 : -1)); document.body.classList.toggle('busy', busyN > 0); };
 const LABEL_BUSY = { ready: 'Marking ready…', draft: 'Back to draft…', close: 'Closing…', merge: 'Merging…', task: 'Saving…' };
+/** Runs one PR action (ready, draft, close, merge, task) through the server and redraws the PR. Returns true when GitHub did it. */
 async function prAct(p, data) {
   busy(true);
   const label = LABEL_BUSY[data.action];
@@ -1892,6 +1898,7 @@ async function prAct(p, data) {
     await alertUser('Merged, but not pulled', alertBody(p), p.key, 'pr');
     setTimeout(() => alert('⚠️ PR #' + p.pr.number + ' is merged. ' + notPulled), 100);   // after the merged page has painted
   }
+  return !!r.ok;
 }
 async function closePr(p) {
   const d = prData[p.key];
@@ -5307,9 +5314,9 @@ byId('notegrip').addEventListener('pointerdown', (e) => {
   }, { once: true });
 });
 window.addEventListener('resize', () => { if (note.open) paintNote(); });
-// the note runs away from your focus: a click in the district the note is in (plan list, middle page, chat) sends the note
-// (or its round button) to another district (noteDistrict). A click outside the districts (the header) moves it off
-// the clicked part only (noteDodge). A click on the note itself keeps it in place, so you can type in it.
+// the note runs away from your focus: a click or a mouse-wheel scroll in the district the note is in (plan list, middle page, chat)
+// sends the note (or its round button) to another district (noteDistrict). A click outside the districts (the header) moves it off
+// the clicked part only (noteDodge); a scroll there does not move it. A click or a scroll on the note itself keeps it in place.
 const noteDistricts = [['list', 'aside'], ['main', '#detail'], ['main', '#board'], ['chat', '#chat']];
 const noteClickAt = {};
 /** Returns the visible districts of the page, with the time of the last click in each. */
@@ -5329,11 +5336,13 @@ function noteFocusBox(target, cx, cy) {
   const r = el.getBoundingClientRect();
   return { l: Math.max(r.left, cx - 320), t: Math.max(r.top, cy - 200), r: Math.min(r.right, cx + 320), b: Math.min(r.bottom, cy + 200) };
 }
-document.addEventListener('pointerdown', (e) => {
+/** Moves the note away from the place of the click or the wheel scroll e (see above). scroll: true for a wheel event, which moves the note only inside a district. */
+function noteRunAway(e, scroll) {
   if (!note.open || note.x == null || e.target.closest?.('#note, #notefab')) return;
   const el = byId(note.min ? 'notefab' : 'note');
   if (!el.offsetWidth) return;
   const hit = noteDistricts.find(([, sel]) => e.target.closest?.(sel));
+  if (!hit && scroll) return;
   if (hit) noteClickAt[hit[0]] = Date.now();
   const p = hit ? noteDistrict(note.x, note.y, el.offsetWidth, el.offsetHeight, noteDistrictBoxes(), hit[0]) : noteDodge(note.x, note.y, el.offsetWidth, el.offsetHeight, noteFocusBox(e.target, e.clientX, e.clientY), window.innerWidth, window.innerHeight, 12);
   if (!p) return;
@@ -5342,7 +5351,9 @@ document.addEventListener('pointerdown', (e) => {
   if (note.min) placeFab(); else placeNote();
   saveNote();
   setTimeout(() => el.classList.remove('noteslide'), 260);
-}, true);
+}
+document.addEventListener('pointerdown', (e) => noteRunAway(e, false), true);
+document.addEventListener('wheel', (e) => noteRunAway(e, true), { capture: true, passive: true });
 // another shipyard.test tab changed the note
 window.addEventListener('storage', (e) => {
   if (e.key !== 'dash-note') return;

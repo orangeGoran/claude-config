@@ -2405,7 +2405,10 @@ test('the page: the sticky note stays inside the window, and the page has its me
   for (let i = 0; i < 50; i++) { const t = Math.abs(tilts()); assert.ok(t >= 1.2 && t <= 2.2, 'tilt ' + t + ' is 1.2° to 2.2°'); }
   assert.match(src, /note\.x = p\.x; note\.y = p\.y; noteRetilt\(\);/, 'a move away tilts it again');
   assert.match(src, /noteRetilt\(\); placeNote\(\); saveNote\(\);/, 'a drag tilts it again');
-  assert.match(src, /document\.addEventListener\('pointerdown', \(e\) => \{\n\s*if \(!note\.open \|\| note\.x == null \|\| e\.target\.closest\?\.\('#note, #notefab'\)\) return;/, 'a click on the note itself does not move it');
+  assert.match(src, /function noteRunAway\(e, scroll\) \{\n\s*if \(!note\.open \|\| note\.x == null \|\| e\.target\.closest\?\.\('#note, #notefab'\)\) return;/, 'a click or a scroll on the note itself does not move it');
+  assert.match(src, /document\.addEventListener\('pointerdown', \(e\) => noteRunAway\(e, false\), true\);/, 'a click moves the note away');
+  assert.match(src, /document\.addEventListener\('wheel', \(e\) => noteRunAway\(e, true\), \{ capture: true, passive: true \}\);/, 'a wheel scroll in a district moves the note away too');
+  assert.match(src, /if \(!hit && scroll\) return;/, 'a scroll outside the districts (the header tab strip) does not move the note');
   // checkboxes in the note text
   const e = src.match(/^function noteEdit\([\s\S]*?\n\}$/m);
   assert.ok(e, 'app.js has noteEdit');
@@ -2434,6 +2437,15 @@ test('the page: the sticky note stays inside the window, and the page has its me
   // the round button drags (past 5 px) and keeps its place; a click without a drag opens the note
   assert.match(src, /byId\('notefab'\)\.addEventListener\('pointerdown'[\s\S]{0,400}?< 5\) return;[\s\S]{0,200}?note\.x = ev\.clientX - dx; note\.y = ev\.clientY - dy; placeFab\(\);[\s\S]{0,300}?if \(fabDragged\) saveNote\(\);/);
   assert.match(src, /byId\('notefab'\)\.addEventListener\('click', \(\) => \{ if \(fabDragged\) \{ fabDragged = false; return; \} showNote\(true\); \}\);/);
+});
+
+test('the page: Ready for review in Files changed goes back to the plan when GitHub did it', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const pa = src.match(/^async function prAct\([\s\S]*?\n\}$/m);
+  assert.ok(pa, 'app.js has prAct');
+  assert.match(pa[0], /\n  return !!r\.ok;\n\}$/, 'prAct says if GitHub did the action');
+  assert.match(src, /const ok = await prAct\(p, \{ action: 'ready' \}\);\n\s*\/\/[^\n]*\n\s*if \(ok && tab === 'files' && byId\('prview'\)\?\.dataset\.of === p\.key \+ 'files#' \+ p\.pr\.number\) byId\('rback'\)\?\.click\(\);/,
+    'only a ready PR, only from the Files changed of the same PR, and the same way as ‹ Plan');
 });
 
 test('the page: the first paint and Back reveal and scroll to the open plan', () => {
