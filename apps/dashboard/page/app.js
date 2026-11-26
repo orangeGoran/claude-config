@@ -5098,7 +5098,7 @@ setInterval(scoutPeek, 60000);
 // (localStorage dash-note): { text, color, x, y, w, h, open, min }. 📝 Note in the ⋯ menu shows or hides it;
 // A line that starts with ☐ or ☑ is a checkbox (see noteEdit); the mirror under the textarea strikes ☑ lines through.
 // × hides it and keeps the text; – minimizes it to a small yellow button at its top-left corner: drag the button to move it, click it to open the note again.
-// Drag it by its top bar; the browser corner resizes it.
+// Drag it by its top bar; the browser corner resizes it. A click on the page under the note moves the note off that part (noteDodge).
 /** Keeps a note (or the merged card) of size w × h fully inside a vw × vh window. Returns the new top-left corner. */
 function noteClamp(x, y, w, h, vw, vh) {
   return { x: Math.max(0, Math.min(x, vw - w)), y: Math.max(0, Math.min(y, vh - h)) };
@@ -5124,8 +5124,46 @@ function noteMirrorHtml(text) {
   const e = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return text.split('\n').map((l) => (/^☑ /.test(l) ? '<s>' + e(l) + '</s>' : e(l))).join('\n') + '\n';
 }
+/**
+ * Finds a new place for a note of size w × h at (x, y) that does not cover the focus box f ({ l, t, r, b }) in a vw × vh window.
+ * The places it tries: left, right, above and below f, then the four window corners, each gap px from the edge.
+ * Returns null when the note does not cover f, or when no place covers less of f. Else returns the place that covers the least of f, the nearest one first.
+ */
+function noteDodge(x, y, w, h, f, vw, vh, gap) {
+  const cover = (px, py) => Math.max(0, Math.min(px + w, f.r) - Math.max(px, f.l)) * Math.max(0, Math.min(py + h, f.b) - Math.max(py, f.t));
+  const now = cover(x, y);
+  if (!now) return null;
+  const tries = [[f.l - gap - w, y], [f.r + gap, y], [x, f.t - gap - h], [x, f.b + gap],
+    [gap, gap], [vw - w - gap, gap], [gap, vh - h - gap], [vw - w - gap, vh - h - gap]];
+  let best = null, bc = now, bd = Infinity;
+  for (const [px, py] of tries) {
+    const p = noteClamp(px, py, w, h, vw, vh), c = cover(p.x, p.y), d = Math.hypot(p.x - x, p.y - y);
+    if (c < bc || (c === bc && best && d < bd)) { best = p; bc = c; bd = d; }
+  }
+  return best;
+}
+/**
+ * Moves a note of size w × h at (x, y) to another district (section) when you click the district it is in.
+ * ds: the visible districts [{ id, l, t, r, b, at }], at = the time of the last click in it (0 = never). clicked: the id of the clicked district.
+ * The note goes to the district you clicked longest ago (on a tie: the one farthest away), at the same relative place.
+ * A note that is mostly in another district but hangs over the clicked one moves fully into its own district.
+ * Returns null when the note does not touch the clicked district, or when there is no other district.
+ */
+function noteDistrict(x, y, w, h, ds, clicked) {
+  const cx = x + w / 2, home = ds.find((d) => cx >= d.l && cx < d.r), c = ds.find((d) => d.id === clicked);
+  if (!home || !c || x + w <= c.l || x >= c.r) return null;
+  const mid = (d) => (d.l + d.r) / 2;
+  const to = home.id !== clicked ? home
+    : ds.filter((d) => d.id !== clicked).sort((a, b) => a.at - b.at || Math.abs(mid(b) - mid(c)) - Math.abs(mid(a) - mid(c)))[0];
+  if (!to) return null;
+  const rel = (v, lo, span) => (span > 0 ? Math.min(1, Math.max(0, (v - lo) / span)) : 0.5);
+  const fx = rel(x, home.l, home.r - home.l - w), fy = rel(y, home.t, home.b - home.t - h);
+  return { x: Math.round(to.l + fx * Math.max(0, to.r - to.l - w)), y: Math.round(to.t + fy * Math.max(0, to.b - to.t - h)) };
+}
 // --- end sticky note math ---
-let note = { text: '', color: 'yellow', x: null, y: null, w: 240, h: 180, open: false, min: false };
+let note = { text: '', color: 'yellow', x: null, y: null, w: 240, h: 180, open: false, min: false, tilt: -1.5 };
+/** Gives the note a new small random tilt (1.2° to 2.2°, left or right), like paper stuck on by hand. */
+const noteRetilt = () => { note.tilt = Math.round((Math.random() < 0.5 ? -1 : 1) * (1.2 + Math.random()) * 10) / 10; };
 try { note = { ...note, ...JSON.parse(localStorage.getItem('dash-note') || '{}') }; } catch {}
 const saveNote = () => { try { localStorage.setItem('dash-note', JSON.stringify(note)); } catch {} };
 function placeNote() {
@@ -5134,6 +5172,7 @@ function placeNote() {
   const p = noteClamp(note.x, note.y, el.offsetWidth || note.w, el.offsetHeight || note.h, window.innerWidth, window.innerHeight);
   note.x = p.x; note.y = p.y;
   el.style.left = p.x + 'px'; el.style.top = p.y + 'px';
+  el.style.setProperty('--tilt', note.tilt + 'deg');
 }
 function paintNote() {
   const el = byId('note'), fab = byId('notefab');
@@ -5215,7 +5254,7 @@ byId('notebar').addEventListener('pointerdown', (e) => {
   document.addEventListener('pointerup', () => {
     document.removeEventListener('pointermove', move);
     document.body.classList.remove('notedrag');
-    saveNote();
+    noteRetilt(); placeNote(); saveNote();
   }, { once: true });
 });
 // the browser's resize corner: keep the new size
@@ -5226,6 +5265,42 @@ new ResizeObserver(() => {
   note.w = el.offsetWidth; note.h = el.offsetHeight; saveNote();
 }).observe(byId('note'));
 window.addEventListener('resize', () => { if (note.open) paintNote(); });
+// the note runs away from your focus: a click in the district the note is in (plan list, middle page, chat) sends the note
+// (or its round button) to another district (noteDistrict). A click outside the districts (the header) moves it off
+// the clicked part only (noteDodge). A click on the note itself keeps it in place, so you can type in it.
+const noteDistricts = [['list', 'aside'], ['main', '#detail'], ['main', '#board'], ['chat', '#chat']];
+const noteClickAt = {};
+/** Returns the visible districts of the page, with the time of the last click in each. */
+function noteDistrictBoxes() {
+  return noteDistricts.map(([id, sel]) => [id, document.querySelector(sel)])
+    .filter(([, el]) => el && !el.hidden && el.offsetWidth)
+    .map(([id, el]) => { const r = el.getBoundingClientRect(); return { id, l: r.left, t: r.top, r: r.right, b: r.bottom, at: noteClickAt[id] || 0 }; });
+}
+/** Returns the focus box of a click: the clicked block (at least 160 × 28 px), cut to 640 × 400 px around the click. */
+function noteFocusBox(target, cx, cy) {
+  let el = target instanceof Element ? target : target.parentElement;
+  while (el && el.parentElement && el !== document.body) {
+    const r = el.getBoundingClientRect();
+    if (r.width >= 160 && r.height >= 28) break;
+    el = el.parentElement;
+  }
+  const r = el.getBoundingClientRect();
+  return { l: Math.max(r.left, cx - 320), t: Math.max(r.top, cy - 200), r: Math.min(r.right, cx + 320), b: Math.min(r.bottom, cy + 200) };
+}
+document.addEventListener('pointerdown', (e) => {
+  if (!note.open || note.x == null || e.target.closest?.('#note, #notefab')) return;
+  const el = byId(note.min ? 'notefab' : 'note');
+  if (!el.offsetWidth) return;
+  const hit = noteDistricts.find(([, sel]) => e.target.closest?.(sel));
+  if (hit) noteClickAt[hit[0]] = Date.now();
+  const p = hit ? noteDistrict(note.x, note.y, el.offsetWidth, el.offsetHeight, noteDistrictBoxes(), hit[0]) : noteDodge(note.x, note.y, el.offsetWidth, el.offsetHeight, noteFocusBox(e.target, e.clientX, e.clientY), window.innerWidth, window.innerHeight, 12);
+  if (!p) return;
+  el.classList.add('noteslide');
+  note.x = p.x; note.y = p.y; noteRetilt();
+  if (note.min) placeFab(); else placeNote();
+  saveNote();
+  setTimeout(() => el.classList.remove('noteslide'), 260);
+}, true);
 // another plans.test tab changed the note
 window.addEventListener('storage', (e) => {
   if (e.key !== 'dash-note') return;

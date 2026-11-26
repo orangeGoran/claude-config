@@ -768,9 +768,19 @@
   .toast .tx, .toast .th { background:none; border:0; color:var(--dim); cursor:pointer; font-size:16px; line-height:1; padding:0 3px; }
   .toast .tx:hover, .toast .th:hover { color:var(--fg); }
   /* the sticky note: one per browser, over every tab; drag it by its top bar, resize it at the bottom right corner */
+  /* the paper starts 12px below the top of the box, so the tape sticks out above it; drop-shadow follows the paper and the tape, not the box */
   .note { --nc:#fde68a; position:fixed; z-index:42; width:240px; min-width:160px; min-height:110px; display:flex; flex-direction:column;
-          background:var(--nc); color:#1f2328; border-radius:6px; box-shadow:0 10px 30px rgba(0,0,0,.35); resize:both; overflow:hidden; }
+          padding-top:12px; box-sizing:border-box; color:#1f2328; resize:both; overflow:hidden; transform:rotate(var(--tilt, -1.5deg)); transition:transform .25s ease;
+          border-radius:0 0 3px 22px / 0 0 3px 8px;
+          background:linear-gradient(185deg, var(--nc) 55%, color-mix(in srgb, var(--nc) 88%, #000) 100%) 0 12px / 100% calc(100% - 12px) no-repeat;
+          filter:drop-shadow(0 1px 1px rgba(0,0,0,.3)) drop-shadow(0 8px 7px rgba(0,0,0,.35)); }
   .note[hidden] { display:none; }
+  /* the glued look: a strip of matte tape across the top edge, half on the paper, half off; clicks go through it to the bar */
+  .note::before { content:''; position:absolute; z-index:1; top:1px; left:calc(50% - 46px); width:92px; height:24px; transform:rotate(-3deg);
+                  background:linear-gradient(180deg, rgba(255,255,255,.62), rgba(240,240,232,.5)); border-left:1px dashed rgba(0,0,0,.08);
+                  border-right:1px dashed rgba(0,0,0,.08); pointer-events:none; }
+  /* the run-away move slides the note to its new place */
+  .note.noteslide, .notefab.noteslide { transition:left .22s ease, top .22s ease, transform .25s ease; }
   .note[data-color="green"] { --nc:#bbf7d0; } .note[data-color="blue"] { --nc:#bfdbfe; } .note[data-color="pink"] { --nc:#fbcfe8; }
   .notebar { display:flex; align-items:center; gap:6px; padding:4px 6px; cursor:grab; touch-action:none; user-select:none;
              background:color-mix(in srgb, var(--nc) 80%, #000 8%); }

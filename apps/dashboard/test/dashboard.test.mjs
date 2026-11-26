@@ -1998,6 +1998,35 @@ test('the page: the sticky note stays inside the window, and the page has its me
   assert.deepEqual(noteClamp(1400, 880, 240, 180, 1440, 900), { x: 1200, y: 720 }, 'past the right and bottom edges');
   assert.deepEqual(noteClamp(-30, -10, 240, 180, 1440, 900), { x: 0, y: 0 }, 'past the left and top edges');
   assert.deepEqual(noteClamp(10, 10, 240, 180, 200, 100), { x: 0, y: 0 }, 'a window smaller than the note keeps its top bar visible');
+  // the note runs away from the clicked part of the page
+  const d = src.match(/^function noteDodge\([\s\S]*?\n\}$/m);
+  assert.ok(d, 'app.js has noteDodge');
+  const noteDodge = new Function(m[0] + '\n' + d[0] + '\nreturn noteDodge;')();
+  const box = { l: 1000, t: 100, r: 1400, b: 300 };
+  assert.equal(noteDodge(100, 100, 240, 180, box, 1440, 900, 12), null, 'the note does not cover the click: it stays');
+  assert.deepEqual(noteDodge(1160, 90, 240, 180, box, 1440, 900, 12), { x: 1160, y: 312 }, 'it covers the click: it moves to the nearest free side (below)');
+  const tall = { l: 1000, t: 0, r: 1440, b: 900 };
+  assert.deepEqual(noteDodge(1160, 90, 240, 180, tall, 1440, 900, 12), { x: 748, y: 90 }, 'a full-height column: it moves to its left');
+  assert.equal(noteDodge(0, 0, 240, 180, { l: 0, t: 0, r: 1440, b: 900 }, 1440, 900, 12), null, 'no better place: it stays');
+  // the note moves to another district (plan list, middle page, chat) when you click the district it is in
+  const dd = src.match(/^function noteDistrict\([\s\S]*?\n\}$/m);
+  assert.ok(dd, 'app.js has noteDistrict');
+  const noteDistrict = new Function(dd[0] + '\nreturn noteDistrict;')();
+  const ds = (at = {}) => [{ id: 'list', l: 0, t: 50, r: 320, b: 900, at: at.list || 0 }, { id: 'main', l: 320, t: 50, r: 1040, b: 900, at: at.main || 0 },
+    { id: 'chat', l: 1040, t: 50, r: 1440, b: 900, at: at.chat || 0 }];
+  assert.deepEqual(noteDistrict(40, 50, 240, 180, ds(), 'list'), { x: 1120, y: 50 }, 'a click in the list: the note goes to the farthest district, at the same relative place');
+  assert.deepEqual(noteDistrict(40, 50, 240, 180, ds({ chat: 5 }), 'list'), { x: 560, y: 50 }, 'it goes to the district you clicked longest ago');
+  assert.equal(noteDistrict(1100, 400, 240, 180, ds(), 'list'), null, 'a click in another district: the note stays');
+  assert.deepEqual(noteDistrict(980, 400, 240, 180, ds(), 'main'), { x: 1040, y: 400 }, 'mostly in the chat, over the edge of the clicked page: fully into the chat');
+  assert.equal(noteDistrict(40, 50, 240, 180, ds().slice(0, 1), 'list'), null, 'no other district: it stays');
+  // a new random tilt each time the note lands at a new place: after a move away and after a drag
+  const rt = src.match(/^const noteRetilt = \(\) => \{[^\n]*\};$/m);
+  assert.ok(rt, 'app.js has noteRetilt');
+  const tilts = new Function('const note = {};\n' + rt[0] + '\nreturn () => { noteRetilt(); return note.tilt; };')();
+  for (let i = 0; i < 50; i++) { const t = Math.abs(tilts()); assert.ok(t >= 1.2 && t <= 2.2, 'tilt ' + t + ' is 1.2° to 2.2°'); }
+  assert.match(src, /note\.x = p\.x; note\.y = p\.y; noteRetilt\(\);/, 'a move away tilts it again');
+  assert.match(src, /noteRetilt\(\); placeNote\(\); saveNote\(\);/, 'a drag tilts it again');
+  assert.match(src, /document\.addEventListener\('pointerdown', \(e\) => \{\n\s*if \(!note\.open \|\| note\.x == null \|\| e\.target\.closest\?\.\('#note, #notefab'\)\) return;/, 'a click on the note itself does not move it');
   // checkboxes in the note text
   const e = src.match(/^function noteEdit\([\s\S]*?\n\}$/m);
   assert.ok(e, 'app.js has noteEdit');
