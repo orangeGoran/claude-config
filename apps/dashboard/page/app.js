@@ -5069,14 +5069,37 @@ scoutPeek();
 setInterval(scoutPeek, 60000);
 // --- sticky note ---
 // One sticky note over the whole page, the same on every tab. It is kept in this browser
-// (localStorage dash-note): { text, color, x, y, w, h, open }. 📝 Note in the ⋯ menu shows or hides it;
-// × hides it and keeps the text. Drag it by its top bar; the browser corner resizes it.
+// (localStorage dash-note): { text, color, x, y, w, h, open, min }. 📝 Note in the ⋯ menu shows or hides it;
+// A line that starts with ☐ or ☑ is a checkbox (see noteEdit); the mirror under the textarea strikes ☑ lines through.
+// × hides it and keeps the text; – minimizes it to a small yellow button at its top-left corner: drag the button to move it, click it to open the note again.
+// Drag it by its top bar; the browser corner resizes it.
 /** Keeps a note (or the merged card) of size w × h fully inside a vw × vh window. Returns the new top-left corner. */
 function noteClamp(x, y, w, h, vw, vh) {
   return { x: Math.max(0, Math.min(x, vw - w)), y: Math.max(0, Math.min(y, vh - h)) };
 }
+/**
+ * Applies one checkbox edit to the note text. key ' ': a "-" alone at the start of a line becomes "☐ ".
+ * key 'Enter' on a checkbox line: a new line with "☐ ", or, on an empty checkbox line, the box goes away.
+ * key 'click' on the box at the start of a line: ☐ becomes ☑ and back. Returns { text, pos } or null (no change).
+ */
+function noteEdit(text, pos, key) {
+  const ls = text.lastIndexOf('\n', pos - 1) + 1, le = text.indexOf('\n', pos) < 0 ? text.length : text.indexOf('\n', pos);
+  const line = text.slice(ls, le), box = /^[☐☑] /.test(line);
+  if (key === ' ' && text.slice(ls, pos) === '-') return { text: text.slice(0, ls) + '☐ ' + text.slice(pos), pos: ls + 2 };
+  if (key === 'Enter' && box) {
+    if (line.length === 2) return { text: text.slice(0, ls) + text.slice(ls + 2), pos: ls };
+    return { text: text.slice(0, pos) + '\n☐ ' + text.slice(pos), pos: pos + 3 };
+  }
+  if (key === 'click' && box && pos - ls <= 1) return { text: text.slice(0, ls) + (line[0] === '☐' ? '☑' : '☐') + text.slice(ls + 1), pos };
+  return null;
+}
+/** Returns the HTML of the note mirror: the text, escaped, with each ☑ line struck through. */
+function noteMirrorHtml(text) {
+  const e = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return text.split('\n').map((l) => (/^☑ /.test(l) ? '<s>' + e(l) + '</s>' : e(l))).join('\n') + '\n';
+}
 // --- end sticky note math ---
-let note = { text: '', color: 'yellow', x: null, y: null, w: 240, h: 180, open: false };
+let note = { text: '', color: 'yellow', x: null, y: null, w: 240, h: 180, open: false, min: false };
 try { note = { ...note, ...JSON.parse(localStorage.getItem('dash-note') || '{}') }; } catch {}
 const saveNote = () => { try { localStorage.setItem('dash-note', JSON.stringify(note)); } catch {} };
 function placeNote() {
@@ -5087,21 +5110,72 @@ function placeNote() {
   el.style.left = p.x + 'px'; el.style.top = p.y + 'px';
 }
 function paintNote() {
-  const el = byId('note');
-  el.hidden = !note.open;
-  el.dataset.color = note.color;
+  const el = byId('note'), fab = byId('notefab');
+  el.hidden = !note.open || note.min;
+  fab.hidden = !note.open || !note.min;
+  el.dataset.color = note.color;   // the round button stays yellow
   el.style.width = note.w + 'px'; el.style.height = note.h + 'px';
   if (byId('notetext').value !== note.text) byId('notetext').value = note.text;
+  paintMirror();
+  fab.title = (note.text.trim().split('\n')[0] || 'Open the sticky note').slice(0, 80);
   byId('noteBtn').setAttribute('aria-pressed', String(note.open));
-  if (note.open) placeNote();
+  if (!el.hidden) placeNote();
+  if (!fab.hidden) placeFab();
+}
+/** Puts the round button of a minimized note at the note's top-left corner, kept inside the window. */
+function placeFab() {
+  const fab = byId('notefab');
+  if (note.x == null) { note.x = window.innerWidth - note.w - 40; note.y = 90; }
+  const p = noteClamp(note.x, note.y, fab.offsetWidth || 40, fab.offsetHeight || 40, window.innerWidth, window.innerHeight);
+  fab.style.left = p.x + 'px'; fab.style.top = p.y + 'px';
+}
+function paintMirror() {
+  const m = byId('notemirror');
+  m.innerHTML = noteMirrorHtml(byId('notetext').value);
+  m.scrollTop = byId('notetext').scrollTop;
 }
 function showNote(open) {
-  note.open = open; saveNote(); paintNote();
+  note.open = open; note.min = false; saveNote(); paintNote();
   if (open) byId('notetext').focus();
 }
-byId('noteBtn').addEventListener('click', () => showNote(!note.open));
+// the ⋯ menu button: a minimized note opens again, else it shows or hides the note
+byId('noteBtn').addEventListener('click', () => showNote(note.min || !note.open));
 byId('notex').addEventListener('click', () => showNote(false));
-byId('notetext').addEventListener('input', (e) => { note.text = e.target.value; saveNote(); });
+byId('notemin').addEventListener('click', () => { note.min = true; saveNote(); paintNote(); });
+// the round button: drag it to move it (the note opens at that place), a click without a drag opens the note
+let fabDragged = false;
+byId('notefab').addEventListener('pointerdown', (e) => {
+  const fab = byId('notefab'), sx = e.clientX, sy = e.clientY, dx = sx - fab.offsetLeft, dy = sy - fab.offsetTop;
+  fabDragged = false;
+  const move = (ev) => {
+    if (!fabDragged && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 5) return;
+    if (!fabDragged) { fabDragged = true; document.body.classList.add('notedrag'); }
+    note.x = ev.clientX - dx; note.y = ev.clientY - dy; placeFab();
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', () => {
+    document.removeEventListener('pointermove', move);
+    document.body.classList.remove('notedrag');
+    if (fabDragged) saveNote();
+  }, { once: true });
+});
+byId('notefab').addEventListener('click', () => { if (fabDragged) { fabDragged = false; return; } showNote(true); });
+byId('notetext').addEventListener('input', (e) => { note.text = e.target.value; saveNote(); paintMirror(); });
+byId('notetext').addEventListener('scroll', () => { byId('notemirror').scrollTop = byId('notetext').scrollTop; });
+// checkboxes: "-" and a space at the start of a line makes a box, Enter continues the list, a click on a box checks it
+const noteApply = (e, key) => {
+  const ta = byId('notetext');
+  if (ta.selectionStart !== ta.selectionEnd) return;
+  const r = noteEdit(ta.value, ta.selectionStart, key);
+  if (!r) return;
+  e.preventDefault();
+  ta.value = r.text; ta.setSelectionRange(r.pos, r.pos);
+  note.text = r.text; saveNote(); paintMirror();
+};
+byId('notetext').addEventListener('keydown', (e) => {
+  if ((e.key === ' ' || e.key === 'Enter') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing) noteApply(e, e.key);
+});
+byId('notetext').addEventListener('click', (e) => noteApply(e, 'click'));
 byId('note').querySelectorAll('[data-color]').forEach((b) => b.addEventListener('click', () => {
   note.color = b.dataset.color; saveNote(); paintNote();
 }));
@@ -5125,7 +5199,7 @@ new ResizeObserver(() => {
   if (el.offsetWidth === note.w && el.offsetHeight === note.h) return;
   note.w = el.offsetWidth; note.h = el.offsetHeight; saveNote();
 }).observe(byId('note'));
-window.addEventListener('resize', () => { if (note.open) placeNote(); });
+window.addEventListener('resize', () => { if (note.open) paintNote(); });
 // another plans.test tab changed the note
 window.addEventListener('storage', (e) => {
   if (e.key !== 'dash-note') return;

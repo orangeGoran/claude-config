@@ -774,15 +774,34 @@
   .note[data-color="green"] { --nc:#bbf7d0; } .note[data-color="blue"] { --nc:#bfdbfe; } .note[data-color="pink"] { --nc:#fbcfe8; }
   .notebar { display:flex; align-items:center; gap:6px; padding:4px 6px; cursor:grab; touch-action:none; user-select:none;
              background:color-mix(in srgb, var(--nc) 80%, #000 8%); }
-  body.notedrag, body.notedrag .notebar { cursor:grabbing; user-select:none; }
+  body.notedrag, body.notedrag .notebar, body.notedrag .notefab { cursor:grabbing; user-select:none; }
   .notecolors { display:flex; gap:4px; }
-  .notecolors button { width:14px; height:14px; padding:0; border-radius:50%; border:1px solid rgba(0,0,0,.25); cursor:pointer; }
+  .notecolors button { width:11px; height:11px; padding:0; border-radius:50%; border:1px solid rgba(0,0,0,.25); cursor:pointer; }
   .notecolors [data-color="yellow"] { background:#fde68a; } .notecolors [data-color="green"] { background:#bbf7d0; }
   .notecolors [data-color="blue"] { background:#bfdbfe; } .notecolors [data-color="pink"] { background:#fbcfe8; }
-  .notex { background:none; border:0; color:#1f2328; opacity:.6; cursor:pointer; font-size:16px; line-height:1; padding:0 3px; }
-  .notex:hover { opacity:1; }
-  .note textarea { flex:1; width:100%; box-sizing:border-box; border:0; outline:0; resize:none; padding:8px 10px; background:transparent;
-                   color:inherit; font:inherit; font-size:calc(13px * var(--fs)); line-height:1.4; }
+  /* close and minimize on the left, like macOS: red and yellow lights, the symbol shows when the pointer is on the bar */
+  .notelight { width:12px; height:12px; padding:0; border-radius:50%; border:1px solid rgba(0,0,0,.18); cursor:pointer;
+               display:grid; place-items:center; color:rgba(0,0,0,.6); font-size:11px; font-weight:700; line-height:1; }
+  .notelight span { visibility:hidden; margin-top:-1px; }
+  .notebar:hover .notelight span, .notelight:focus-visible span { visibility:visible; }
+  .notex { background:#ff5f57; } .notemin { background:#febc2e; }
+  /* the text: the textarea is clear on top (caret and selection), the mirror under it draws the same text, with ☑ lines struck through */
+  .notebody { flex:1; position:relative; min-height:0; }
+  .note textarea, .notemirror { position:absolute; inset:0; width:100%; height:100%; box-sizing:border-box; margin:0; border:0; padding:8px 10px;
+                   font:inherit; font-size:calc(13px * var(--fs)); line-height:1.4; letter-spacing:normal;
+                   white-space:pre-wrap; overflow-wrap:break-word; scrollbar-gutter:stable; }
+  .note textarea { outline:0; resize:none; background:transparent; color:transparent; caret-color:#1f2328; overflow-y:auto; }
+  .note textarea::placeholder { color:rgba(31,35,40,.45); }
+  .notemirror { color:inherit; overflow:hidden; pointer-events:none; }
+  .notemirror s { opacity:.5; }
+  /* the minimized note: a small yellow sticky note with a folded corner where the note was; drag it to move it, a click opens the note */
+  .notefab { position:fixed; z-index:42; width:38px; height:38px; padding:0; border:0; border-radius:4px 4px 12px 4px; cursor:grab;
+             touch-action:none; user-select:none; color:rgba(31,35,40,.55); display:grid; place-items:center;
+             background:linear-gradient(315deg, #e9c84a 0 9px, #fde68a 9px); box-shadow:0 4px 12px rgba(0,0,0,.35);
+             transform:rotate(-3deg); transition:transform .12s; }
+  .notefab svg { width:20px; height:20px; }
+  .notefab[hidden] { display:none; }
+  .notefab:hover { transform:rotate(0) scale(1.08); }
   /* a merged PR: a card on the right with the git step and Okay, close */
   #mergedcard { position:fixed; right:calc(var(--chatw, 0px) + 16px); top:120px; z-index:45; width:min(340px, calc(100vw - 32px));
                 background:var(--panel); border:1px solid var(--merge); border-left:4px solid var(--merge); border-radius:10px;

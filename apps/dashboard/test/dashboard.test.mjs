@@ -1998,10 +1998,34 @@ test('the page: the sticky note stays inside the window, and the page has its me
   assert.deepEqual(noteClamp(1400, 880, 240, 180, 1440, 900), { x: 1200, y: 720 }, 'past the right and bottom edges');
   assert.deepEqual(noteClamp(-30, -10, 240, 180, 1440, 900), { x: 0, y: 0 }, 'past the left and top edges');
   assert.deepEqual(noteClamp(10, 10, 240, 180, 200, 100), { x: 0, y: 0 }, 'a window smaller than the note keeps its top bar visible');
+  // checkboxes in the note text
+  const e = src.match(/^function noteEdit\([\s\S]*?\n\}$/m);
+  assert.ok(e, 'app.js has noteEdit');
+  const noteEdit = new Function(e[0] + '\nreturn noteEdit;')();
+  assert.deepEqual(noteEdit('API:\n-', 6, ' '), { text: 'API:\n☐ ', pos: 7 }, '"-" and a space at a line start make a box');
+  assert.equal(noteEdit('a-', 2, ' '), null, 'a "-" inside a line stays');
+  assert.equal(noteEdit('--', 2, ' '), null, 'two dashes stay');
+  assert.deepEqual(noteEdit('☐ merge', 7, 'Enter'), { text: '☐ merge\n☐ ', pos: 10 }, 'Enter continues the list');
+  assert.deepEqual(noteEdit('☐ merge\n☐ ', 10, 'Enter'), { text: '☐ merge\n', pos: 8 }, 'Enter on an empty box ends the list');
+  assert.equal(noteEdit('merge', 5, 'Enter'), null, 'Enter on a plain line is a plain Enter');
+  assert.deepEqual(noteEdit('x\n☐ merge', 3, 'click'), { text: 'x\n☑ merge', pos: 3 }, 'a click on the box checks it');
+  assert.deepEqual(noteEdit('☑ merge', 1, 'click'), { text: '☐ merge', pos: 1 }, 'a second click unchecks it');
+  assert.equal(noteEdit('☐ merge', 5, 'click'), null, 'a click on the words does not toggle');
+  const mm = src.match(/^function noteMirrorHtml\([\s\S]*?\n\}$/m);
+  assert.ok(mm, 'app.js has noteMirrorHtml');
+  const noteMirrorHtml = new Function(mm[0] + '\nreturn noteMirrorHtml;')();
+  assert.equal(noteMirrorHtml('☑ merge #236\n☐ open <PR>\nplain'), '<s>☑ merge #236</s>\n☐ open &lt;PR&gt;\nplain\n', 'a ticked line is struck through, the text is escaped');
   const page = await (await get('/')).text();
   assert.match(page, /id="noteBtn"/);
   assert.match(page, /id="note" class="note"[^>]*hidden/);
   assert.match(page, /id="notetext"/);
+  // – minimizes the note to a round button; the button starts hidden and opens the note again
+  assert.match(page, /id="notemin"/);
+  assert.match(page, /id="notefab" class="notefab"[^>]*hidden/);
+  assert.match(src, /el\.hidden = !note\.open \|\| note\.min;\n\s*fab\.hidden = !note\.open \|\| !note\.min;/);
+  // the round button drags (past 5 px) and keeps its place; a click without a drag opens the note
+  assert.match(src, /byId\('notefab'\)\.addEventListener\('pointerdown'[\s\S]{0,400}?< 5\) return;[\s\S]{0,200}?note\.x = ev\.clientX - dx; note\.y = ev\.clientY - dy; placeFab\(\);[\s\S]{0,300}?if \(fabDragged\) saveNote\(\);/);
+  assert.match(src, /byId\('notefab'\)\.addEventListener\('click', \(\) => \{ if \(fabDragged\) \{ fabDragged = false; return; \} showNote\(true\); \}\);/);
 });
 
 test('the page: the first paint and Back reveal and scroll to the open plan', () => {
