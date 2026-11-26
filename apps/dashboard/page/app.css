@@ -27,6 +27,7 @@
            align-items:center; gap:14px; flex-shrink:0; }
   h1 { font-size:calc(15px * var(--fs)); margin:0; }
   #home { color:inherit; text-decoration:none; }
+  #home .logo { width:1.15em; height:1.15em; vertical-align:-0.2em; border-radius:22%; }
   /* one header row: Plans, the ⋯ menu, Code, the Plan · PR switch, the open-plan tabs, then the status on the right.
      The buttons used less often are in the ⋯ menu (#hdmenu), so the row also holds the open-plan tabs */
   header.mainhd { padding:5px 14px; gap:10px; min-height:calc(40px * var(--fs)); }

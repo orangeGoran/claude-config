@@ -421,8 +421,10 @@ const wtSectionHtml = (proj, list) => {
 // ---- favicon mood ring ----
 // the 16px tab should answer "is the fleet working, or does it want me?" on its own.
 // running/waiting = machine's turn; dead/done = your turn, most urgent first.
+// idle shows the Shipyard icon itself (the href the page starts with), not an emoji
 const MOODS = [['live', '🏃'], ['inflight', '⏳'], ['bad', '💀'],
-               ['ready', '✅'], ['idle', '😴']];
+               ['ready', '✅'], ['idle', '']];
+const APP_ICON = byId('favicon').href;
 let lastMood = '', baseTitle = 'Plans', countTitle = '', selTitle = '';
 const unseen = [];   // alerts that rang while you were away, newest last
 function setMood(counts) {
@@ -431,9 +433,9 @@ function setMood(counts) {
   const mood = face + n;
   if (mood === lastMood) return;   // the 5s poll must not churn the DOM
   lastMood = mood;
-  byId('favicon').href = 'data:image/svg+xml,' + encodeURIComponent(
+  byId('favicon').href = face ? 'data:image/svg+xml,' + encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
-    '<text x="32" y="46" font-size="56" text-anchor="middle">' + face + '</text></svg>');
+    '<text x="32" y="46" font-size="56" text-anchor="middle">' + face + '</text></svg>') : APP_ICON;
   countTitle = n ? '(' + n + ') ' : '';
   paintTitle();
 }

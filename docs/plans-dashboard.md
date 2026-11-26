@@ -196,6 +196,8 @@ Shipyard (`~/Applications/Shipyard.app`) is an optional Mac app: one window that
 
 Run `npm run build-app` to build and install it. It needs the Swift compiler of the Command Line Tools (`xcode-select --install`). `scripts/setup.sh` asks before it builds the app. To use a new build, quit Shipyard (⌘Q) and open it again.
 
+The icon is `apps/dashboard/page/icon.svg`: the build makes the app icon from it (with `qlmanage`, `sips` and `iconutil`), and the dashboard uses it as the tab icon and the header logo. While plans run or wait, the tab icon shows the status emoji instead. When the build cannot make the icon, it warns and the app gets the default icon.
+
 The app opens the domain of the installed dashboard (from `~/.claude/pipeline-dashboard/caddy-site.caddy`), else https://shipyard.test. `node apps/plans-mac/build.mjs --url https://<domain>` builds it for another https domain.
 
 | Key | What it does |

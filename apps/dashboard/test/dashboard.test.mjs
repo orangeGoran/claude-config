@@ -298,6 +298,16 @@ test('serves plan markdown and rejects slugs that are not plain names', async ()
   assert.equal((await get('/api/plan?project=nope&slug=demo-plan')).status, 400);
 });
 
+test('the tab icon and the header logo are the Shipyard icon, cut to its square', async () => {
+  const page = await (await get('/')).text();
+  assert.doesNotMatch(page, /\{\{ICON\}\}/, 'every icon mark is filled');
+  const fav = /<link rel="icon" id="favicon" href="([^"]+)">/.exec(page);
+  assert.ok(fav, 'the page has the favicon link');
+  assert.ok(fav[1].startsWith('data:image/svg+xml,'));
+  assert.match(decodeURIComponent(fav[1].slice('data:image/svg+xml,'.length)), /viewBox="100 100 824 824"/);
+  assert.ok(page.includes('<img class="logo" src="' + fav[1] + '"'), 'the header logo uses the same icon');
+});
+
 test('an answer still arriving shows as Markdown, with no raw marks', async () => {
   const page = await (await get('/')).text();
   const line = (start) => page.slice(page.indexOf(start), page.indexOf('\n', page.indexOf(start)));
