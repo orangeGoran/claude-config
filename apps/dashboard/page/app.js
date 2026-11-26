@@ -4719,19 +4719,6 @@ document.addEventListener('keydown', (e) => {
   if (ctrlOnly && e.code === 'KeyW') { e.preventDefault(); return closeSession(); }
   if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && e.code === 'KeyT') { e.preventDefault(); return reopenSession(); }
 }, true);
-// In the Plans Mac app the header row is the window's title bar: the window buttons sit at its left end, and an empty
-// part of the header moves the window (a drag) or zooms it (a double-click). The app has the "plans" message handler.
-const macApp = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.plans;
-/** Sets the room on the left of the header for the window buttons, in pixels. The Mac app calls it after a zoom and in full screen. */
-function macInset(px) { document.documentElement.style.setProperty('--macinset', Math.max(0, Number(px) || 0) + 'px'); }
-if (macApp) {
-  document.documentElement.classList.add('mac-app');
-  const hd = document.querySelector('header.mainhd');
-  // only the header itself and its layout boxes are empty; a button, link, chip or tab keeps its own click and drag
-  const empty = (t) => t === hd || (t.matches && t.matches('.hdl, #hdtabs, #stabs, .hright'));
-  hd.addEventListener('mousedown', (e) => { if (e.button === 0 && e.detail === 1 && empty(e.target)) macApp.postMessage('drag'); });
-  hd.addEventListener('dblclick', (e) => { if (empty(e.target)) macApp.postMessage('zoom'); });
-}
 /** Opens the board, or closes it when it is open. */
 function toggleBoard() { byId('boardBtn').click(); }
 // the hooks the Mac app (apps/plans-mac) calls from its menu shortcuts. They obey the same gates as the keys:
@@ -4740,8 +4727,7 @@ const tabHook = (f) => (...a) => { if (!keysOwned() && !paletteOpen()) f(...a); 
 const searchHook = () => { if (!keysOwned()) openSearch(); };
 window.dashboard = { switchSession: tabHook(switchSession), nextSession: tabHook(nextSession),
   closeSession: tabHook(() => closeSession()), reopenSession: tabHook(reopenSession), openSearch: searchHook,
-  focusChat: tabHook(focusChat), toggleBoard: tabHook(toggleBoard), openSettings: tabHook(() => openSettings()),
-  macInset };
+  focusChat: tabHook(focusChat), toggleBoard: tabHook(toggleBoard), openSettings: tabHook(() => openSettings()) };
 // --- Board: every plan of every project in one column, by where it stands. Every column fills in by itself:
 // from the run, the PR, archiving and the validation rounds. The sidebar is hidden (the board is the list), and
 // a card opens its plan in a panel beside the board (#detail), so the board stays in view. The filters, the

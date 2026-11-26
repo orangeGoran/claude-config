@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Build, sign and install the Plans Mac app (~/Applications/Plans.app), a window around the dashboard page:
+// Build, sign and install Shipyard, the Mac app of the plans dashboard (~/Applications/Shipyard.app), a window around the dashboard page:
 //
 //   npm run build-app          (or: node apps/plans-mac/build.mjs [--url <url>] [--out <dir>] [--no-install])
 //   node apps/plans-mac/build.mjs --check     (exit 0 when the Swift compiler is usable)
 //
 // The app opens the domain that scripts/setup-macos.sh serves (~/.claude/pipeline-dashboard/caddy-site.caddy),
 // else https://plans.test; --url overrides it. It compiles src/*.swift with swiftc (macOS only) and signs ad hoc.
-// It never stops the running app: quit Plans (⌘Q) and open it again to use the new build.
+// It never stops the running app: quit Shipyard (⌘Q) and open it again to use the new build.
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import os from 'node:os';
@@ -36,14 +36,17 @@ export const appUrl = ({ flag, caddyText } = {}) => {
   return url;
 };
 
+/** The name of the app: the bundle, its program and the menu. */
+export const APP_NAME = 'Shipyard';
+
 const xml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /** Gives the Info.plist XML of the app, with the dashboard URL as PlansURL. Each value is XML-escaped. */
 export const infoPlist = ({ url, version }) => {
   const entries = [
     ['CFBundleIdentifier', 'com.plans-dashboard.mac'],
-    ['CFBundleName', 'Plans'],
-    ['CFBundleExecutable', 'Plans'],
+    ['CFBundleName', APP_NAME],
+    ['CFBundleExecutable', APP_NAME],
     ['CFBundlePackageType', 'APPL'],
     ['CFBundleShortVersionString', version],
     ['LSMinimumSystemVersion', '13.0'],
@@ -103,7 +106,7 @@ if (IS_MAIN) {
   const HINT = 'swiftc not found. Install the Command Line Tools: xcode-select --install';
 
   if (process.platform !== 'darwin') {
-    console.error('The Plans app builds only on macOS.');
+    console.error(APP_NAME + ' builds only on macOS.');
     process.exit(1);
   }
   if (args.includes('--check')) {
@@ -125,7 +128,7 @@ if (IS_MAIN) {
   const tmpOut = !outFlag && !args.includes('--no-install');
   const out = outFlag ? path.resolve(outFlag) : mkdtempSync(path.join(os.tmpdir(), 'plans-app-'));
   const dropOut = () => { if (tmpOut) rmSync(out, { recursive: true, force: true }); };
-  const APP = path.join(out, 'Plans.app');
+  const APP = path.join(out, APP_NAME + '.app');
   mkdirSync(path.join(APP, 'Contents', 'MacOS'), { recursive: true });
   writeFileSync(path.join(APP, 'Contents', 'Info.plist'), infoPlist({ url, version }));
   const SRC = path.join(HERE, 'src');
@@ -134,18 +137,18 @@ if (IS_MAIN) {
   try {
     // Swift 5 language mode: the Swift 6 strict concurrency checks of a new compiler do not apply
     execFileSync('xcrun', ['swiftc', '-O', '-swift-version', '5', '-target', target,
-      '-o', path.join(APP, 'Contents', 'MacOS', 'Plans'), ...sources], { stdio: 'inherit' });
+      '-o', path.join(APP, 'Contents', 'MacOS', APP_NAME), ...sources], { stdio: 'inherit' });
     execFileSync('codesign', ['--force', '--sign', '-', APP], { stdio: 'inherit' });
   } catch { dropOut(); console.error('The build failed (see the output above).'); process.exit(1); }
 
   if (args.includes('--no-install')) {
     console.log('Built ' + APP);
   } else {
-    const dest = path.join(os.homedir(), 'Applications', 'Plans.app');
+    const dest = path.join(os.homedir(), 'Applications', APP_NAME + '.app');
     try { installApp(APP, dest); }
     catch (e) { dropOut(); console.error('Could not install ' + dest + ': ' + e.message); process.exit(1); }
     dropOut();
     console.log('Installed ' + dest + ' (opens ' + url + ').');
-    console.log('Quit Plans (⌘Q) and open it again to use the new build.');
+    console.log('Quit ' + APP_NAME + ' (⌘Q) and open it again to use the new build.');
   }
 }

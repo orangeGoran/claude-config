@@ -1,4 +1,4 @@
-// The Plans Mac app: one window that shows the dashboard page, plus the ⌘ menu keys that a browser keeps for itself.
+// Shipyard, the Mac app of the plans dashboard: one window that shows the dashboard page, plus the ⌘ menu keys that a browser keeps for itself.
 // Plain AppKit + WebKit. Build it with `npm run build-app` (apps/plans-mac/build.mjs).
 // The menu calls the page only through its window.dashboard hooks (apps/dashboard/page/app.js).
 // Closing the window hides it: the page stays loaded, and runs and chats never stop (they run under the server).
@@ -46,6 +46,28 @@ let headerHeight: CGFloat = 40
 /// The left padding that the header needs in points, so its buttons start right of the window buttons.
 let headerInset: CGFloat = 80
 
+/// The app's own script in each dashboard page (WKUserScript, after the page loads). It makes the page's header row
+/// the title bar: room on the left for the window buttons (--macinset), the open-plan tabs still at the sidebar's right
+/// edge, and a drag or double-click on an empty part of the header moves or zooms the window. It posts "header" when
+/// the page has the header, so a page without it (the waiting page) keeps the normal title bar.
+/// It reads only header.mainhd, its layout boxes and the --asw / --hdl sizes of apps/dashboard/page/.
+let headerScript = """
+(() => {
+  const hd = document.querySelector('header.mainhd');
+  const app = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.plans;
+  if (!hd || !app) return;
+  document.documentElement.classList.add('shipyard');
+  const st = document.createElement('style');
+  st.textContent = '.shipyard header.mainhd { padding-left: var(--macinset, 80px); }' +
+    ' .shipyard #hdtabs { min-width: calc(var(--asw) - var(--macinset, 80px) - var(--hdl) - 20px); }';
+  document.head.appendChild(st);
+  const empty = (t) => t === hd || (t.matches && t.matches('.hdl, #hdtabs, #stabs, .hright'));
+  hd.addEventListener('mousedown', (e) => { if (e.button === 0 && e.detail === 1 && empty(e.target)) app.postMessage('drag'); });
+  hd.addEventListener('dblclick', (e) => { if (empty(e.target)) app.postMessage('zoom'); });
+  app.postMessage('header');
+})();
+"""
+
 /// A web view that keeps its last mouse-down, so the page can start a window drag from its header.
 final class PageView: WKWebView {
   var lastMouseDown: NSEvent?
@@ -67,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     buildMenu()
     window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
                       styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-    window.title = "Plans"
+    window.title = "Shipyard"
     window.minSize = NSSize(width: 800, height: 500)
     window.isReleasedWhenClosed = false
     window.center()
@@ -83,8 +105,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
       config.preferences.inactiveSchedulingPolicy = .none
     }
     #endif
-    // the page posts "drag" (a mouse-down on an empty part of its header) and "zoom" (a double-click there)
+    // headerScript posts "header", "drag" (a mouse-down on an empty part of the header) and "zoom" (a double-click there)
     config.userContentController.add(self, name: "plans")
+    config.userContentController.addUserScript(WKUserScript(source: headerScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
     web = PageView(frame: window.contentView?.bounds ?? .zero, configuration: config)
     web.navigationDelegate = self
     web.uiDelegate = self
@@ -136,8 +159,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
   // --- the title bar: the window buttons in the page's header row
 
   /// Makes the page's header row the title bar (on), or shows the normal title bar (off).
-  /// It is on only for a dashboard page that has the macInset() hook: a page without it (the waiting page,
-  /// an older dashboard) has no header to drag the window by.
+  /// It is on only after headerScript found the page's header: a page without it (the waiting page) has no header
+  /// to drag the window by.
   func headerTitleBar(_ on: Bool) {
     if on { window.styleMask.insert(.fullSizeContentView) } else { window.styleMask.remove(.fullSizeContentView) }
     window.titlebarAppearsTransparent = on
@@ -161,12 +184,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
   func tellPageInset() {
     guard sameOrigin(web.url) else { return }
     let px = window.styleMask.contains(.fullScreen) ? 14 : Int((headerInset / web.pageZoom).rounded())
-    web.evaluateJavaScript("window.dashboard && window.dashboard.macInset && window.dashboard.macInset(\(px))", completionHandler: nil)
+    web.evaluateJavaScript("document.documentElement.style.setProperty('--macinset', '\(px)px')", completionHandler: nil)
   }
 
-  /// Takes the page's "drag" and "zoom" messages from its header, only from the main frame of the app's origin.
+  /// Takes the "header", "drag" and "zoom" messages of headerScript, only from the main frame of the app's origin.
   func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
     guard message.frameInfo.isMainFrame, sameOrigin(message.frameInfo.request.url), let what = message.body as? String else { return }
+    if what == "header" { headerTitleBar(true); tellPageInset() }
     if what == "drag", let down = web.lastMouseDown { window.performDrag(with: down) }
     if what == "zoom" {
       // a double-click on the title bar does what System Settings → Desktop & Dock says
@@ -229,17 +253,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
   func buildMenu() {
     let bar = NSMenu()
 
-    let appMenu = NSMenu(title: "Plans")
-    item(appMenu, NSMenuItem(title: "About Plans", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
+    let appMenu = NSMenu(title: "Shipyard")
+    item(appMenu, NSMenuItem(title: "About Shipyard", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
     appMenu.addItem(.separator())
     item(appMenu, NSMenuItem(title: "Settings…", action: #selector(settings(_:)), keyEquivalent: ","))
     appMenu.addItem(.separator())
-    item(appMenu, NSMenuItem(title: "Hide Plans", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
+    item(appMenu, NSMenuItem(title: "Hide Shipyard", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
     let others = NSMenuItem(title: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
     others.keyEquivalentModifierMask = [.command, .option]
     item(appMenu, others)
     appMenu.addItem(.separator())
-    item(appMenu, NSMenuItem(title: "Quit Plans", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+    item(appMenu, NSMenuItem(title: "Quit Shipyard", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
     // the standard selectors go to the first responder, so text boxes get the keys
     let edit = NSMenu(title: "Edit")
@@ -387,10 +411,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     if sameOrigin(webView.url) {
       retry?.invalidate(); retry = nil
-      web.evaluateJavaScript("!!(window.dashboard && window.dashboard.macInset)") { [weak self] r, _ in
-        self?.headerTitleBar(r as? Bool == true)
-        self?.tellPageInset()
-      }
     } else {
       headerTitleBar(false)
     }

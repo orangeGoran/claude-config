@@ -23,7 +23,7 @@ Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS
 | `apps/dashboard/` | The dashboard server (server.mjs), the chat relay and the restart command |
 | `apps/dashboard/page/` | The dashboard page (page.html, app.js, app.css) |
 | `apps/scout/` | The scout: finds problems in the projects and writes plan proposals |
-| `apps/plans-mac/` | The Plans Mac app (Swift shell around the page); rules in `apps/plans-mac/AGENTS.md` |
+| `apps/plans-mac/` | Shipyard, the Mac app of the dashboard (Swift shell around the page); rules in `apps/plans-mac/AGENTS.md` |
 | `test/` | node --test tests of the skills (each app has its own test/ folder) |
 | `scripts/` | Setup, service templates and helper scripts |
 | `skills/` | Global skills, symlinked into ~/.claude/skills/ |

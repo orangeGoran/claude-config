@@ -190,9 +190,9 @@ Known limits:
 
 ## Mac app
 
-Plans (`~/Applications/Plans.app`) is an optional Mac app: one window that shows the dashboard page, with the ⌘ keys that a browser keeps for itself. The code is in `apps/plans-mac/` (AppKit and WebKit, no Xcode project).
+Shipyard (`~/Applications/Shipyard.app`) is an optional Mac app: one window that shows the dashboard page, with the ⌘ keys that a browser keeps for itself. The code is in `apps/plans-mac/` (AppKit and WebKit, no Xcode project).
 
-Run `npm run build-app` to build and install it. It needs the Swift compiler of the Command Line Tools (`xcode-select --install`). `scripts/setup.sh` asks before it builds the app. To use a new build, quit Plans (⌘Q) and open it again.
+Run `npm run build-app` to build and install it. It needs the Swift compiler of the Command Line Tools (`xcode-select --install`). `scripts/setup.sh` asks before it builds the app. To use a new build, quit Shipyard (⌘Q) and open it again.
 
 The app opens the domain of the installed dashboard (from `~/.claude/pipeline-dashboard/caddy-site.caddy`), else https://plans.test. `node apps/plans-mac/build.mjs --url https://<domain>` builds it for another https domain.
 
@@ -213,7 +213,7 @@ The app opens the domain of the installed dashboard (from `~/.claude/pipeline-da
 | ⇧⌘W | Hide the window |
 | ⌘Q | Quit the app |
 
-The page's header row is the window's title bar: the window buttons sit at its left end. Drag an empty part of the header to move the window, and double-click it to zoom the window (as set in System Settings → Desktop & Dock). The waiting page, and a dashboard that is older than the app, keep the normal title bar.
+The page's header row is the window's title bar: the window buttons sit at its left end. Drag an empty part of the header to move the window, and double-click it to zoom the window (as set in System Settings → Desktop & Dock). The waiting page keeps the normal title bar.
 
 Closing the window hides it. The app keeps running in the background, and it never stops a run or a chat: they run under the dashboard service. Click the Dock icon to show the window again, at the same size and place. While the window is hidden, the menu keys do nothing; a question from the page (for example "Compact this chat?") shows the window. ⌘Q quits the app; runs and chats keep going then too.
 

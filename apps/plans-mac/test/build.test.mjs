@@ -1,4 +1,4 @@
-// Tests for apps/plans-mac/build.mjs and the source of the Plans Mac app. No test starts the app.
+// Tests for apps/plans-mac/build.mjs and the source of Shipyard, the Mac app. No test starts the app.
 //
 //   npm test
 import { test } from 'node:test';
@@ -41,7 +41,7 @@ test('infoPlist writes the bundle keys and an XML-escaped PlansURL', () => {
   const x = infoPlist({ url: 'https://dash.example.test/?a=1&b=2', version: '1.0' });
   assert.match(x, /<key>PlansURL<\/key>\s*<string>https:\/\/dash\.example\.test\/\?a=1&amp;b=2<\/string>/);
   assert.match(x, /<key>CFBundleIdentifier<\/key>\s*<string>com\.plans-dashboard\.mac<\/string>/);
-  assert.match(x, /<key>CFBundleExecutable<\/key>\s*<string>Plans<\/string>/);
+  assert.match(x, /<key>CFBundleExecutable<\/key>\s*<string>Shipyard<\/string>/);
   assert.match(x, /<key>CFBundlePackageType<\/key>\s*<string>APPL<\/string>/);
   assert.match(x, /<key>LSMinimumSystemVersion<\/key>\s*<string>13\.0<\/string>/);
   assert.doesNotMatch(x, /&b=/);
@@ -94,22 +94,27 @@ test('⌘0, ⌘+ (also ⌘=) and ⌘− set the page zoom in Safari\'s steps, an
 });
 
 test('the page header is the title bar: the window buttons sit in it, and its empty part drags and zooms the window', () => {
-  // on only for a dashboard page with the macInset() hook; the waiting page and an older page keep the normal title bar
+  // on only after the page script found the header; the waiting page keeps the normal title bar
   assert.match(SWIFT, /if on \{ window\.styleMask\.insert\(\.fullSizeContentView\) \} else \{ window\.styleMask\.remove\(\.fullSizeContentView\) \}/);
   assert.match(SWIFT, /window\.titlebarAppearsTransparent = on\s*window\.titleVisibility = on \? \.hidden : \.visible/);
-  assert.match(SWIFT, /evaluateJavaScript\("!!\(window\.dashboard && window\.dashboard\.macInset\)"\) \{ \[weak self\] r, _ in\s*self\?\.headerTitleBar\(r as\? Bool == true\)/);
   assert.match(SWIFT, /\} else \{\s*headerTitleBar\(false\)\s*\}/);
   assert.match(SWIFT, /headerTitleBar\(false\)\s*web\.loadHTMLString\(page, baseURL: nil\)/);
   // the page messages come only from the main frame of the app's origin
   assert.match(SWIFT, /config\.userContentController\.add\(self, name: "plans"\)/);
   assert.match(SWIFT, /guard message\.frameInfo\.isMainFrame, sameOrigin\(message\.frameInfo\.request\.url\)/);
   assert.match(SWIFT, /if what == "drag", let down = web\.lastMouseDown \{ window\.performDrag\(with: down\) \}/);
-  // the page side: the same handler name, the hook the app calls, and drags only from empty header parts
-  assert.match(APP_JS, /const macApp = window\.webkit && window\.webkit\.messageHandlers && window\.webkit\.messageHandlers\.plans;/);
-  assert.match(SWIFT, /window\.dashboard\.macInset\(\\\(px\)\)/);
-  assert.ok(pageHooks().includes('macInset'), 'window.dashboard.macInset');
-  assert.match(APP_JS, /const empty = \(t\) => t === hd \|\| \(t\.matches && t\.matches\('\.hdl, #hdtabs, #stabs, \.hright'\)\);/);
-  assert.match(APP_JS, /if \(e\.button === 0 && e\.detail === 1 && empty\(e\.target\)\) macApp\.postMessage\('drag'\)/);
+  // the app's own page script: it finds the header, makes room for the window buttons and drags only from empty parts
+  assert.match(SWIFT, /addUserScript\(WKUserScript\(source: headerScript, injectionTime: \.atDocumentEnd, forMainFrameOnly: true\)\)/);
+  assert.match(SWIFT, /const app = window\.webkit && window\.webkit\.messageHandlers && window\.webkit\.messageHandlers\.plans;/);
+  assert.match(SWIFT, /const empty = \(t\) => t === hd \|\| \(t\.matches && t\.matches\('\.hdl, #hdtabs, #stabs, \.hright'\)\);/);
+  assert.match(SWIFT, /if \(e\.button === 0 && e\.detail === 1 && empty\(e\.target\)\) app\.postMessage\('drag'\)/);
+  assert.match(SWIFT, /if what == "header" \{ headerTitleBar\(true\); tellPageInset\(\) \}/);
+  // the page still has every part the script reads
+  const PAGE_HTML = readFileSync(path.join(HERE, '..', '..', 'dashboard', 'page', 'page.html'), 'utf8');
+  const PAGE_CSS = readFileSync(path.join(HERE, '..', '..', 'dashboard', 'page', 'app.css'), 'utf8');
+  for (const part of ['<header class="mainhd">', 'class="hdl"', 'id="hdtabs"', 'id="stabs"', 'class="hright"'])
+    assert.ok(PAGE_HTML.includes(part), 'page.html has ' + part);
+  for (const size of ['--asw:', '--hdl:']) assert.ok(PAGE_CSS.includes(size), 'app.css has ' + size);
   // full screen has no window buttons: the header gets its normal padding
   assert.match(SWIFT, /window\.styleMask\.contains\(\.fullScreen\) \? 14 :/);
   for (const ev of ['windowDidResize', 'windowDidExitFullScreen']) assert.match(SWIFT, new RegExp('func ' + ev + '\\([^)]*\\) \\{[^}]*placeWindowButtons\\(\\)'));
@@ -183,8 +188,8 @@ const fakeApp = (dir, file) => {
 test('installApp: makes the folder, swaps an old app, keeps the old app on a failure', () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), 'plans-install-'));
   try {
-    const built = fakeApp(path.join(tmp, 'build', 'Plans.app'), 'new');
-    const dest = path.join(tmp, 'home', 'Applications', 'Plans.app');
+    const built = fakeApp(path.join(tmp, 'build', 'Shipyard.app'), 'new');
+    const dest = path.join(tmp, 'home', 'Applications', 'Shipyard.app');
 
     // a missing parent folder is made; the symlink stays a link
     assert.deepEqual(installApp(built, dest), { path: dest });
@@ -238,12 +243,12 @@ test('build.mjs compiles, signs and does not install with --no-install', { skip:
     const r = spawnSync(process.execPath, [SCRIPT, '--out', tmp, '--no-install', '--url', 'https://plans.test'],
       { env: { ...process.env, HOME: home }, encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr + r.stdout);
-    const bin = path.join(tmp, 'Plans.app', 'Contents', 'MacOS', 'Plans');
+    const bin = path.join(tmp, 'Shipyard.app', 'Contents', 'MacOS', 'Shipyard');
     assert.ok(existsSync(bin));
     assert.ok(statSync(bin).mode & 0o111, 'the binary is executable');
-    assert.match(readFileSync(path.join(tmp, 'Plans.app', 'Contents', 'Info.plist'), 'utf8'), /https:\/\/plans\.test/);
-    assert.equal(spawnSync('codesign', ['--verify', path.join(tmp, 'Plans.app')]).status, 0);
-    assert.ok(!existsSync(path.join(home, 'Applications', 'Plans.app')));
+    assert.match(readFileSync(path.join(tmp, 'Shipyard.app', 'Contents', 'Info.plist'), 'utf8'), /https:\/\/plans\.test/);
+    assert.equal(spawnSync('codesign', ['--verify', path.join(tmp, 'Shipyard.app')]).status, 0);
+    assert.ok(!existsSync(path.join(home, 'Applications', 'Shipyard.app')));
   } finally {
     rmSync(tmp, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
@@ -258,7 +263,7 @@ test('without --url the build opens the site of the Caddy file in HOME', { skip:
     writeFileSync(path.join(home, '.claude', 'pipeline-dashboard', 'caddy-site.caddy'), 'dash.example.test {\n\ttls internal\n}\n');
     const r = spawnSync(process.execPath, [SCRIPT, '--out', tmp, '--no-install'], { env: { ...process.env, HOME: home }, encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr + r.stdout);
-    assert.match(readFileSync(path.join(tmp, 'Plans.app', 'Contents', 'Info.plist'), 'utf8'),
+    assert.match(readFileSync(path.join(tmp, 'Shipyard.app', 'Contents', 'Info.plist'), 'utf8'),
       /<key>PlansURL<\/key>\s*<string>https:\/\/dash\.example\.test<\/string>/);
   } finally {
     rmSync(tmp, { recursive: true, force: true });

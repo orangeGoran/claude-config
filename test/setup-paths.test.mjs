@@ -103,7 +103,7 @@ test('setup.sh asks to build the Mac app, skips it without swiftc, and goes on w
     let r = run({ YES: '1', FAKE_CHECK: '0', FAKE_BUILD: '0' });
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(r.ran, [['--check'], []], 'the build runs with no arguments');
-    assert.equal(r.app, path.join(home, 'Applications', 'Plans.app'));
+    assert.equal(r.app, path.join(home, 'Applications', 'Shipyard.app'));
 
     r = run({ YES: '0', FAKE_CHECK: '0', FAKE_BUILD: '0' }, 'n\n');
     assert.equal(r.status, 0, r.stderr);

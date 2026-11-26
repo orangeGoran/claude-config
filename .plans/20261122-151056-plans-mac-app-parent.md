@@ -14,6 +14,7 @@ A native Mac app around the dashboard, so the owner can switch between working s
 - Tabs live inside the page, the same in the browser and the app: every plan you open becomes a tab. Closing a tab never stops an agent or a run.
 - ⌘N opens a sheet with three choices: ask about the project, new plan, launch a ready plan.
 - Release 1 covers all three phases below.
+- The app is named **Shipyard** (`~/Applications/Shipyard.app`; owner decision 2026-11-26). The folder stays `apps/plans-mac/`, and the dashboard page keeps its "Plans" title.
 - The web dashboard (https://plans.test in any browser) stays complete on its own: every feature works there, with Ctrl keys where the browser keeps the ⌘ keys. The Mac app is optional: `scripts/setup.sh` asks before it builds and installs it, and the page sends messages to the app only when `window.webkit` exists.
 
 ## Phases
