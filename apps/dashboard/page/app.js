@@ -2,12 +2,12 @@
 const VSCODE_SVG = '<svg class="vsc-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="#007ACC" d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z"/></svg>';
 // the GitHub mark (its octicon) on every link that opens a PR on GitHub; it takes the text colour
 const GITHUB_SVG = '<svg class="vsc-ico" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>';
-const VSC_OPEN = { html: VSCODE_SVG + ' Open in VS Code' };
+const VSC_OPEN = { html: VSCODE_SVG + ' Code' };
 
 // theme: remembered per browser, defaults to system preference
 const applyTheme = (t) => {
   document.documentElement.dataset.theme = t;
-  document.getElementById('themeBtn').textContent = t === 'light' ? '🌙' : '☀️';
+  document.getElementById('themeBtn').textContent = t === 'light' ? '🌙 Dark theme' : '☀️ Light theme';
   if (window.monaco && typeof monoTheme === 'function') monoTheme();
   redrawMermaid();
 };
@@ -74,6 +74,42 @@ function jumpToBottom(L) {
     requestAnimationFrame(() => { queued = false; b.hidden = L.scrollHeight - L.scrollTop - L.clientHeight < 80; });
   };
   b.addEventListener('click', () => L.scrollTo({ top: L.scrollHeight, behavior: 'smooth' }));
+  L.addEventListener('scroll', update, { passive: true });
+  new MutationObserver(update).observe(L, { childList: true, subtree: true, characterData: true });
+  new ResizeObserver(update).observe(L);
+  update();
+}
+/** Gives the index of the message to pin: the last one whose bottom is above the top of the view (viewTop),
+ *  or -1 when every message is still in or below the view. Each box is { top, bottom } in screen pixels, in page order. */
+function pinnedAsk(boxes, viewTop) {
+  let at = -1;
+  boxes.forEach((b, n) => { if (b.bottom <= viewTop) at = n; });
+  return at;
+}
+// Your last message, pinned over the top of the chat log once it has scrolled out of view: a long answer
+// does not hide what you asked. A click on it scrolls back to the message. Built like jumpToBottom.
+function pinLastAsk(L) {
+  const wrap = document.createElement('div');
+  wrap.className = 'pinwrap';
+  wrap.innerHTML = '<button class="pinask" hidden title="Your message: click to scroll to it"></button>';
+  L.before(wrap);
+  const b = wrap.firstChild;
+  let queued = false, target = null;
+  const update = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      const asks = [...L.querySelectorAll('.cyou')];
+      const at = pinnedAsk(asks.map((el) => el.getBoundingClientRect()), L.getBoundingClientRect().top + 4);
+      target = at < 0 ? null : asks[at];
+      b.hidden = !target;
+      if (!target) return;
+      const msg = target.querySelector('.amsg.you'), text = (msg ? msg.textContent : '').replace(/\s+/g, ' ').trim();
+      b.textContent = text || 'Your message (image)';
+    });
+  };
+  b.addEventListener('click', () => { if (target) target.scrollIntoView({ block: 'start', behavior: 'smooth' }); });
   L.addEventListener('scroll', update, { passive: true });
   new MutationObserver(update).observe(L, { childList: true, subtree: true, characterData: true });
   new ResizeObserver(update).observe(L);
@@ -260,9 +296,16 @@ const matchesFields = (fields, q) => {
   const hay = fields.map(squash);
   return q.split(/\s+/).map(squash).filter(Boolean).every((w) => hay.some((h) => h.includes(w)));
 };
-// the short project tag ("gal-api") and the PR ("#213", its title) count too: they are what the row shows
-const matchesQ = (p, q) => matchesFields([p.file, p.title, p.project, projLook(p.project).short, p.client, ...p.tags,
-  ...(p.pr ? ['#' + p.pr.number, 'pr' + p.pr.number, p.pr.title] : [])], q);
+/** Gives { repo, number } of a GitHub PR link in q ("github.com/<owner>/<repo>/pull/<n>", with or without /files), or null. */
+const prLinkOf = (q) => { const m = /github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)/i.exec(String(q || '')); return m ? { repo: m[1].toLowerCase(), number: +m[2] } : null; };
+// the short project tag ("gal-api") and the PR ("#213", its title) count too: they are what the row shows.
+// A pasted PR link finds the plan or worktree of exactly that PR.
+const matchesQ = (p, q) => {
+  const link = prLinkOf(q);
+  if (link) return !!p.pr && +p.pr.number === link.number && String(p.pr.url || '').toLowerCase().includes('/' + link.repo + '/pull/');
+  return matchesFields([p.file, p.title, p.project, projLook(p.project).short, p.client, ...p.tags,
+    ...(p.pr ? ['#' + p.pr.number, 'pr' + p.pr.number, p.pr.title] : [])], q);
+};
 function visiblePlans() {
   const q = byId('q').value.toLowerCase();
   return plans.filter((p) => !p.archived && (!q || matchesQ(p, q)));
@@ -326,11 +369,11 @@ const itemHtml = (p, withProject) => `
       <input type="checkbox" aria-label="queue this plan" data-check="${p.key}" ${picked.has(p.key) ? 'checked' : ''}
              ${p.live || starting(p) || p.worktree || p.archived ? 'disabled' : ''}>
       <div class="t">
-        <div class="name">${selected === p.key ? openMark : ''}${withProject ? projPill(p.project) : ''}${p.file}</div>
+        <div class="name">${p.pr ? prNumChip(p.pr) : ''}${selected === p.key ? openMark : ''}${withProject ? projPill(p.project) : ''}${p.file}</div>
         <div class="chiprow">
           ${STATUSES.includes(p.status) ? '<span class="chip st">' + esc(p.status) + '</span>' : ''}
           ${p.tags.map((t) => '<span class="chip">' + esc(t) + '</span>').join('')}
-          ${autoChips(p)}
+          ${autoChips({ ...p, pr: null }) /* the PR number starts the name line */}
           ${picked.has(p.key) ? '<span class="chip st">▶ ' + esc(modeLabel(p)) + '</span>' : ''}
         </div>
       </div>
@@ -354,14 +397,15 @@ function visibleWts() {
 const agentChip = (w) => w.agent === 'working' ? '<span class="chip live">● agent working</span>'
   : w.agent === 'idle' ? '<span class="chip" title="the last session wrote ' + escA(new Date(w.lastActive).toLocaleString()) +
     '">agent idle · ' + ago(w.lastActive) + '</span>' : '';
-const wtChips = (w) => agentChip(w) + (w.pr ? prChip(w.pr) : '<span class="chip">no PR</span>') +
+// inRow: the sidebar row, where the PR number starts the name line
+const wtChips = (w, inRow) => agentChip(w) + (w.pr ? (inRow ? '' : prChip(w.pr)) : '<span class="chip">no PR</span>') +
   (w.dirty ? '<span class="chip warn" title="files changed and not committed">' + w.dirty + ' uncommitted</span>' : '');
 const wtItemHtml = (w) => `
     <div class="item wtrow ${selected === w.key ? 'sel' : ''} ${w.agent === 'working' ? 'live' : ''}" data-key="${escA(w.key)}"${selected === w.key ? ' aria-current="true"' : ''}>
       <div class="t">
-        <div class="name">${selected === w.key ? openMark : ''}${esc(w.name)}</div>
+        <div class="name">${w.pr ? prNumChip(w.pr) : ''}${selected === w.key ? openMark : ''}${esc(w.name)}</div>
         <div class="sub" title="${escA(w.title)}">${esc(w.title)}</div>
-        <div class="chiprow">${wtChips(w)}</div>
+        <div class="chiprow">${wtChips(w, true)}</div>
       </div>
       <div class="dot ${w.agent === 'working' ? 'live' : ''}"></div>
     </div>`;
@@ -427,14 +471,15 @@ function renderList() {
   rs.className = 'runstrip' +
     (sLive.length || sInflight.length || sReady.length || sBad.length || sLaunching.length || sFailed.length ? ' on' : '');
   let sh = '';
-  const stripName = (p) => (p.key === selected ? openMark : '') + projPill(p.project) + p.file + (p.pr ? ' ' + prChip(p.pr) : '') + chatChip(p);
+  const stripName = (p) => (p.pr ? prNumChip(p.pr) : '') + (p.key === selected ? openMark : '') + projPill(p.project) + p.file + chatChip(p);
   // one plan row: dot, name, the run's status line, then its buttons
   const stripRow = (p, dot, sub, acts) => '<div class="rp" data-go="' + p.key + '"><span class="dot ' + dot + '"></span>' +
     '<div class="t"><div class="n">' + stripName(p) + '</div>' +
     (sub ? '<div class="rst" title="' + escA(sub) + '">' + esc(sub) + '</div>' : '') +
     (acts ? '<div class="acts">' + acts + '</div>' : '') + '</div></div>';
-  const stripGroup = (cls, cap, list, row) => list.length ? '<div class="cap ' + cls + '">' + cap + ' · ' + list.length + '</div>' +
-    '<div class="sgrp ' + cls + '">' + list.map(row).join('') + '</div>' : '';
+  // each group is one section, so its caption sticks at the top while its rows scroll, as a project name does
+  const stripGroup = (cls, cap, list, row) => list.length ? '<div class="sgsec"><div class="cap ' + cls + '">' + cap + ' · ' + list.length + '</div>' +
+    '<div class="sgrp ' + cls + '">' + list.map(row).join('') + '</div></div>' : '';
   const repBtn = (p) => '<button class="mini" data-rep="' + p.key + '">' + (p.hasPipeline ? '📋 report' : '📄 log') + '</button>';
   // the run's own status says what it waits for ("VERIFIED", "PR OPEN — 3 DECISIONS WAITING",
   // "BLOCKED: step 10 …"); a run that stopped blocked or failed needs you as much as a finished one
@@ -451,7 +496,8 @@ function renderList() {
   rs.querySelectorAll('[data-go]').forEach((el) => {
     if (el.dataset.go === selected) { el.classList.add('sel'); el.setAttribute('aria-current', 'true'); }
     el.addEventListener('click', () => {
-      selected = el.dataset.go; revealInSide(selected); renderList(); renderDetail(true); scrollToSelected();
+      // the clicked row is in view: the list does not scroll to the plan's row in its project section
+      selected = el.dataset.go; revealInSide(selected); renderList(); renderDetail(true);
     });
   });
   rs.querySelectorAll('[data-why]').forEach((el) =>
@@ -581,24 +627,20 @@ function renderList() {
       collapsedProjects.has(k) ? collapsedProjects.delete(k) : collapsedProjects.add(k);
       saveCollapsed(); renderList();
     }));
-  byId('side').querySelectorAll('.item.wtrow').forEach((el) =>
-    el.addEventListener('click', () => { selected = el.dataset.key; renderList(); renderDetail(true); }));
-  byId('side').querySelectorAll('.item:not(.wtrow)').forEach((el) =>
+  // a click opens the row in the preview tab; a double-click keeps that tab (only the box queues a plan).
+  // Timed by hand because the first click re-renders the list, so the browser's dblclick never fires.
+  byId('side').querySelectorAll('.item[data-key]').forEach((el) =>
     el.addEventListener('click', (e) => {
       if (e.target.dataset.check) return;
       const key = el.dataset.key, now = Date.now();
-      // double-click queues the plan, same as ticking its box. Timed by hand because
-      // the first click re-renders the list, so the browser's dblclick never fires.
-      if (lastItemClick.key === key && now - lastItemClick.at < 400) {
+      if (sideDoubleClick(lastItemClick, key, now)) {
         lastItemClick = {};
         getSelection().removeAllRanges();
-        if (el.querySelector('input[data-check]').disabled) return;
-        picked.has(key) ? picked.delete(key) : picked.add(key);
-        renderBar(); renderList();
+        keepTab(key);
         return;
       }
       lastItemClick = { key, at: now };
-      selected = key; renderList(); renderDetail(true);
+      selected = key; tabPreviewNext = true; renderList(); renderDetail(true);
     }));
   byId('side').querySelectorAll('input[data-check]').forEach((el) =>
     el.addEventListener('change', () => {
@@ -630,25 +672,30 @@ function readUrl() {
   }
   lastPrDraw = null;
 }
-window.addEventListener('popstate', () => { readUrl(); applyView(); renderList(); renderDetail(true); renderBoard(); });
+window.addEventListener('popstate', () => {
+  readUrl(); if (selected) revealInSide(selected);
+  applyView(); renderList(); renderDetail(true); renderBoard(); scrollToSelected();
+});
 async function renderDetail(loadPlan) {
   applyView();
   syncUrl();
   const p = find(selected);
-  if (!p) return renderEmptyDetail();
+  if (!p) { tabPreviewNext = false; paintMergedCard(null); return renderEmptyDetail(); }
   // every way to open a plan ends here, so this one place adds its tab
-  const was = sessionTabs;
-  sessionTabs = tabsOpen(sessionTabs, p.key);
-  if (sessionTabs !== was) saveTabs();
+  const was = sessionTabs, wasPreview = previewTab, look = tabPreviewNext;
+  tabPreviewNext = false;
+  if (look) ({ tabs: sessionTabs, preview: previewTab } = tabsPreview(sessionTabs, previewTab, p.key));
+  else sessionTabs = tabsOpen(sessionTabs, p.key);
+  if (sessionTabs !== was || previewTab !== wasPreview) saveTabs();
   drawSessionTabs();
+  paintMergedCard(p);
   markDetailProject(p.project);
   CUR_ISSUES = p.issuesUrl || '';
   let tab = prTab[p.key] || 'plan';
   // the Ask tab is now the chat panel: an old ?tab=ask link opens it beside the diff
-  if (tab === 'ask') { prTab[p.key] = tab = p.pr ? 'files' : 'plan'; if (!chatOn) toggleChat(true); }
+  if (tab === 'ask') prTab[p.key] = tab = p.pr ? 'files' : 'plan';
   if (tab === 'pr') prTab[p.key] = tab = 'plan';   // the plan and its PR are one tab
   if (tab !== 'plan' && !p.pr) tab = 'plan';
-  autoChat(p);
   syncChat(p);
   drawHdTabs(p);
   if (tab !== 'plan') return renderPrTab(p, tab, loadPlan);
@@ -681,7 +728,7 @@ async function renderDetail(loadPlan) {
       <h2 class="fname">${p.file}</h2>
       <div class="subtitle">${inline(p.title)}</div></div>
       <div class="btns" id="actions"></div></div>
-    ${withPr ? '<div class="prtabsrow"><div class="prtabs">' + chatBtn(p) + '</div><span class="btns" id="ract"></span></div>' : prTabs(p, 'plan') + badges}
+    ${withPr ? '<div class="prtabsrow"><div class="prtabs"></div><span class="btns" id="ract"></span></div>' : prTabs(p, 'plan') + badges}
     <div id="morebox" ${moreOpen.has(p.key) ? '' : 'hidden'}>
     ${withPr ? badges + lastStep : ''}
     <div class="metabox"><b>Status:</b>
@@ -698,7 +745,7 @@ async function renderDetail(loadPlan) {
     </div>
     ${p.pr && p.pr.state === 'MERGED' ? '<div class="mergedline"><span>✓ PR #' + p.pr.number +
       ' was merged into <code>' + esc(p.pr.base || '?') + '</code>' + (p.pr.mergedAt ? ' on ' + esc(new Date(p.pr.mergedAt).toLocaleString()) : '') +
-      '</span><a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener" title="Open the PR on GitHub">' + GITHUB_SVG + ' GitHub</a></div>' : ''}
+      '</span>' + mergedCardButton(p) + '<a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener" title="Open the PR on GitHub">' + GITHUB_SVG + ' GitHub</a></div>' : ''}
     ${p.summary ? '<div class="summary">💡 ' + esc(p.summary) + '</div>'
       : p.summarizing ? '<div class="summary dim">💭 plain-language summary is being generated…</div>' : ''}
     ${withPr ? '' : lastStep}
@@ -891,7 +938,7 @@ function renderWtDetail(p, loadPr0) {
     ${!withPr && p.prError ? '<div class="ghhint">PRs are not shown: ' + esc(p.prError) + '.</div>' : ''}
     ${withPr && p.pr.state === 'MERGED' ? '<div class="mergedline"><span>✓ PR #' + p.pr.number +
       ' was merged into <code>' + esc(p.pr.base || '?') + '</code>' + (p.pr.mergedAt ? ' on ' + esc(new Date(p.pr.mergedAt).toLocaleString()) : '') +
-      '</span><a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener" title="Open the PR on GitHub">' + GITHUB_SVG + ' GitHub</a></div>' : ''}
+      '</span>' + mergedCardButton(p) + '<a href="' + escA(p.pr.url) + '" target="_blank" rel="noopener" title="Open the PR on GitHub">' + GITHUB_SVG + ' GitHub</a></div>' : ''}
     ${withPr ? '<div id="prview" class="pvpr"></div>'
       : '<div class="summary dim">No PR for <code>' + esc(p.branch || p.name) + '</code> yet.</div>'}`;
   document.body.classList.remove('review');
@@ -945,6 +992,15 @@ try { mergeMethod = localStorage.getItem('dash-merge-method'); } catch {}
 // throw away the open file and the scroll position
 let lastPrDraw = null;
 const PR_CHIP = { OPEN: 'ok', MERGED: 'merged', CLOSED: 'bad' };
+/** Gives the state word of PR pr: open, draft, merged or closed. */
+const prStateWord = (pr) => pr.state === 'MERGED' ? 'merged' : pr.state === 'CLOSED' ? 'closed' : pr.isDraft ? 'draft' : 'open';
+/** Gives the big PR number chip ("#900 draft") that starts a row: people find a PR by its number.
+ *  The palette rows, the sidebar rows and the run strip use it. */
+const prNumChip = (pr) => {
+  const w = prStateWord(pr);
+  return '<span class="chip palpr' + (w === 'merged' ? ' merged' : w === 'open' ? ' ok' : '') + '">#' + esc(String(pr.number)) +
+    ' <small>' + w + '</small></span>';
+};
 const prChip = (pr) => {
   const draft = pr.isDraft && pr.state === 'OPEN';
   return '<span class="chip ' + (draft ? '' : PR_CHIP[pr.state] || '') + '">' + (pr.state === 'MERGED' ? '✓ ' : '') + 'PR #' + pr.number + ' · ' +
@@ -968,24 +1024,25 @@ let diffSplit = true, diffFull = true;
 try { diffSplit = localStorage.getItem('dash-diff-split') !== '0'; } catch {}
 try { diffFull = localStorage.getItem('dash-diff-full') !== '0'; } catch {}
 
-// inBar: the review toolbar, where ‹ Plan is the way back, the viewed line has the file count and Chat sits with the actions;
-// 'hd': the main header, laid out as the toolbar but with the file count (no viewed line there)
+// inBar ('hd'): the switch of the main header and of the Files changed bar, the same in both, at the same place.
+// Without inBar: the switch row of a plan with no PR
 const prTabs = (p, tab, inBar) => !p.pr && !hasChat(p) ? '' : '<div class="prtabs">' + [
   // the plan and its PR are one tab; in the review bar it is the way back, beside ‹ Plan
-  (!inBar || p.pr) && ['plan', (p.kind === 'wt' ? 'Worktree' : 'Plan') + (p.pr ? ' · PR <span class="n">#' + p.pr.number + '</span>' : '')],
-  p.pr && ['files', 'Files changed' + (inBar === true ? '' : ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
+  // short labels ("Plan #292", "Files 50"); the hover title keeps the full meaning
+  (!inBar || p.pr) && ['plan', (p.kind === 'wt' ? 'Worktree' : 'Plan') + (p.pr ? ' <span class="n">#' + p.pr.number + '</span>' : ''),
+    (p.kind === 'wt' ? 'Worktree' : 'Plan') + (p.pr ? ' and PR #' + p.pr.number : '')],
+  p.pr && ['files', 'Files' + ((n) => n != null ? ' <span class="n">' + n + '</span>' : '')(
     prData[p.key] && prData[p.key].changedFiles != null ? prData[p.key].changedFiles
-      : prDiff[p.key] && prDiff[p.key].files ? prDiff[p.key].files.length : null))],
-].filter(Boolean).map(([id, label]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '">' + label + '</button>').join('') +
-  (inBar ? '' : chatBtn(p)) + '</div>';
+      : prDiff[p.key] && prDiff[p.key].files ? prDiff[p.key].files.length : null), 'Files changed in the PR'],
+].filter(Boolean).map(([id, label, title]) => '<button class="' + (id === tab ? 'on' : '') + '" data-tab="' + id + '" title="' + title + '">' + label + '</button>').join('') + '</div>';
 // the same switch in the main header, so the plan view has it where Files changed has it
 function drawHdTabs(p) {
   setSelTitle(p);
   const h = byId('hdtabs');
   if (!h) return;
-  h.innerHTML = p && p.pr ? prTabs(p, 'plan', 'hd') : '';
-  h.parentElement.classList.toggle('tabs', !!h.innerHTML);
-  placeHdTabs();
+  // an open plan with no PR gets the switch greyed out: its place in the row stays filled, and the tabs do not move
+  h.innerHTML = p && p.pr ? prTabs(p, 'plan', 'hd') : p ? '<div class="prtabs off" title="No PR yet: Files changed opens when the plan has a PR">' +
+    '<button class="on" disabled>' + (p.kind === 'wt' ? 'Worktree' : 'Plan') + '</button><button disabled>Files</button></div>' : '';
   h.querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => {
     prTab[p.key] = el.dataset.tab; lastPrDraw = null; renderDetail(false);
   }));
@@ -994,7 +1051,6 @@ function bindPrTabs(p) {
   byId('detail').querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => {
     prTab[p.key] = el.dataset.tab; lastPrDraw = null; renderDetail(false);
   }));
-  byId('detail').querySelectorAll('[data-chat]').forEach((el) => el.addEventListener('click', () => toggleChat()));
 }
 // --- Chat panel: the Claude session that ran the plan, beside Files changed and the plan ---
 // Like the VS Code extension's panel: the whole session (the run, then the chat) scrolls above
@@ -1007,9 +1063,8 @@ const hasChat = (p) => !!(p && p.kind !== 'wt' && ((p.sessions && p.sessions.len
 // the modes are the server's; only their names on the picker are the page's
 const CHAT_MODE_NAMES = { default: 'Ask before edits', acceptEdits: 'Edit automatically', plan: 'Plan mode', auto: 'Auto' };
 const CHAT_MODES = /*@CHAT_MODES*/[].map((m) => [m, CHAT_MODE_NAMES[m] || m]);
-let chatOn = false, chatW = 0, chatMode = 'default', chatModel = '';
+let chatW = 0, chatMode = 'default', chatModel = '';
 try {
-  chatOn = localStorage.getItem('dash-chat-open') === '1';
   chatW = +localStorage.getItem('dash-chat-w') || 0;
   chatMode = localStorage.getItem('dash-chat-mode') || 'default';
   chatModel = localStorage.getItem('dash-chat-model') || '';
@@ -1034,43 +1089,15 @@ function chatHistPush(key, text) {
   for (const k of keys.slice(0, Math.max(0, keys.length - 50))) delete chatHist[k];
   try { localStorage.setItem('dash-chat-hist', JSON.stringify(chatHist)); } catch {}
 }
-const chatBtn = (p) => hasChat(p) ? '<button class="chatbtn' + (chatOn ? ' on' : '') + '" data-chat="1" aria-pressed="' + chatOn +
-  '" title="Chat with the agent that ran this plan">Chat' + (p.chatWaits ? ' <span class="n">!</span>' : '') + '</button>' : '';
-let chatAutoFor = null;
-function autoChat(p) {
-  if (chatAutoFor === p.key) return;
-  chatAutoFor = p.key;
-  if (hasChat(p) && !chatOn) {
-    chatOn = true;
-    document.querySelectorAll('[data-chat]').forEach((b) => { b.classList.add('on'); b.setAttribute('aria-pressed', 'true'); });
-  }
-}
-// the header switch centers over the space left of the chat panel (as the review bar's does), but moves right of the
-// left group (Plans, Code, the review pill, the clock) when a wide chat would push it onto that group
-function placeHdTabs() {
-  const h = byId('hdtabs'), hd = h && h.parentElement;
-  if (!hd) return;
-  const chatw = byId('chat').hidden ? 0 : byId('chat').offsetWidth + byId('csplit').offsetWidth;
-  const left = [...hd.querySelector('.hleft').children].filter((el) => !el.classList.contains('hdnote') && el.offsetParent)
-    .reduce((w, el) => w + el.offsetWidth + 14, 0);
-  const pad = parseFloat(getComputedStyle(hd).paddingLeft) || 0;
-  hd.style.setProperty('--tabsw', h.offsetWidth + 'px');
-  hd.style.setProperty('--tabx', Math.round(Math.max((hd.clientWidth - chatw) / 2, pad + left + 22 + h.offsetWidth / 2)) + 'px');
-}
-// the chat panel's width (and its divider): the toasts stay left of it, the header switch is placed again
+// the chat panel's width (and its divider): the toasts stay left of it
 const hdObs = new ResizeObserver(() => {
   document.body.style.setProperty('--chatw', (byId('chat').offsetWidth + byId('csplit').offsetWidth) + 'px');
-  placeHdTabs();
 });
 hdObs.observe(byId('chat'));
-hdObs.observe(document.querySelector('.mainhd'));
-document.querySelectorAll('.mainhd .hleft > :not(.hdnote)').forEach((el) => hdObs.observe(el));
-function toggleChat(on) {
-  chatOn = on == null ? !chatOn : on;
-  try { localStorage.setItem('dash-chat-open', chatOn ? '1' : '0'); } catch {}
-  document.querySelectorAll('[data-chat]').forEach((b) => { b.classList.toggle('on', chatOn); b.setAttribute('aria-pressed', String(chatOn)); });
+/** Shows the open plan's chat (it is always open when the plan has a session) and puts the cursor in its box. */
+function focusChat() {
   syncChat(find(selected));
-  if (chatOn && byId('cin')) byId('cin').focus();
+  if (byId('cin')) byId('cin').focus();
 }
 function setChatWidth(px, save) {
   const C = byId('chat');
@@ -1078,9 +1105,9 @@ function setChatWidth(px, save) {
   chatW = px ? C.offsetWidth : 0;
   if (save) try { chatW ? localStorage.setItem('dash-chat-w', chatW) : localStorage.removeItem('dash-chat-w'); } catch {}
 }
-// shown for the open plan when the panel is on and the plan has a session to talk to
+// always shown for the open plan when it has a session to talk to; there is no button to close it
 function syncChat(p) {
-  const show = chatOn && hasChat(p);
+  const show = hasChat(p);
   byId('chat').hidden = byId('csplit').hidden = !show;
   if (!show) { if (ch) { ch.es.close(); ch = null; } holdChatLock(); return; }
   if (ch && ch.key === p.key) { ch.p = p; return; }
@@ -1109,8 +1136,7 @@ function chatBind(p) {
   C.innerHTML =
     '<div class="chead"><b>Chat</b>' + projPill(p.project) + '<span class="dim cwho" id="cwho"></span><span style="flex:1"></span>' +
       '<button id="cfork" title="The next message goes on in a copy of this session. The session so far stays as it is.">Fork</button>' +
-      '<button id="cnew" hidden title="The next message starts again from the run’s latest session">New chat</button>' +
-      '<button id="cclose" title="Close the chat" aria-label="Close the chat">✕</button></div>' +
+      '<button id="cnew" hidden title="The next message starts again from the run’s latest session">New chat</button></div>' +
     '<div class="clog" id="clog" aria-live="polite"><div class="dim cmore" id="cmore"></div><div id="citems"></div>' +
       '<div id="clive"></div></div>' +
     '<div id="cwaits"></div>' +
@@ -1158,7 +1184,6 @@ function chatBind(p) {
   });
   paintSync();
   byId('cstop').addEventListener('click', () => post('/api/chat/stop', { project: c.p.project, slug: c.p.slug }));
-  byId('cclose').addEventListener('click', () => toggleChat(false));
   byId('cfork').addEventListener('click', () => post('/api/chat/fork', { project: c.p.project, slug: c.p.slug }));
   byId('cnew').addEventListener('click', () => post('/api/chat/new', { project: c.p.project, slug: c.p.slug }));
   byId('cmode').addEventListener('change', (e) => chatSetMode(e.target.value, chatModel));
@@ -1176,6 +1201,7 @@ function chatBind(p) {
   });
   L.addEventListener('scroll', () => { if (L.scrollTop < 150) chatLoad('old'); }, { passive: true });
   jumpToBottom(L);
+  pinLastAsk(L);
   // a tool line keeps its open state when the list repaints
   L.addEventListener('toggle', (e) => {
     const i = e.target.dataset && e.target.dataset.i;
@@ -1335,8 +1361,14 @@ async function chatLoadEnd(c, how) {
   if (!c.total) box.innerHTML = '<div class="dim askempty">No messages in this session yet.</div>';
   // a sent message leaves the live area once the session log has it; when the agent is idle, it has read them all
   const said = Object.values(c.items).filter((it) => it.k === 'you');
-  c.sent = c.sent.filter((s) => !(s.ok && !c.st.busy) && !said.some((it) => it.i >= s.from && it.text.trim() === s.text));
+  c.sent = c.sent.filter((s) => !(s.ok && !c.st.busy) && !said.some((it) => sentLanded(s, it)));
   paintLive();
+}
+// True when the log message `it` is the sent message `s`. The spaces are compared loosely: the log
+// writes "/cmd\n\nargs" as "/cmd args", so an exact compare kept the bubble at the bottom for good.
+function sentLanded(s, it) {
+  const flat = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+  return it.i >= s.from && flat(it.text) === flat(s.text);
 }
 const chatTime = (at) => at ? new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 // the hover time of an answer, a tool or a note: seconds, and the day only when it is not today
@@ -1411,7 +1443,9 @@ function paintLive() {
     (st.landing || []).filter((l) => l.id > (c.landed || 0)).map((l) => '<div class="amsg agent mdc live">' + md(l.text) + '</div>').join('') +
     (st.partial ? '<div class="amsg agent mdc live">' + mdLive(st.partial) + '</div>' : '') +
     sentHtml(c.sent.slice(cut)) +
-    (st.busy && !(st.waits || []).length ? '<div class="aend cwork">working…</div>' : '') +
+    (st.busy && !(st.waits || []).length ? '<div class="aend cwork">working…</div>'
+      // the turn ended, but a background agent or shell still runs: its end starts the next turn by itself
+      : !st.busy && st.bg ? '<div class="aend cwork">waiting for ' + (st.bg === 1 ? 'a background task' : st.bg + ' background tasks') + '…</div>' : '') +
     (st.error ? '<div class="aend bad">' + esc(st.error) + '</div>' : '') +
     (!st.busy && st.last && !st.last.ok ? '<div class="aend bad">' + (st.last.subtype === 'error_during_execution' ? 'Stopped'
       : esc(st.last.subtype || 'Stopped')) + '</div>' : '');
@@ -1503,7 +1537,7 @@ async function chatSendMsg(command) {
     selection: s ? { file: s.file, side: s.side, start: s.start, end: s.end, text: s.text } : null,
     images: imgs.map((x) => ({ media_type: x.media_type, data: x.data })) });
   if (!r.ok) c.sent = c.sent.filter((x) => x !== mine);
-  else mine.ok = true;
+  else { mine.ok = true; keepTab(c.key); }   // a message in a preview tab keeps it
   if (ch === c) paintLive();
   if (!r.ok || ch !== c) return;
   if (!command) {
@@ -1694,6 +1728,32 @@ byId('csplit').addEventListener('keydown', (e) => {
   e.preventDefault();
   setChatWidth(byId('chat').offsetWidth + (e.key === 'ArrowLeft' ? 40 : -40), true);
 });
+// the plan list's width: --asw on the root, so the header's Plan / Files slot follows it. Dragged and remembered.
+function setSideWidth(px, save) {
+  const R = document.documentElement.style;
+  const w = px ? Math.round(Math.max(280, Math.min(px, window.innerWidth * 0.5))) : 0;
+  if (w) R.setProperty('--asw', w + 'px'); else R.removeProperty('--asw');
+  if (save) try { w ? localStorage.setItem('dash-side-w', w) : localStorage.removeItem('dash-side-w'); } catch {}
+}
+try { setSideWidth(+localStorage.getItem('dash-side-w') || 0); } catch {}
+byId('asplit').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  const bar = e.currentTarget;
+  const move = (ev) => setSideWidth(ev.clientX);
+  document.body.classList.add('dragging'); bar.classList.add('on');
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', () => {
+    document.removeEventListener('pointermove', move);
+    document.body.classList.remove('dragging'); bar.classList.remove('on');
+    setSideWidth(document.querySelector('aside').offsetWidth, true);
+  }, { once: true });
+});
+byId('asplit').addEventListener('dblclick', () => setSideWidth(0, true));
+byId('asplit').addEventListener('keydown', (e) => {
+  if (!/^Arrow(Left|Right)$/.test(e.key)) return;
+  e.preventDefault();
+  setSideWidth(document.querySelector('aside').offsetWidth + (e.key === 'ArrowLeft' ? -40 : 40), true);
+});
 async function loadPr(p) {
   const r = await answer(await fetch('/api/pr?project=' + p.project + '&number=' + p.pr.number));
   prData[p.key] = r.ok ? { ...r.pr, from: JSON.stringify(p.pr) } : { error: r.output || r.error, from: JSON.stringify(p.pr) };
@@ -1723,10 +1783,10 @@ async function renderPrTab(p, tab, force) {
   document.body.classList.toggle('review', review);
   if (!again) byId('detail').innerHTML = (review ? `
     <div class="rbar">
-      <div class="rleft"><button id="rback" title="Back to the plan and the plan list (Esc)">‹ Plan</button>
-        ${projPill(p.project)}<span class="rname" title="${escA((p.title || p.slug) + '\n' + p.client + ' / ' + p.project + ' / ' + p.file)}">${inline(p.title || p.slug)}</span></div>
-      ${prTabs(p, tab, true)}
-      <div class="rright"><span class="seen" id="rseen"></span>${chatBtn(p)}<span class="btns" id="ract"></span></div></div>` : `
+      <div class="rleft"><button id="rback" title="Back to the plan and the plan list (Esc)">‹ Plan</button>${projPill(p.project)}</div>
+      <div class="rsw">${prTabs(p, tab, 'hd')}</div>
+      <span class="rname" title="${escA((p.title || p.slug) + '\n' + p.client + ' / ' + p.project + ' / ' + p.file)}">${inline(p.title || p.slug)}</span>
+      <div class="rright"><span class="seen" id="rseen"></span><span class="btns" id="ract"></span></div></div>` : `
     <div class="crumb">${esc(p.client)} / ${projPill(p.project)}${esc(p.project)}</div>
     <h2 class="fname">${p.file}</h2>
     <div class="subtitle">${inline(p.title)}</div>
@@ -1751,13 +1811,17 @@ async function renderPrTab(p, tab, force) {
 function drawBarAction(p, tab) {
   const d = prData[p.key], R = byId('ract');
   if (!R || !d || d.error) return;
-  // the PR's state when it is not simply open, then GitHub, then the one next step
-  R.innerHTML = (d.state === 'OPEN' && !d.isDraft ? '' : prChip(d)) + '<a class="ghbtn" href="' + escA(d.url) + '" target="_blank" rel="noopener" ' +
-    'title="Open PR #' + d.number + ' on GitHub">' + GITHUB_SVG + '&nbsp;#' + d.number + '</a>';
+  // the PR's state when it is not simply open, then GitHub, then the one next step. In the Files changed bar the
+  // switch beside it shows the PR number already: the state is one word and GitHub is its logo, so the bar fits
+  const inBar = tab === 'files';
+  R.innerHTML = (d.state === 'OPEN' && !d.isDraft ? '' : inBar ? '<span class="chip ' + (prStateWord(d) === 'draft' ? '' : PR_CHIP[d.state] || '') + '">' + prStateWord(d) + '</span>' : prChip(d)) +
+    '<a class="ghbtn" href="' + escA(d.url) + '" target="_blank" rel="noopener" ' +
+    'title="Open PR #' + d.number + ' on GitHub" aria-label="Open PR #' + d.number + ' on GitHub">' + GITHUB_SVG + (inBar ? '' : '&nbsp;#' + d.number) + '</a>';
   // Files changed has no header with the plan's actions: the worktree in VS Code is here
   if (tab === 'files') {
     const vs = document.createElement('button');
-    vs.textContent = 'VS Code'; vs.className = 'rfbtn vsbtn'; vs.title = 'Open the plan’s worktree in VS Code';
+    vs.innerHTML = VSCODE_SVG; vs.className = 'rfbtn vsbtn'; vs.title = 'Open the plan’s worktree in VS Code';
+    vs.setAttribute('aria-label', 'Open the plan’s worktree in VS Code');
     vs.addEventListener('click', () => post('/api/vscode', { project: p.project, slug: p.slug }));
     R.insertBefore(vs, R.querySelector('.ghbtn'));
   }
@@ -1823,7 +1887,7 @@ async function prAct(p, data) {
   // the merge worked but the main checkout did not move: say so wherever you are now
   const notPulled = (r.notes || []).find((n) => n.startsWith('Not pulled'));
   if (notPulled) {
-    await alertUser('Merged, but not pulled', p.project + ' / ' + p.file, p.key, 'pr');
+    await alertUser('Merged, but not pulled', alertBody(p), p.key, 'pr');
     setTimeout(() => alert('⚠️ PR #' + p.pr.number + ' is merged. ' + notPulled), 100);   // after the merged page has painted
   }
 }
@@ -3008,6 +3072,113 @@ async function archive(p) {
   await post('/api/archive', { project: p.project, slug: p.slug }, true);
   if (selected === p.key) selected = null;
 }
+// --- merged card ---
+// When the open plan's PR is merged, a card on the right says so and offers the git step that is
+// left (remove the worktree and the auto/ branch) and "Okay, close", which closes the tab. A plan
+// whose card you closed keeps it closed (kept in this browser).
+const MERGED_CARD_DAYS = 7;
+/** True when the merged card shows for p: its PR is merged, you did not close the card, and the
+ *  worktree is still on disk or the merge is at most MERGED_CARD_DAYS old (old plans stay quiet). */
+function mergedCardShows(p, closed, now) {
+  if (!p || !p.pr || p.pr.state !== 'MERGED' || closed.has(p.key)) return false;
+  const at = Date.parse(p.pr.mergedAt || '');
+  return !!p.worktree || (!isNaN(at) && now - at < MERGED_CARD_DAYS * 86400000);
+}
+const mergedClosed = new Set();
+try { for (const k of JSON.parse(localStorage.getItem('dash-merged-ok') || '[]')) mergedClosed.add(k); } catch {}
+const mergedOut = {};   // the cleanup output per plan key, shown in the card
+let mergedBusy = null;  // the key whose cleanup runs now
+const mergedSmall = new Set();   // plans whose card you hid with –, until the page reloads
+/** Gives the "Merged card" button for the plan's merged line: it shows the card again after – hid it. */
+const mergedCardButton = (p) => mergedCardShows(p, mergedClosed, Date.now())
+  ? '<button class="mini" data-mcopen="' + escA(p.key) + '" title="Show the merged card: clean up, or close the plan">Merged card</button>' : '';
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('[data-mcopen]');
+  if (!b) return;
+  mergedSmall.delete(b.dataset.mcopen);
+  const p = find(b.dataset.mcopen);
+  if (p) paintMergedCard(p);
+});
+function paintMergedCard(p) {
+  const M = byId('mergedcard');
+  if (!M) return;
+  if (!mergedCardShows(p, mergedClosed, Date.now())) { M.hidden = true; M.dataset.sig = ''; return; }
+  const canClean = p.kind !== 'wt' && p.hasPipeline && p.worktree;
+  const out = mergedOut[p.key], small = mergedSmall.has(p.key);
+  const sig = [p.key, p.pr.number, canClean, mergedBusy === p.key, out ? out.text : '', small].join('|');
+  if (M.dataset.sig === sig && !M.hidden) return;
+  M.dataset.sig = sig;
+  // made small: the card goes away, and the "Merged card" button in the plan's merged line brings it back
+  if (small) { M.hidden = true; return; }
+  M.innerHTML = '<div class="mchead"><h3>✓ PR #' + esc(String(p.pr.number)) + ' is merged</h3>' +
+      '<button class="mcmin" id="mcMin" title="Hide the card to read the plan under it. The Merged card button in the merged line shows it again." aria-label="Hide the card">–</button></div>' +
+    '<div class="mcname">' + esc(projLook(p.project).short) + ' · ' + esc(tabTitle(p)) + '</div>' +
+    '<div class="dim">Into <code>' + esc(p.pr.base || '?') + '</code>' +
+      (p.pr.mergedAt ? ' · ' + esc(new Date(p.pr.mergedAt).toLocaleString()) : '') + '</div>' +
+    (canClean ? '<div class="dim" title="' + escA('Removes the worktree and the branch auto/' + p.slug + '. The run report stays. It refuses when the worktree has changes that are not committed.') +
+        '">The worktree and its branch are still on this Mac.</div>'
+      : p.kind === 'wt' ? '<div class="dim">Remove this worktree by hand when you no longer need it.</div>'
+      : '<div class="dim">Nothing left to clean up on this Mac.</div>') +
+    (out ? '<pre class="' + (out.ok ? '' : 'bad') + '">' + esc(out.text) + '</pre>' : '') +
+    '<div class="crow">' +
+      (canClean ? '<button id="mcClean" title="Removes the worktree and its auto/ branch; the run report stays"' +
+        (mergedBusy === p.key ? ' disabled>⏳ Cleaning up…' : '>🧹 Clean up') + '</button>' : '') +
+      '<button class="primary" id="mcOk" title="Closes this card and the plan\u2019s tab. The plan stays in done/.">Okay, close</button></div>';
+  M.hidden = false;
+  placeMergedCard();
+  byId('mcMin')?.addEventListener('click', () => { mergedSmall.add(p.key); paintMergedCard(p); });
+  byId('mcOk')?.addEventListener('click', () => mergedOkay(p.key));
+  byId('mcClean')?.addEventListener('click', () => mergedCleanup(p));
+}
+// Drag the card by its title row. The place is kept in this browser (localStorage dash-merged-pos);
+// until you move it, the card stays at its CSS place (top right, left of the chat).
+let mergedPos = null;
+try { mergedPos = JSON.parse(localStorage.getItem('dash-merged-pos') || 'null'); } catch {}
+/** Puts the merged card at the place you dragged it to, kept inside the window (noteClamp). */
+function placeMergedCard() {
+  const M = byId('mergedcard');
+  if (!M || M.hidden || !mergedPos) return;
+  const at = noteClamp(mergedPos.x, mergedPos.y, M.offsetWidth, M.offsetHeight, window.innerWidth, window.innerHeight);
+  M.style.left = at.x + 'px'; M.style.top = at.y + 'px'; M.style.right = 'auto';
+}
+byId('mergedcard')?.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest('.mchead') || e.target.closest('button')) return;
+  e.preventDefault();
+  const M = byId('mergedcard'), r = M.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+  const move = (ev) => { mergedPos = { x: ev.clientX - dx, y: ev.clientY - dy }; placeMergedCard(); };
+  document.body.classList.add('notedrag');
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', () => {
+    document.removeEventListener('pointermove', move);
+    document.body.classList.remove('notedrag');
+    try { localStorage.setItem('dash-merged-pos', JSON.stringify(mergedPos)); } catch {}
+  }, { once: true });
+});
+window.addEventListener('resize', placeMergedCard);
+/** Closes the merged card of key for good, and closes its tab (or the plan when it has no tab). */
+function mergedOkay(key) {
+  mergedClosed.add(key);
+  try { localStorage.setItem('dash-merged-ok', JSON.stringify([...mergedClosed].slice(-300))); } catch {}
+  byId('mergedcard').hidden = true;
+  if (shownTabs().includes(key)) closeSession(key);
+  else if (selected === key) goHome();
+}
+/** Runs the project's --cleanup for p (worktree + auto/ branch; the run report stays) and shows its output in the card. */
+async function mergedCleanup(p) {
+  if (mergedBusy) return;
+  mergedBusy = p.key; paintMergedCard(p);
+  let r;
+  try {
+    r = await answer(await fetch('/api/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: p.project, slug: p.slug, artifacts: false }) }));
+  } catch (e) { r = { ok: false, output: 'The dashboard server did not answer: ' + e.message }; }
+  mergedOut[p.key] = { ok: !!r.ok, text: r.output || (r.ok ? 'Cleaned up.' : r.error || 'The cleanup failed.') };
+  mergedBusy = null;
+  const now = find(p.key);
+  if (selected === p.key && now) paintMergedCard(now);
+  refresh();
+}
+// --- end merged card ---
 // drawer back-navigation: set when a drawer view was opened from another one
 let drawerBack = null;
 const setBack = (fn) => {
@@ -3430,7 +3601,7 @@ function wireLanes(scope) {
     el.addEventListener('click', () => {
       const k = el.dataset.open;
       if (!find(k)) return; // e.g. archived plans no longer listed
-      selected = k; renderList(); renderDetail(true); // drawer stays open for browsing
+      selected = k; tabPreviewNext = true; renderList(); renderDetail(true); // drawer stays open for browsing
     }));
   body.querySelectorAll('[data-copy]').forEach((el) =>
     el.addEventListener('click', async () => {
@@ -3500,6 +3671,7 @@ document.addEventListener('keydown', (e) => {
     return paintDemo();
   }
   if (e.key !== 'Escape') return;
+  if (byId('hdmenu').matches(':popover-open')) return;   // Esc closes only the ⋯ menu (the browser closes it)
   if (e.target.closest && e.target.closest('.monaco-editor') && document.querySelector('.monaco-editor .find-widget.visible')) return;
   if (byId('onb').classList.contains('open')) return closeGuide();
   if (e.target.closest && e.target.closest('#chat')) return;   // Esc in the chat closes only its menu
@@ -3824,8 +3996,8 @@ const TOUR = [
       'A launched plan runs in the background; you can close the tab.' },
   { el: () => document.querySelector('.launchbar'), title: 'Run several at once',
     body: 'Tick plans in the list (or double-click them) and they queue down here. One press starts them all.' },
-  { el: () => [byId('guidebtn'), byId('settingsbtn')], title: 'Guide and Settings',
-    body: 'Guide brings back the walkthrough and the list of repos found on this machine. ' +
+  { el: () => byId('hdmenuBtn'), title: 'The ⋯ menu',
+    body: 'Board, Scout, QA reports, alerts and the theme are here. Add project brings back the walkthrough and the list of repos found on this machine. ' +
       'Settings is where you rename projects, change folders and edit launchers.' },
 ];
 let tourStep = -1;
@@ -3901,7 +4073,7 @@ try { alertsOn = localStorage.getItem('dash-alerts') === '1'; } catch {}
 const wasBusy = {};   // plan key -> run / chat / waiting flags at the last state
 function paintAlertBtn() {
   const b = byId('alertBtn');
-  b.textContent = alertsOn ? '🔔' : '🔕';
+  b.textContent = alertsOn ? '🔔 Alerts on' : '🔕 Alerts off';
   b.setAttribute('aria-pressed', String(alertsOn));
   b.title = alertsOn ? 'Alerts on: sound and notification when a run stops or the agent answers. Click to turn off.'
     : 'Alerts off. Click for a sound and a notification when a run stops or the agent answers.';
@@ -3949,23 +4121,36 @@ async function ringsHere(key) {
 }
 function openFromAlert(key, tab) {
   selected = key;
-  if (tab === 'chat') { chatOn = false; toggleChat(true); } else if (tab) prTab[key] = tab;
+  if (tab === 'chat') focusChat(); else if (tab) prTab[key] = tab;
   revealInSide(key);
   lastPrDraw = null; renderList(); renderDetail(true);
   scrollToSelected();
 }
-// Make the plan's row show in the side list: open its project section, and clear a search
-// that hides the plan. Call renderList after it.
+// Make the row of a plan or worktree item show in the side list: open its project section (and
+// the Worktrees fold of a worktree item), and clear a search that hides it. Call renderList after it.
 function revealInSide(key) {
-  const p = plans.find((x) => x.key === key);
+  const p = find(key);
   if (!p) return;
-  if (collapsedProjects.has(p.project)) { collapsedProjects.delete(p.project); saveCollapsed(); }
+  const folds = p.kind === 'wt' ? [p.project, 'wt:' + p.project] : [p.project];
+  if (folds.some((f) => collapsedProjects.has(f))) { folds.forEach((f) => collapsedProjects.delete(f)); saveCollapsed(); }
   const q = byId('q').value.toLowerCase();
-  if (q && !matchesQ(p, q)) byId('q').value = '';
+  if (q && !(p.kind === 'wt' ? visibleWts().includes(p) : matchesQ(p, q))) byId('q').value = '';
 }
-// Scroll the side list so the open plan's row is on screen.
+// Scroll the side list so the open plan's row is on screen, below its project's sticky header
+// (the header's height changes when its chips wrap, so it is measured each time).
 function scrollToSelected() {
-  byId('side').querySelector('.item.sel')?.scrollIntoView({ block: 'nearest' });
+  // a plan in the run strip (running, launched, stopped, waiting on you) shows there, above its project section
+  const strip = byId('runstrip').querySelector('.rp.sel');
+  if (strip) {
+    const cap = strip.closest('.sgsec')?.querySelector('.cap');   // the row lands below its group's sticky caption
+    strip.style.scrollMarginTop = (cap ? cap.offsetHeight + 8 : 8) + 'px';
+    strip.scrollIntoView({ block: 'nearest' }); return;
+  }
+  const el = byId('side').querySelector('.item.sel');
+  if (!el) return;
+  const head = el.closest('.pgrp')?.querySelector('.phead');
+  el.style.scrollMarginTop = (head ? head.offsetHeight + 8 : 8) + 'px';
+  el.scrollIntoView({ block: 'nearest' });
 }
 // A card in the page for each alert, so you see it while you read another plan, without the 🔔
 // and without leaving what you do. A card stays open until you hide it with the – button; it never
@@ -4032,6 +4217,8 @@ function toast(title, body, key, tab, kind) {
   saveCards(); paintCards();
 }
 paintCards();
+/** Gives the body of an alert about plan p, read like its tab: "acme-web · PR #903 / Claim type: empty and clear fields". */
+const alertBody = (p) => projLook(p.project).short + (p.pr ? ' · PR #' + p.pr.number : '') + ' / ' + tabTitle(p);
 async function alertUser(title, body, key, tab, kind = 'ok') {
   if (!await ringsHere(key)) return;
   if (!document.hasFocus()) { unseen.push(title + ' · ' + body.split(' / ')[0]); paintTitle(); }
@@ -4049,14 +4236,14 @@ function checkAlerts() {
     if (was && was.run && !run) {
       const o = outOf(p);
       alertUser(o === 'failed' ? 'Run failed' : o === 'needs-you' ? 'Run needs you' : 'Run finished',
-        p.project + ' / ' + p.file, p.key, null, o === 'failed' ? 'bad' : o === 'needs-you' ? 'warn' : 'ok');
+        alertBody(p), p.key, null, o === 'failed' ? 'bad' : o === 'needs-you' ? 'warn' : 'ok');
     }
     if (was && was.ask && !ask) {
-      alertUser('The agent answered', p.project + ' / ' + p.file, p.key, 'chat');
+      alertUser('The agent answered', alertBody(p), p.key, 'chat');
       if (!(ch && ch.key === p.key)) markAnswered(p.key, true);   // not marked when its chat is on screen
     }
     if (ask) markAnswered(p.key, false);
-    if (was && waits > was.waits) alertUser('The agent asks for permission', p.project + ' / ' + p.file, p.key, 'chat', 'warn');
+    if (was && waits > was.waits) alertUser('The agent asks for permission', alertBody(p), p.key, 'chat', 'warn');
     wasBusy[p.key] = { run, ask, waits };
   }
 }
@@ -4134,7 +4321,11 @@ async function refreshOnce() {
     const typing = byId('detail').contains(document.activeElement)
       && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
     checkAlerts();
+    // a link with ?sel= opens a plan that may sit in a folded project or far down the list
+    const reveal = !firstPaint && selected;
+    if (reveal) revealInSide(selected);
     renderList();
+    if (reveal) scrollToSelected();
     // a tab goes only when its project is in the state and its plan is not; the dots follow the state
     const kept = tabsPrune(sessionTabs, (k) => !!find(k), state.map((s) => s.name));
     if (kept.length !== sessionTabs.length) { sessionTabs = kept; saveTabs(); }
@@ -4156,11 +4347,21 @@ async function refreshOnce() {
   if (logKey) loadLog();
 }
 // --- session tabs ---
-// Each plan or worktree item you open becomes a tab in the strip under the header. A tab is its key
+// Each plan or worktree item you open becomes a tab in the strip in the header row. A tab is its key
 // ("<project>/<slug>"). Closing a tab never stops an agent or a run. These pure functions take and give
 // plain lists, so the test can run them without the page.
 /** Gives the list with key added at the end. Gives the same list when key is in it. */
 function tabsOpen(tabs, key) { return tabs.includes(key) ? tabs : [...tabs, key]; }
+/**
+ * Gives { tabs, preview } after a look at key from the list (a sidebar row, a board card). The preview
+ * tab is one tab that the next look replaces, so browsing makes no new tabs. A key in the list keeps
+ * the list and the preview as they are. Else key takes the place of the preview tab, or goes at the end.
+ */
+function tabsPreview(tabs, preview, key) {
+  if (tabs.includes(key)) return { tabs, preview };
+  const i = preview == null ? -1 : tabs.indexOf(preview);
+  return { tabs: i < 0 ? [...tabs, key] : tabs.map((k, n) => (n === i ? key : k)), preview: key };
+}
 /** Gives { tabs, next }: the list without key, and the key to show next (right, else left, else null). */
 function tabsClose(tabs, key) {
   const i = tabs.indexOf(key);
@@ -4188,13 +4389,61 @@ function tabsLoad(raw) {
   try { v = JSON.parse(raw); } catch { return []; }
   return Array.isArray(v) ? v.filter((k, i) => typeof k === 'string' && v.indexOf(k) === i) : [];
 }
+/** Gives the list with key moved next to target: before it, or after it when after is true.
+ *  A key or target not in the list, or key === target, gives the same list. */
+function tabsMove(tabs, key, target, after) {
+  if (key === target || !tabs.includes(key) || !tabs.includes(target)) return tabs;
+  const rest = tabs.filter((k) => k !== key);
+  const i = rest.indexOf(target) + (after ? 1 : 0);
+  return [...rest.slice(0, i), key, ...rest.slice(i)];
+}
 /** Gives the closed-tab stack with key on top, an older copy of key removed, at most 10 keys. */
 function closedPush(closed, key) { return [...closed.filter((k) => k !== key), key].slice(-10); }
 // --- end session tabs ---
 let sessionTabs = [];
 try { sessionTabs = tabsLoad(localStorage.getItem('dash-tabs')); } catch {}
+// the preview tab: the next plan opened from the list takes its place; a click on it or a chat message keeps it
+let previewTab = null;
+try { previewTab = localStorage.getItem('dash-tab-preview'); } catch {}
+if (!sessionTabs.includes(previewTab)) previewTab = null;
+let tabPreviewNext = false;   // set just before renderDetail by an open that only looks (a sidebar row, a board card)
 let closedTabs = [];   // in memory only: Ctrl+Shift+T after a reload has nothing to reopen
-const saveTabs = () => { try { localStorage.setItem('dash-tabs', JSON.stringify(sessionTabs)); } catch {} };
+const saveTabs = () => {
+  if (!sessionTabs.includes(previewTab)) previewTab = null;
+  try {
+    localStorage.setItem('dash-tabs', JSON.stringify(sessionTabs));
+    previewTab ? localStorage.setItem('dash-tab-preview', previewTab) : localStorage.removeItem('dash-tab-preview');
+  } catch {}
+};
+/** True when a click on key at now is the second click of a double-click: the same row within 400 ms. */
+function sideDoubleClick(last, key, now) { return last.key === key && now - last.at < 400; }
+/** Makes the preview tab of key a kept tab. A key that is not the preview changes nothing. */
+function keepTab(key) {
+  if (key == null || key !== previewTab) return;
+  previewTab = null; saveTabs(); drawSessionTabs();
+}
+// the status word of a tab: what the agent or the run does now, and whose turn it is
+function tabStatus(p) {
+  if (p.chatWaits) return ['bad', 'asks you'];
+  if (p.kind === 'wt') return p.agent === 'working' ? ['live', 'working'] : ['', 'idle'];
+  if (p.chatting || p.live || starting(p) || outOf(p) === 'running') return ['live', 'working'];
+  if (notStarted(p) || outOf(p) === 'failed') return ['bad', 'failed'];
+  if (outOf(p) === 'needs-you') return ['ok', 'your turn'];
+  if (chatAnswered.has(p.key)) return ['ok', 'answered'];
+  if (p.pr && p.pr.state === 'MERGED') return ['', 'merged'];
+  return ['', 'idle'];
+}
+// the readable name of a tab: the plan or PR title without the date the file name starts with
+const tabTitle = (p) => String(p.title && p.title !== p.slug ? p.title : p.slug || p.file || '').replace(/^\d{8}-\d{6}-/, '');
+/** Gives the label HTML of a tab: the project pill, then the PR number, or the title when the plan has no PR,
+ *  then the status as a colored dot (the word is in its tooltip and for screen readers). The tab is short,
+ *  so many tabs fit in the header row; the full title is in the tab's tooltip. */
+function tabLabelHtml(p) {
+  const [stc, stw] = tabStatus(p);
+  return projPill(p.project) + (p.pr ? '<span class="stabpr">#' + esc(String(p.pr.number)) + '</span>'
+    : '<span class="stabn">' + esc(tabTitle(p)) + '</span>') +
+    '<span class="dot stabdot ' + stc + '" title="' + escA(stw) + '"></span><span class="srt">' + esc(stw) + '</span>';
+}
 const shownTabs = () => tabsShown(sessionTabs, (k) => !!find(k));
 const IS_MAC = /Mac/.test(navigator.platform);
 // the key hint of the tab at index i of n tabs: ⌃1–⌃8, and ⌃9 on the last one after the 8th
@@ -4218,16 +4467,16 @@ function drawSessionTabs() {
   const focused = tabControlOf(a);
   S.hidden = !list.length;
   S.innerHTML = list.map((key, i) => {
-    const p = find(key), on = key === selected;
-    const dot = sessionDot(p);
+    const p = find(key), on = key === selected, prev = key === previewTab;
     const hint = tabHint(i, list.length);
-    return '<div class="stab' + (on ? ' on' : '') + '" role="presentation">' +
-      '<button class="stabgo" data-go-tab="' + escA(key) + '"' + (on ? ' aria-current="true"' : '') + ' title="' + escA(p.title || p.file) + '">' +
-      '<span class="dot ' + dot + '"></span>' + projPill(p.project) + '<span class="stabn">' + esc(p.file) + '</span>' +
-      (hint ? '<kbd>' + hint + '</kbd>' : '') + '</button>' +
+    return '<div class="stab' + (on ? ' on' : '') + (prev ? ' prev' : '') + '" role="presentation" draggable="true" data-drag-tab="' + escA(key) + '">' +
+      '<button class="stabgo" data-go-tab="' + escA(key) + '"' + (on ? ' aria-current="true"' : '') + ' title="' +
+        escA((p.title || p.file) + ' · ' + tabStatus(p)[1] + (hint ? ' · ' + hint : '') + '\n' + p.file +
+          (prev ? '\nPreview: the next plan you open from the list takes this tab. Click the tab to keep it.' : '')) + '">' +
+      tabLabelHtml(p) + '</button>' +
       '<button class="stabx" data-close-tab="' + escA(key) + '" aria-label="Close tab" title="Close tab' + (IS_MAC ? ' (⌃W)' : '') + '">×</button></div>';
   }).join('');
-  S.querySelectorAll('[data-go-tab]').forEach((el) => el.addEventListener('click', () => openSession(el.dataset.goTab)));
+  S.querySelectorAll('[data-go-tab]').forEach((el) => el.addEventListener('click', () => { keepTab(el.dataset.goTab); openSession(el.dataset.goTab); }));
   S.querySelectorAll('[data-close-tab]').forEach((el) => el.addEventListener('click', () => closeSession(el.dataset.closeTab)));
   // a newly opened tab comes into view (a redraw for a state tick keeps the strip where you scrolled it),
   // and the strip keeps the keyboard focus the redraw took away
@@ -4254,6 +4503,42 @@ function closeSession(key = selected) {
   if (key !== selected) return drawSessionTabs();
   if (next) openSession(next); else goHome();
 }
+/** Moves the open plan's tab d places (1 or -1) along the strip, without wrap-around. */
+function moveSession(d) {
+  const shown = shownTabs(), i = shown.indexOf(selected), j = i + d;
+  if (i < 0 || j < 0 || j >= shown.length) return;
+  keepTab(selected);
+  sessionTabs = tabsMove(sessionTabs, selected, shown[j], d > 0); saveTabs(); drawSessionTabs();
+}
+// drag a tab onto another tab to move it there: the left half of a tab puts it before, the right half after
+let dragTab = null;
+const dropSide = (el, e) => { const r = el.getBoundingClientRect(); return e.clientX > r.left + r.width / 2; };
+byId('stabs').addEventListener('dragstart', (e) => {
+  const t = e.target.closest && e.target.closest('[data-drag-tab]');
+  if (!t) return;
+  dragTab = t.dataset.dragTab;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', dragTab);
+  t.classList.add('dragging');
+});
+byId('stabs').addEventListener('dragover', (e) => {
+  const t = dragTab && e.target.closest('[data-drag-tab]');
+  byId('stabs').querySelectorAll('.dropl, .dropr').forEach((el) => el.classList.remove('dropl', 'dropr'));
+  if (!t || t.dataset.dragTab === dragTab) return;
+  e.preventDefault();
+  t.classList.add(dropSide(t, e) ? 'dropr' : 'dropl');
+});
+byId('stabs').addEventListener('drop', (e) => {
+  const t = dragTab && e.target.closest('[data-drag-tab]');
+  if (!t) return;
+  e.preventDefault();
+  keepTab(dragTab);
+  sessionTabs = tabsMove(sessionTabs, dragTab, t.dataset.dragTab, dropSide(t, e)); saveTabs(); drawSessionTabs();
+});
+byId('stabs').addEventListener('dragend', () => {
+  dragTab = null;
+  byId('stabs').querySelectorAll('.dragging, .dropl, .dropr').forEach((el) => el.classList.remove('dragging', 'dropl', 'dropr'));
+});
 /** Opens the last closed tab that still exists and is not open. */
 function reopenSession() {
   while (closedTabs.length) {
@@ -4289,22 +4574,45 @@ function paletteMatch(q, plans, actions, tabs) {
   const rest = plans.filter((p) => !tabs.includes(p.key) && hit(p));
   const live = rest.filter((p) => !p.archived);
   const arch = rest.filter((p) => p.archived).sort((a, b) => String(b.slug).localeCompare(String(a.slug)));
-  const keys = [...tabbed, ...live.map((p) => p.key), ...arch.map((p) => p.key)].slice(0, 50);
+  let keys = [...tabbed, ...live.map((p) => p.key), ...arch.map((p) => p.key)];
+  // a PR number ("901", "#901", "pr 901") puts the plans of exactly that PR first
+  const prNum = /^\s*(?:#|pr\s*)?(\d+)\s*$/i.exec(q);
+  if (prNum) {
+    const isPr = (k) => !!byKey.get(k).pr && +byKey.get(k).pr.number === +prNum[1];
+    keys = [...keys.filter(isPr), ...keys.filter((k) => !isPr(k))];
+  }
+  keys = keys.slice(0, 50);
   return [...acts, ...keys.map((key) => ({ kind: 'plan', key }))];
 }
 // --- end palette match ---
+/** Gives the inside of a palette row for plan p: the PR number (big), project pill, title and status word,
+ *  then a small line with the last run status (no links), the file name and the tags. */
+function paletteRowHtml(p) {
+  const [stc, stw] = tabStatus(p);
+  const run = p.run && p.run.status ? String(p.run.status).replace(/\s*[—–-]?\s*https?:\/\/\S+/g, '').trim() : '';
+  const facts = [run, p.file, ...(p.tags || [])].filter(Boolean);
+  // the PR number comes first and big: people look a PR up by its number
+  return '<div class="palp"><div class="pal1">' +
+    (p.pr ? prNumChip(p.pr) : '') +
+    projPill(p.project) + '<b>' + esc(tabTitle(p)) + '</b><span class="chip stabst ' + stc + '">' + esc(stw) + '</span>' +
+    (p.archived ? '<span class="chip">📦 archived</span>' : '') + '</div>' +
+    '<div class="pal2 dim">' + facts.map(esc).join(' · ') + '</div></div>';
+}
 // the open plan's PR view switch, as the Plan · PR / Files changed buttons do
 const palettePrTab = (tab) => { prTab[selected] = tab; lastPrDraw = null; renderDetail(false); };
 const openHasPr = () => { const p = find(selected); return !!(p && p.pr); };
 const PALETTE_ACTIONS = [
   { id: 'board', label: 'Board', run: () => byId('boardBtn').click() },
   { id: 'scout', label: 'Scout', run: () => byId('scoutBtn').click() },
+  { id: 'note', label: 'Sticky note: show or hide', run: () => byId('noteBtn').click() },
   { id: 'settings', label: 'Settings', run: () => openSettings() },
   { id: 'guide', label: 'Add project', run: () => openGuide(1) },
-  { id: 'chat', label: 'Chat on/off', run: () => toggleChat(), when: () => hasChat(find(selected)) },
+  { id: 'chat', label: 'Chat: type a message', run: () => focusChat(), when: () => hasChat(find(selected)) },
   { id: 'plantab', label: 'Plan tab', run: () => palettePrTab('plan'), when: openHasPr },
   { id: 'files', label: 'Files changed', run: () => palettePrTab('files'), when: openHasPr },
   { id: 'close', label: 'Close tab', keys: IS_MAC ? '⌃W' : '', run: () => closeSession() },
+  { id: 'tableft', label: 'Move tab left', run: () => moveSession(-1), when: () => shownTabs().length > 1 },
+  { id: 'tabright', label: 'Move tab right', run: () => moveSession(1), when: () => shownTabs().length > 1 },
   { id: 'reopen', label: 'Reopen closed tab', keys: IS_MAC ? '⌃⇧T' : '', run: () => reopenSession() },
   { id: 'theme', label: 'Theme light/dark', run: () => byId('themeBtn').click() },
   { id: 'alerts', label: 'Alerts on/off', run: () => byId('alertBtn').click() },
@@ -4357,10 +4665,7 @@ function paletteDraw(keep) {
       const a = acts.find((x) => x.id === r.id);
       return head + '<span class="palk">Action</span><b>' + esc(a.label) + '</b>' + (a.keys ? '<kbd>' + esc(a.keys) + '</kbd>' : '') + '</div>';
     }
-    const p = find(r.key);
-    return head + '<span class="dot ' + sessionDot(p) + '"></span>' +
-      projPill(p.project) + '<b>' + esc(p.file) + '</b>' + (p.title ? '<span class="dim">' + esc(p.title) + '</span>' : '') +
-      (p.archived ? '<span class="chip">📦 archived</span>' : '') + '</div>';
+    return head + paletteRowHtml(find(r.key)) + '</div>';
   }).join('');
   inp.setAttribute('aria-activedescendant', 'pali-' + palettePick);
   L.querySelectorAll('[data-n]').forEach((el) => el.addEventListener('mousedown', (e) => { e.preventDefault(); paletteUse(+el.dataset.n); }));
@@ -4458,6 +4763,7 @@ function applyView() {
   const b = byId('boardBtn');
   b.classList.toggle('on', boardOn); b.setAttribute('aria-pressed', String(boardOn));
   byId('bpClose').hidden = !(boardOn && selected);
+  byId('boardExit').hidden = !boardOn;   // the Board button is in the ⋯ menu: the way out stays in the header row
 }
 function showBoard(on) { boardOn = on; applyView(); renderBoard(); }
 function openBoard() {
@@ -4467,7 +4773,7 @@ function openBoard() {
 function leaveBoard() { boardOn = false; selected = null; applyView(); renderList(); renderEmptyDetail(); }
 function openFromBoard(key) {
   if (selected === key) return;
-  selected = key; applyView(); renderDetail(true); renderBoard();
+  selected = key; tabPreviewNext = true; applyView(); renderDetail(true); renderBoard();
 }
 const boardCard = (p, col) => {
   const noQueue = p.live || starting(p) || p.worktree;
@@ -4578,7 +4884,7 @@ async function scoutAct(p, act) {
   if (act === 'confirm') {
     if (boardOn) openFromBoard(p.key);
     else { selected = p.key; renderList(); renderDetail(true); }
-    toggleChat(true);
+    focusChat();
   } else if (selected === p.key) selected = null;
   refresh();
 }
@@ -4590,6 +4896,8 @@ const scoutHealth = (s) => !s.config || (s.mac && !s.installed) || s.projects.so
 function paintScoutBtn(s) {
   const h = scoutHealth(s), b = byId('scoutBtn');
   b.textContent = '🔭 Scout' + (h === 'off' ? ' ○' : h === 'warn' ? ' ⚠' : '');
+  // the Scout button is in the ⋯ menu: a dot on the menu button shows that it needs a look
+  byId('hdmenuBtn').classList.toggle('flag', h !== 'ok');
   b.title = h === 'off' ? 'The scout is not fully set up on this Mac: open it for the steps'
     : h === 'warn' ? 'A check failed in the last scout run: open it for the log' : 'The scout: last runs, log and setup';
 }
@@ -4790,10 +5098,225 @@ let scoutAboutOpen = null;   // null: open until the first run, then folded; aft
 byId('scoutBtn').addEventListener('click', () => (byId('logpane').classList.contains('open') && byId('logtitle').textContent === SCOUT_TITLE ? closeLog() : openScout()));
 scoutPeek();
 setInterval(scoutPeek, 60000);
+// --- sticky note ---
+// One sticky note over the whole page, the same on every tab. It is kept in this browser
+// (localStorage dash-note): { text, color, x, y, w, h, open, min }. 📝 Note in the ⋯ menu shows or hides it;
+// A line that starts with ☐ or ☑ is a checkbox (see noteEdit); the mirror under the textarea strikes ☑ lines through.
+// × hides it and keeps the text; – minimizes it to a small yellow button at its top-left corner: drag the button to move it, click it to open the note again.
+// Drag it by its top bar; the browser corner resizes it. A click on the page under the note moves the note off that part (noteDodge).
+/** Keeps a note (or the merged card) of size w × h fully inside a vw × vh window. Returns the new top-left corner. */
+function noteClamp(x, y, w, h, vw, vh) {
+  return { x: Math.max(0, Math.min(x, vw - w)), y: Math.max(0, Math.min(y, vh - h)) };
+}
+/**
+ * Applies one checkbox edit to the note text. key ' ': a "-" alone at the start of a line becomes "☐ ".
+ * key 'Enter' on a checkbox line: a new line with "☐ ", or, on an empty checkbox line, the box goes away.
+ * key 'click' on the box at the start of a line: ☐ becomes ☑ and back. Returns { text, pos } or null (no change).
+ */
+function noteEdit(text, pos, key) {
+  const ls = text.lastIndexOf('\n', pos - 1) + 1, le = text.indexOf('\n', pos) < 0 ? text.length : text.indexOf('\n', pos);
+  const line = text.slice(ls, le), box = /^[☐☑] /.test(line);
+  if (key === ' ' && text.slice(ls, pos) === '-') return { text: text.slice(0, ls) + '☐ ' + text.slice(pos), pos: ls + 2 };
+  if (key === 'Enter' && box) {
+    if (line.length === 2) return { text: text.slice(0, ls) + text.slice(ls + 2), pos: ls };
+    return { text: text.slice(0, pos) + '\n☐ ' + text.slice(pos), pos: pos + 3 };
+  }
+  if (key === 'click' && box && pos - ls <= 1) return { text: text.slice(0, ls) + (line[0] === '☐' ? '☑' : '☐') + text.slice(ls + 1), pos };
+  return null;
+}
+/** Returns the HTML of the note mirror: the text, escaped, with each ☑ line struck through. */
+function noteMirrorHtml(text) {
+  const e = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return text.split('\n').map((l) => (/^☑ /.test(l) ? '<s>' + e(l) + '</s>' : e(l))).join('\n') + '\n';
+}
+/**
+ * Finds a new place for a note of size w × h at (x, y) that does not cover the focus box f ({ l, t, r, b }) in a vw × vh window.
+ * The places it tries: left, right, above and below f, then the four window corners, each gap px from the edge.
+ * Returns null when the note does not cover f, or when no place covers less of f. Else returns the place that covers the least of f, the nearest one first.
+ */
+function noteDodge(x, y, w, h, f, vw, vh, gap) {
+  const cover = (px, py) => Math.max(0, Math.min(px + w, f.r) - Math.max(px, f.l)) * Math.max(0, Math.min(py + h, f.b) - Math.max(py, f.t));
+  const now = cover(x, y);
+  if (!now) return null;
+  const tries = [[f.l - gap - w, y], [f.r + gap, y], [x, f.t - gap - h], [x, f.b + gap],
+    [gap, gap], [vw - w - gap, gap], [gap, vh - h - gap], [vw - w - gap, vh - h - gap]];
+  let best = null, bc = now, bd = Infinity;
+  for (const [px, py] of tries) {
+    const p = noteClamp(px, py, w, h, vw, vh), c = cover(p.x, p.y), d = Math.hypot(p.x - x, p.y - y);
+    if (c < bc || (c === bc && best && d < bd)) { best = p; bc = c; bd = d; }
+  }
+  return best;
+}
+/**
+ * Moves a note of size w × h at (x, y) to another district (section) when you click the district it is in.
+ * ds: the visible districts [{ id, l, t, r, b, at }], at = the time of the last click in it (0 = never). clicked: the id of the clicked district.
+ * The note goes to the district you clicked longest ago (on a tie: the one farthest away), at the same relative place.
+ * A note that is mostly in another district but hangs over the clicked one moves fully into its own district.
+ * Returns null when the note does not touch the clicked district, or when there is no other district.
+ */
+function noteDistrict(x, y, w, h, ds, clicked) {
+  const cx = x + w / 2, home = ds.find((d) => cx >= d.l && cx < d.r), c = ds.find((d) => d.id === clicked);
+  if (!home || !c || x + w <= c.l || x >= c.r) return null;
+  const mid = (d) => (d.l + d.r) / 2;
+  const to = home.id !== clicked ? home
+    : ds.filter((d) => d.id !== clicked).sort((a, b) => a.at - b.at || Math.abs(mid(b) - mid(c)) - Math.abs(mid(a) - mid(c)))[0];
+  if (!to) return null;
+  const rel = (v, lo, span) => (span > 0 ? Math.min(1, Math.max(0, (v - lo) / span)) : 0.5);
+  const fx = rel(x, home.l, home.r - home.l - w), fy = rel(y, home.t, home.b - home.t - h);
+  return { x: Math.round(to.l + fx * Math.max(0, to.r - to.l - w)), y: Math.round(to.t + fy * Math.max(0, to.b - to.t - h)) };
+}
+// --- end sticky note math ---
+let note = { text: '', color: 'yellow', x: null, y: null, w: 240, h: 180, open: false, min: false, tilt: -1.5 };
+/** Gives the note a new small random tilt (1.2° to 2.2°, left or right), like paper stuck on by hand. */
+const noteRetilt = () => { note.tilt = Math.round((Math.random() < 0.5 ? -1 : 1) * (1.2 + Math.random()) * 10) / 10; };
+try { note = { ...note, ...JSON.parse(localStorage.getItem('dash-note') || '{}') }; } catch {}
+const saveNote = () => { try { localStorage.setItem('dash-note', JSON.stringify(note)); } catch {} };
+function placeNote() {
+  const el = byId('note');
+  if (note.x == null) { note.x = window.innerWidth - note.w - 40; note.y = 90; }
+  const p = noteClamp(note.x, note.y, el.offsetWidth || note.w, el.offsetHeight || note.h, window.innerWidth, window.innerHeight);
+  note.x = p.x; note.y = p.y;
+  el.style.left = p.x + 'px'; el.style.top = p.y + 'px';
+  el.style.setProperty('--tilt', note.tilt + 'deg');
+}
+function paintNote() {
+  const el = byId('note'), fab = byId('notefab');
+  el.hidden = !note.open || note.min;
+  fab.hidden = !note.open || !note.min;
+  el.dataset.color = note.color;   // the round button stays yellow
+  el.style.width = note.w + 'px'; el.style.height = note.h + 'px';
+  if (byId('notetext').value !== note.text) byId('notetext').value = note.text;
+  paintMirror();
+  fab.title = (note.text.trim().split('\n')[0] || 'Open the sticky note').slice(0, 80);
+  byId('noteBtn').setAttribute('aria-pressed', String(note.open));
+  if (!el.hidden) placeNote();
+  if (!fab.hidden) placeFab();
+}
+/** Puts the round button of a minimized note at the note's top-left corner, kept inside the window. */
+function placeFab() {
+  const fab = byId('notefab');
+  if (note.x == null) { note.x = window.innerWidth - note.w - 40; note.y = 90; }
+  const p = noteClamp(note.x, note.y, fab.offsetWidth || 40, fab.offsetHeight || 40, window.innerWidth, window.innerHeight);
+  fab.style.left = p.x + 'px'; fab.style.top = p.y + 'px';
+}
+function paintMirror() {
+  const m = byId('notemirror');
+  m.innerHTML = noteMirrorHtml(byId('notetext').value);
+  m.scrollTop = byId('notetext').scrollTop;
+}
+function showNote(open) {
+  note.open = open; note.min = false; saveNote(); paintNote();
+  if (open) byId('notetext').focus();
+}
+// the ⋯ menu button: a minimized note opens again, else it shows or hides the note
+byId('noteBtn').addEventListener('click', () => showNote(note.min || !note.open));
+byId('notex').addEventListener('click', () => showNote(false));
+byId('notemin').addEventListener('click', () => { note.min = true; saveNote(); paintNote(); });
+// the round button: drag it to move it (the note opens at that place), a click without a drag opens the note
+let fabDragged = false;
+byId('notefab').addEventListener('pointerdown', (e) => {
+  const fab = byId('notefab'), sx = e.clientX, sy = e.clientY, dx = sx - fab.offsetLeft, dy = sy - fab.offsetTop;
+  fabDragged = false;
+  const move = (ev) => {
+    if (!fabDragged && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 5) return;
+    if (!fabDragged) { fabDragged = true; document.body.classList.add('notedrag'); }
+    note.x = ev.clientX - dx; note.y = ev.clientY - dy; placeFab();
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', () => {
+    document.removeEventListener('pointermove', move);
+    document.body.classList.remove('notedrag');
+    if (fabDragged) saveNote();
+  }, { once: true });
+});
+byId('notefab').addEventListener('click', () => { if (fabDragged) { fabDragged = false; return; } showNote(true); });
+byId('notetext').addEventListener('input', (e) => { note.text = e.target.value; saveNote(); paintMirror(); });
+byId('notetext').addEventListener('scroll', () => { byId('notemirror').scrollTop = byId('notetext').scrollTop; });
+// checkboxes: "-" and a space at the start of a line makes a box, Enter continues the list, a click on a box checks it
+const noteApply = (e, key) => {
+  const ta = byId('notetext');
+  if (ta.selectionStart !== ta.selectionEnd) return;
+  const r = noteEdit(ta.value, ta.selectionStart, key);
+  if (!r) return;
+  e.preventDefault();
+  ta.value = r.text; ta.setSelectionRange(r.pos, r.pos);
+  note.text = r.text; saveNote(); paintMirror();
+};
+byId('notetext').addEventListener('keydown', (e) => {
+  if ((e.key === ' ' || e.key === 'Enter') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing) noteApply(e, e.key);
+});
+byId('notetext').addEventListener('click', (e) => noteApply(e, 'click'));
+byId('note').querySelectorAll('[data-color]').forEach((b) => b.addEventListener('click', () => {
+  note.color = b.dataset.color; saveNote(); paintNote();
+}));
+byId('notebar').addEventListener('pointerdown', (e) => {
+  if (e.target.closest('button')) return;
+  e.preventDefault();
+  const el = byId('note'), dx = e.clientX - el.offsetLeft, dy = e.clientY - el.offsetTop;
+  const move = (ev) => { note.x = ev.clientX - dx; note.y = ev.clientY - dy; placeNote(); };
+  document.body.classList.add('notedrag');
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', () => {
+    document.removeEventListener('pointermove', move);
+    document.body.classList.remove('notedrag');
+    noteRetilt(); placeNote(); saveNote();
+  }, { once: true });
+});
+// the browser's resize corner: keep the new size
+new ResizeObserver(() => {
+  const el = byId('note');
+  if (el.hidden || !el.offsetWidth) return;
+  if (el.offsetWidth === note.w && el.offsetHeight === note.h) return;
+  note.w = el.offsetWidth; note.h = el.offsetHeight; saveNote();
+}).observe(byId('note'));
+window.addEventListener('resize', () => { if (note.open) paintNote(); });
+// the note runs away from your focus: a click in the district the note is in (plan list, middle page, chat) sends the note
+// (or its round button) to another district (noteDistrict). A click outside the districts (the header) moves it off
+// the clicked part only (noteDodge). A click on the note itself keeps it in place, so you can type in it.
+const noteDistricts = [['list', 'aside'], ['main', '#detail'], ['main', '#board'], ['chat', '#chat']];
+const noteClickAt = {};
+/** Returns the visible districts of the page, with the time of the last click in each. */
+function noteDistrictBoxes() {
+  return noteDistricts.map(([id, sel]) => [id, document.querySelector(sel)])
+    .filter(([, el]) => el && !el.hidden && el.offsetWidth)
+    .map(([id, el]) => { const r = el.getBoundingClientRect(); return { id, l: r.left, t: r.top, r: r.right, b: r.bottom, at: noteClickAt[id] || 0 }; });
+}
+/** Returns the focus box of a click: the clicked block (at least 160 × 28 px), cut to 640 × 400 px around the click. */
+function noteFocusBox(target, cx, cy) {
+  let el = target instanceof Element ? target : target.parentElement;
+  while (el && el.parentElement && el !== document.body) {
+    const r = el.getBoundingClientRect();
+    if (r.width >= 160 && r.height >= 28) break;
+    el = el.parentElement;
+  }
+  const r = el.getBoundingClientRect();
+  return { l: Math.max(r.left, cx - 320), t: Math.max(r.top, cy - 200), r: Math.min(r.right, cx + 320), b: Math.min(r.bottom, cy + 200) };
+}
+document.addEventListener('pointerdown', (e) => {
+  if (!note.open || note.x == null || e.target.closest?.('#note, #notefab')) return;
+  const el = byId(note.min ? 'notefab' : 'note');
+  if (!el.offsetWidth) return;
+  const hit = noteDistricts.find(([, sel]) => e.target.closest?.(sel));
+  if (hit) noteClickAt[hit[0]] = Date.now();
+  const p = hit ? noteDistrict(note.x, note.y, el.offsetWidth, el.offsetHeight, noteDistrictBoxes(), hit[0]) : noteDodge(note.x, note.y, el.offsetWidth, el.offsetHeight, noteFocusBox(e.target, e.clientX, e.clientY), window.innerWidth, window.innerHeight, 12);
+  if (!p) return;
+  el.classList.add('noteslide');
+  note.x = p.x; note.y = p.y; noteRetilt();
+  if (note.min) placeFab(); else placeNote();
+  saveNote();
+  setTimeout(() => el.classList.remove('noteslide'), 260);
+}, true);
+// another plans.test tab changed the note
+window.addEventListener('storage', (e) => {
+  if (e.key !== 'dash-note') return;
+  try { note = { ...note, ...JSON.parse(e.newValue || '{}') }; } catch {}
+  paintNote();
+});
+paintNote();
+// --- end sticky note ---
 // plan usage in the header: one pill per tool, its logo and the used percent, e.g. "✳ 88%".
-// With two windows each gets its label: "✳ 5h 12% · week 88%". The logos are the ones the
+// With two windows: the 5-hour one first, then the weekly one, "✳ 12% · 88%"; the tooltip names them. The logos are the ones the
 // Claude Code and Codex VS Code extensions ship.
-const USAGE_SHORT = { five_hour: '5h', seven_day: 'week' };
 const USAGE_LONG = { five_hour: '5-hour', seven_day: 'Weekly' };
 const USAGE_ICON = {
   Claude: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#D97757" d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"/></svg>',
@@ -4808,7 +5331,7 @@ const usagePill = (label, u, none) => {
     + (w.reset ? ' (reset since the last reading)' : w.resetsAt ? ', resets ' + usageWhen(w.resetsAt) : '')
     + (w.at ? ' · read ' + ago(w.at) : '')).join('\n') + (u.plan ? '\nPlan: ' + u.plan : '');
   return '<span class="' + (top >= 90 ? 'bad' : top >= 75 ? 'warn' : '') + '" title="' + escA(tip) + '" aria-label="' + escA(tip) + '">'
-    + USAGE_ICON[label] + ws.map((w) => (ws.length > 1 ? (USAGE_SHORT[w.name] || w.name) + ' ' : '') + w.pct + '%').join(' · ') + '</span>';
+    + USAGE_ICON[label] + ws.map((w) => w.pct + '%').join(' · ') + '</span>';
 };
 const usagePeek = async () => {
   let u;
@@ -4820,6 +5343,21 @@ usagePeek();
 setInterval(usagePeek, 60000);
 byId('boardBtn').addEventListener('click', () => boardOn ? leaveBoard() : openBoard());
 byId('bpClose').addEventListener('click', () => goHome());
+byId('boardExit').addEventListener('click', () => leaveBoard());
+// the tab strip has no scrollbar (it covered the tabs): an up/down mouse wheel scrolls it sideways
+byId('stabs').addEventListener('wheel', (e) => {
+  const S = byId('stabs');
+  if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || S.scrollWidth <= S.clientWidth) return;
+  e.preventDefault(); S.scrollLeft += e.deltaY;
+}, { passive: false });
+// the ⋯ menu opens under its button, and a pick in it closes it
+byId('hdmenu').addEventListener('toggle', (e) => {
+  if (e.newState !== 'open') return;
+  const r = byId('hdmenuBtn').getBoundingClientRect(), M = byId('hdmenu');
+  M.style.top = Math.round(r.bottom + 4) + 'px';
+  M.style.left = Math.round(Math.min(r.left, innerWidth - M.offsetWidth - 8)) + 'px';
+});
+byId('hdmenu').addEventListener('click', (e) => { if (e.target.closest('button, a')) byId('hdmenu').hidePopover(); });
 readUrl();
 applyView();
 byId('side').innerHTML = '<div class="dim" style="padding:14px">loading plans…</div>';

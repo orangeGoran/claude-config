@@ -1,0 +1,18 @@
+kind: changed
+audience: internal
+scope: bootstrap-project
+summary: |
+  Plan validation in bootstrapped projects runs at most 4 rounds again, but it stops after
+  the first round that accepts no blocking fix and leaves no open regression. A finding that
+  an earlier round rejected and that comes back with no new evidence is logged as "raised
+  before" and not acted on again. Codex now reviews the code in each verify round by
+  default when the Codex module is on.
+internal: |
+  skill-auto-validate-plan: `## Rounds (max 4)`, a new step d (accepted fix, continue,
+  final edits check, status rules) and a step e "Final edits check" that reads the last
+  round's diff instead of a fifth round; new statuses `READY (round 4 edits self-checked)`
+  and `READY (round 4 edits self-checked; <Codex|Claude> OFF)`; `RAISED BEFORE (round <k>,
+  F<n>)` in step c. render.mjs: `CODEX_IN_VERIFY` is on unless `pipeline.codexInVerify` is
+  `false` (before: only when `true`); `unusedParts()` lists `setting:codexInVerify` only
+  for `false`. A project that wants Codex out of verify sets `"codexInVerify": false`.
+  The example answers no longer set the field.

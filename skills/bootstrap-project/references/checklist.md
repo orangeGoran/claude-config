@@ -59,7 +59,7 @@ The owner is not a template expert. Ask only what the owner alone can decide. Fi
 | # | Ask in plain words | Fields | Ask only when |
 | --- | --- | --- | --- |
 | 1 | "Which rules must every change follow? I found these in your files: <list>. Add, remove or OK." (3–8 rules, each a short title + one sentence). Upgrade and adopt: the before/after table, one row per rule, including the checks and tests copied from the old skills | `rules.hard[]` | Always. It is the most important answer: the reviewer and the checks use these rules. |
-| 2 | Modules (decision format): which extra parts to add. Default: all on, Codex on (plan validation and the decision sheet; Codex in verify off: `pipeline.codexInVerify`). One line per module, in plain words (what it does for the owner) | `modules.*` | Always |
+| 2 | Modules (decision format): which extra parts to add. Default: all on, Codex on (plan validation and each verify round; `pipeline.codexInVerify: false` keeps it out of verify). One line per module, in plain words (what it does for the owner) | `modules.*` | Always |
 | 3 | Branches and merge (decision format): which branch the work goes to, and squash or merge commit | `git.*` | The repo has no `develop` + `main`, or the merge style is unclear. Mention that a free private GitHub repo cannot protect branches (403). |
 | 4 | Contracts (decision format): where shared data shapes come from | `rules.contracts.*` | The repo has more than one app or package that shares data, and the files do not show the answer |
 | 5 | Public or private, when the repo has no remote yet | `project.visibility` | No remote. Check the big plan for names of people, machines or clients first: history cannot be un-leaked. |
@@ -76,7 +76,7 @@ The owner is not a template expert. Ask only what the owner alone can decide. Fi
 | Test data rule, example person for decision questions | `rules.testData`, `rules.exampleActor` | the hard rules and the roles in the code; else the defaults |
 | Folders, files that plans touch, files many plans only append to, env files for worktrees, migration generator words, the test harness rules | `layout.*` | top-level folders, `plan-lanes.mjs` CONFIG when it exists, `.env.example`. `softFiles`: also the registration lists (entity list, error codes, module registry, i18n). `migrationHints`: the migration generator script (for example `migration:generate`); default `["migration:generate"]`. `testHarnessDoc`: the `AGENTS.md` of the end-to-end test folder (for example `test/AGENTS.md`), when it exists |
 | HTTP API and database migrations | `stack.httpApi`, `stack.migrations` | `false` only when the repo clearly has none (no routes or controllers; no migrations folder or migration script). Unset keeps the generic text |
-| Default run mode, extra run rules | `pipeline.*` | default `pr`; `codexInVerify` false unless the owner asks; extra rules from docker compose and migration scripts |
+| Default run mode, extra run rules | `pipeline.*` | default `pr`; leave `codexInVerify` unset (on); write `false` only when the owner says no; never write `true` when the Codex module is off; extra rules from docker compose and migration scripts |
 | Commands every run needs first | `pipeline.preflight[]` | a generator whose output is gitignored and that the checks or the browser test read (for example a `theme:generate` script that `predev` / `prebuild` runs, but `vite` alone does not). Never a command that changes tracked files (`generate:types` on committed types): the preflight stops when the tree is not clean |
 | The project's own checks per hard rule, the tests each rule needs, the validator's extra "never" limits | `rules.hard[].details`, `rules.hard[].tests`, `rules.validatorLimits` | In adopt and upgrade mode: copy them from the repo's existing `plan-validator.md`, `skill-1-plan`, `skill-3-test`, `skill-4-verify` and `apply-validation` (one short line each). Then the render keeps them, and no file needs a hand merge. `validatorLimits`: only what the generic validator limits lack (for example "load a page", "change a storage object"); never restate the generic lines, which stay in every validator |
 | The plan headings | `rules.planSections.{goal,context,steps,tests,verify}` | In adopt and upgrade mode: the `##` headings of the plan template in the repo's `skill-1-plan` (for example `Requirement`, `Implementation steps`, `Tests to write`, `Final verification`). Leave it out when they are the defaults (`Goal`, `Context`, `Steps`, `Tests`, `How to verify`). Without it, an upgrade renames the headings, and `plan-lanes.mjs` and the skills no longer find the sections of the existing plans |
@@ -225,7 +225,7 @@ Write the hand-off in this order. Use real paths and values.
    ```text
    Not used (reply with the numbers you want to add, or "none"):
    Modules that are off
-     1. Codex: a second check of the plan, and of the finished code in the decision sheet, with another AI
+     1. Codex: a second check of the plan, and of the finished code in each verify round, with another AI
    Commands not found
      2. End-to-end tests: the skills say "not available yet"
    Settings left empty

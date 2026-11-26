@@ -32,7 +32,7 @@ This is the roadmap: the goals and the architecture of the repo, and the list of
 
 - **Bootstrap fleet upgrade** — [.plans/20261124-123512-bootstrap-fleet-upgrade-parent.md](../.plans/20261124-123512-bootstrap-fleet-upgrade-parent.md): every registered project upgrades its bootstrap-project scaffolding by itself, in a worktree, and ends in a draft PR; template updates come back as one collector PR per wave. Canary first, questions in the PR, auto-merge last (owner decisions 2026-11-24). Five phases; phase 1 (`.plans/20261124-123513-bootstrap-upgrade-run.md`) is planned, phases 2–5 are not written yet.
 
-- **Pipeline diet** — [.plans/20261124-225819-pipeline-diet-parent.md](../.plans/20261124-225819-pipeline-diet-parent.md): fewer tokens per unattended run in every bootstrapped project, and Codex findings that are fixed before the commit; a defect whose cause is in another repo becomes a ticket there by itself (owner decisions 2026-11-24). Two plans; plan 1 (`.plans/20261124-161043-pipeline-diet-templates.md`) is planned, plan 2 is not written yet.
+- **Pipeline diet** — [.plans/20261124-225819-pipeline-diet-parent.md](../.plans/20261124-225819-pipeline-diet-parent.md): fewer tokens per unattended run in every bootstrapped project, and Codex findings that are fixed before the commit; a defect whose cause is in another repo becomes a ticket there by itself (owner decisions 2026-11-24). Three plans; plan 1 (`.plans/done/20261124-161043-pipeline-diet-templates.md`) is done, plan 2 is not written yet, plan 3 (`.plans/done/20261125-210049-review-loop-caps.md`: plan validation max 4 rounds with an early stop, Codex in verify by default) is done.
 
 ## Open decisions
 

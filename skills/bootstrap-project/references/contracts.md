@@ -13,7 +13,7 @@ TLDR: the plans dashboard (`apps/dashboard/server.mjs` in claude-config) and the
 | branch `auto/<slug>` | `apps/dashboard/server.mjs` (≈ 312, 488, 1369): PR detection | The PR button does not appear. A plan can override it with `- **Branch**: <name>` |
 | plan header line `- **Base**: <branch>` (skill-1-plan template) | `apps/dashboard/server.mjs` `planBase`: the `submodule … contains …` condition of a `- **Waits for**:` line | That condition gets the error "no Base line" and the plan never starts by itself |
 | worktree `<parent>/worktrees/<repo>/<slug>` | `apps/dashboard/server.mjs` `worktreeOf` | The dashboard does not find the run |
-| `.plans/`, `.plans/done/`, `.plans/auto-runs/`, `.plans/.validations/<base>-validation-<n>.md` | registry `plansDir` default; `validationRounds` (≈ 314) | `auto-pipeline.sh` and `plan-lanes.mjs` use `.plans` as fixed text: keep `plansDir` at `<root>/.plans` |
+| `.plans/`, `.plans/done/`, `.plans/auto-runs/`, `.plans/.validations/<base>-validation-claude-<n>.md`, `<base>-validation-codex-<n>.md` (older names that still count: `<base>-validation-<n>.md`, `<base>-codex-raw-<n>.md`; the decision log `<base>-validation-round-<n>.md` does not count). `<n>` is 1 plus the highest number at the end of any validator report or decision log of the plan, so a new run never overwrites an earlier round; a file of a longer plan name (`<base>-validation-…`) belongs to that plan, and a writer never takes a name that exists | registry `plansDir` default; `validationRounds` (counts distinct `<n>`; an empty report does not count) | `auto-pipeline.sh` and `plan-lanes.mjs` use `.plans` as fixed text: keep `plansDir` at `<root>/.plans` |
 | `/merge-parent <base>` | dashboard conflict button | Global skill; nothing to write |
 
 Rule: the templates follow these names. Do not rename a skill in a template. To change a name, change the dashboard first and then this table.
@@ -51,7 +51,7 @@ Rule: the templates follow these names. Do not rename a skill in a template. To 
 `node .claude/scripts/plan-lanes.mjs --json` (cwd = repo root, 30-second timeout) prints:
 
 - `schedulableCount`, `laneCount`, `maxParallel`: numbers
-- `recommendedBatch`: `[{ slug, file, areas: [string], validation: { claude, codex } }]`
+- `recommendedBatch`: `[{ slug, file, areas: [string], validation: { claude, codex, rounds } }]`
 - `lanes`: `[{ lane, label, members: [slug] }]`
 - `inFlight`: `[{ slug, autoRunStatus }]`
 - also `awaitingReview`, `needsCleanup`, `staleReports` (read by `auto-pipeline.sh --status`), `excluded` (`[{ slug, reason, unresolvedNames }]`, read by the launch preflight) and `configWarnings` (CONFIG roots and files with no tracked file)
@@ -116,7 +116,7 @@ The dashboard's "⚡ All" refuses until every registered project has this script
 | `changelog.validateCmd` | string | no | The project's own changelog validator, one bare command (for example `pnpm changelog:validate`). When set: no `.claude/scripts/changelog-validate.mjs` (an existing one shows as orphan), the gate, `changelog.d/README.md`, `changelog.d/AGENTS.md` and `/changelog-entry` run this command, and the allow list gets `Bash(<cmd>)`. The gate runs it on every PR, also with the `no-changelog` label, with `CHANGELOG_BASE_REF=origin/<base>` and `CHANGELOG_SKIP=true` when the label is on. A `pnpm`/`npm`/`yarn` command gets setup steps first (package manager, `actions/setup-node`, the frozen install). Empty = the rendered script |
 | `changelog.summary` | boolean | no | `true`: every new entry has `summary` (one plain paragraph for the team), and `changelog.d/README.md`, `changelog.d/AGENTS.md` and `/changelog-entry` say so. Missing = `true` without `validateCmd`, `false` with it. Set `true` with `validateCmd` only when the project validator accepts `summary`, or it rejects every new entry |
 | `pipeline.defaultMode` | `verify`/`commit`/`pr` | no | Default `pr` |
-| `pipeline.codexInVerify` | boolean | no | `true`: each `/skill-4-verify` round also runs the Codex review, and the decision sheet reuses its report (`CODEX_IN_VERIFY`). Needs `modules.codex`. Unset or `false`: Codex checks the plan, and the code only in the decision sheet ("to PR" mode). With `modules.decision-sheet` off, no Codex review of the code runs: set `true` to keep one |
+| `pipeline.codexInVerify` | boolean | no | Unset or `true` (with `modules.codex` on): each `/skill-4-verify` round also runs the Codex review, and the decision sheet reuses its report (`CODEX_IN_VERIFY`). `true` needs `modules.codex`. `false`: Codex checks the plan, and the code only in the decision sheet ("to PR" mode). With `modules.decision-sheet` off and `false`, no Codex review of the code runs |
 | `pipeline.runAllow[]` | list | no | Extra allow rules for every headless run |
 | `pipeline.preflight[]` | list | no | Bare commands every run needs (for example `pnpm theme:generate`, a generator whose output is gitignored). Each gets an allow rule, and the launch preflight runs each once in the new worktree |
 | `registry.browserTestProject` | string | no | The browser-usability-test profile name (safe name). Default `project.name`. Set it when the repo already has a profile under another name (`~/.claude/browser-usability-test/projects/<name>/`): `BROWSER_TEST_PROJECT` in `auto-pipeline.sh` and the `register.mjs` profile commands use it |

@@ -1,0 +1,16 @@
+kind: changed
+audience: internal
+scope: bootstrap-project
+summary: |
+  Plan validation reports now name the validator that wrote them: Claude or Codex. A new
+  validation run never overwrites the reports of an earlier round, and the dashboard counts
+  validation rounds, not report files.
+internal: |
+  New names in `.plans/.validations/`: `<plan>-validation-claude-<n>.md`,
+  `<plan>-validation-codex-<n>.md` and the decision log `<plan>-validation-round-<n>.md`.
+  The readers (the dashboard's `validationRounds` and `plan-lanes.mjs`) still count the old
+  reports `<plan>-validation-<n>.md` and `<plan>-codex-raw-<n>.md`, and count distinct round
+  numbers. `<n>` is 1 plus the highest number of any validator report or decision log of the
+  plan. `plan-lanes.mjs` gives `validation: { claude, codex, rounds }`, and its digest prints
+  `validation=<c>c/<x>x/<r>r`. Other projects get the new skill text when the owner runs
+  `/bootstrap-project --upgrade` there and says yes to each changed file.

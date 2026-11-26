@@ -94,6 +94,17 @@ const handle = (j) => {
     q = c[c.length - 1].text;
     if (/^hold/.test(q)) { held = []; return; }
     if (/^hang/.test(q)) return;   // a turn that never ends, even on an interrupt
+    // like claude with a background agent: the turn ends while the task runs, and its end starts a new turn
+    if (/^background/.test(q)) {
+      out({ type: 'system', subtype: 'task_started', task_id: 'bg-1', tool_use_id: 'tb1', is_backgrounded: true, session_id: id });
+      out({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'bg-1', task_type: 'local_agent' }], session_id: id });
+      answer('started');
+      return setTimeout(() => {
+        out({ type: 'system', subtype: 'task_notification', task_id: 'bg-1', tool_use_id: 'tb1', status: 'completed', session_id: id });
+        out({ type: 'system', subtype: 'background_tasks_changed', tasks: [], session_id: id });
+        answer('finished');
+      }, 2500);
+    }
     // a new step starts streaming and nothing else happens for a while
     if (/^step/.test(q)) {
       out({ type: 'stream_event', session_id: id, parent_tool_use_id: null, event: { type: 'message_start' } });
@@ -264,6 +275,8 @@ test('the all-projects batch is refused with a fix prompt until every project ha
   assert.deepEqual(d.missing.map((m) => m.name), ['demo']);
   assert.match(d.prompt, /create \.claude\/scripts\/plan-lanes\.mjs/);
   assert.ok(d.prompt.includes(repo), 'the prompt names the repo to fix');
+  // the checker it asks for gives the same validation shape as the bootstrap template
+  assert.match(d.prompt, /validation: \{ claude, codex, rounds \}/);
 
   const lanes = path.join(repo, '.claude', 'scripts', 'plan-lanes.mjs');
   mkdirSync(path.dirname(lanes), { recursive: true });
@@ -318,9 +331,24 @@ const pageBlock = (page, from, to) => {
 test('session tabs: open, close, number, step, prune, load and the closed stack', async () => {
   const page = await (await get('/')).text();
   const t = new Function(pageBlock(page, '// --- session tabs ---', '// --- end session tabs ---') +
-    'return { tabsOpen, tabsClose, tabAt, tabStep, tabsPrune, tabsShown, tabsLoad, closedPush };')();
+    'return { tabsOpen, tabsPreview, tabsClose, tabAt, tabStep, tabsPrune, tabsShown, tabsLoad, closedPush, tabsMove };')();
+  // a dragged tab goes before or after the tab it is dropped on
+  const abcd = ['a', 'b', 'c', 'd'];
+  assert.deepEqual(t.tabsMove(abcd, 'd', 'a', false), ['d', 'a', 'b', 'c'], 'tab 4 to the first place');
+  assert.deepEqual(t.tabsMove(abcd, 'a', 'c', true), ['b', 'c', 'a', 'd']);
+  assert.deepEqual(t.tabsMove(abcd, 'a', 'c', false), ['b', 'a', 'c', 'd']);
+  assert.deepEqual(t.tabsMove(abcd, 'b', 'd', true), ['a', 'c', 'd', 'b'], 'to the end');
+  assert.equal(t.tabsMove(abcd, 'b', 'b', true), abcd, 'onto itself: no change');
+  assert.equal(t.tabsMove(abcd, 'x', 'a', false), abcd, 'unknown key: no change');
 
   const ab = ['a', 'b'];
+  // browsing the list reuses one preview tab; a kept tab or an open key changes nothing
+  assert.deepEqual(t.tabsPreview(ab, null, 'c'), { tabs: ['a', 'b', 'c'], preview: 'c' });
+  assert.deepEqual(t.tabsPreview(['a', 'c', 'b'], 'c', 'd'), { tabs: ['a', 'd', 'b'], preview: 'd' }, 'the next look takes the preview place');
+  const same = t.tabsPreview(ab, 'b', 'a');
+  assert.equal(same.tabs, ab, 'a key in the list keeps the same list');
+  assert.equal(same.preview, 'b');
+  assert.deepEqual(t.tabsPreview(ab, 'gone', 'c'), { tabs: ['a', 'b', 'c'], preview: 'c' }, 'a closed preview: the key goes at the end');
   assert.deepEqual(t.tabsOpen(ab, 'c'), ['a', 'b', 'c']);
   assert.equal(t.tabsOpen(ab, 'a'), ab, 'a key in the list keeps the same list');
   assert.deepEqual(t.tabsOpen(['b', 'a'], 'b'), ['b', 'a'], 'no reorder');
@@ -367,7 +395,7 @@ test('the palette finds actions and plans, open tabs first, archived last, at mo
     client: 'Example Co', slug, tags: [], archived: false, ...more });
   const plans = [
     plan('20260101-000000-alpha'),
-    plan('20260101-000001-beta', { pr: { number: 12, title: 'Fix login' } }),
+    plan('20260101-000001-beta', { pr: { number: 12, title: 'Fix login', url: 'https://github.com/example/demo/pull/12' } }),
     plan('20250101-000000-old-alpha', { archived: true }),
     plan('20250601-000000-newer-alpha', { archived: true }),
     plan('20260101-000002-gamma'),
@@ -380,6 +408,15 @@ test('the palette finds actions and plans, open tabs first, archived last, at mo
   assert.deepEqual(keys(match('boa', plans, actions, [])), ['!board']);
   assert.deepEqual(keys(match('gamma', plans, actions, [])), ['demo/20260101-000002-gamma']);
   assert.deepEqual(keys(match('#12', plans, actions, [])), ['demo/20260101-000001-beta']);
+  // a typed PR number puts that PR first, before an open tab and before a file name with the same digits
+  const nums = [plan('20260101-000012-twelve'), ...plans];
+  assert.deepEqual(keys(match('12', nums, actions, ['demo/20260101-000012-twelve'])), ['demo/20260101-000001-beta', 'demo/20260101-000012-twelve']);
+  assert.deepEqual(keys(match('pr 12', nums, actions, [])), ['demo/20260101-000001-beta']);
+  // a pasted PR link finds exactly that PR: not #120, not the same number in another repo
+  const more = [...plans, plan('20260101-000003-delta', { pr: { number: 120, title: 'Other', url: 'https://github.com/example/demo/pull/120' } })];
+  assert.deepEqual(keys(match('https://github.com/example/demo/pull/12', more, actions, [])), ['demo/20260101-000001-beta']);
+  assert.deepEqual(keys(match('https://github.com/example/demo/pull/12/files#diff-1', more, actions, [])), ['demo/20260101-000001-beta']);
+  assert.deepEqual(keys(match('https://github.com/example/other/pull/12', more, actions, [])), []);
   // "demo" is only in the project name: every item matches, not archived first (list order), then archived newest first
   assert.deepEqual(keys(match('demo', plans, actions, [])), ['demo/20260101-000000-alpha', 'demo/20260101-000001-beta',
     'demo/20260101-000002-gamma', 'demo/wt.side-fix', 'demo/20250601-000000-newer-alpha', 'demo/20250101-000000-old-alpha'],
@@ -433,6 +470,42 @@ test('stores status and tags', async () => {
   const p = await onlyPlan();
   assert.equal(p.status, 'in review');
   assert.deepEqual(p.tags, ['api', 'api']);
+});
+
+test('the validated count is the number of rounds, with old and new report names', async () => {
+  const vdir = path.join(plansDir, '.validations');
+  mkdirSync(vdir, { recursive: true });
+  const reports = ['demo-plan-validation-claude-1.md', 'demo-plan-validation-codex-1.md', 'demo-plan-validation-round-1.md',
+    'demo-plan-validation-2.md', 'demo-plan-codex-raw-2.md', 'demo-plan-round-2.md', 'demo-plan-pre-round-3.md',
+    'demo-plan-external-1.md',
+    // rounds with one report form each (6, 7, 8), and round 9 with only a decision log
+    'demo-plan-validation-claude-6.md', 'demo-plan-validation-codex-7.md', 'demo-plan-validation-8.md', 'demo-plan-validation-round-9.md',
+    'demo-plan-validation-codex-raw-5.md'];
+  const empties = ['demo-plan-validation-codex-10.md', 'demo-plan-validation-claude-11.md'];
+  const secondPlan = path.join(plansDir, 'demo-plan-validation.md');
+  const bySlug = async (slug) => (await state())[0].plans.find((p) => p.slug === slug);
+  try {
+    for (const f of reports.slice(0, -1)) writeFileSync(path.join(vdir, f), '# report\n');
+    // empty reports (a Codex run that stopped early, or only blank lines) do not count
+    writeFileSync(path.join(vdir, empties[0]), '');
+    writeFileSync(path.join(vdir, empties[1]), '\n  \n');
+    assert.equal((await bySlug('demo-plan')).validations, 5, 'rounds 1, 2, 6, 7 and 8; logs, snapshot, external and empty reports do not count');
+    // one owner per name: -validation-codex-1 stays with demo-plan, -codex-raw-5 belongs to demo-plan-validation
+    writeFileSync(secondPlan, '# Plan: Demo validation\n');
+    writeFileSync(path.join(vdir, reports.at(-1)), '# report\n');
+    assert.equal((await bySlug('demo-plan')).validations, 5);
+    assert.equal((await bySlug('demo-plan-validation')).validations, 1);
+  } finally {
+    for (const f of [...reports, ...empties]) rmSync(path.join(vdir, f), { force: true });
+    rmSync(secondPlan, { force: true });
+  }
+});
+
+test('the docs demo writes validation reports with the new names, one round for split-inventory-reads', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), '..', '..', 'scripts', 'docs-media.mjs'), 'utf8');
+  const reports = [...src.matchAll(/'\.plans\/\.validations\/([^']+)'/g)].map((m) => m[1]);
+  assert.deepEqual(reports, ['checkout-idempotency-keys-validation-claude-1.md',
+    'split-inventory-reads-validation-claude-1.md', 'split-inventory-reads-validation-codex-1.md']);
 });
 
 test('records a generic run exit code, and keeps it after a restart', async () => {
@@ -762,6 +835,23 @@ test('Stop ends the running turn only: the turn its queued messages start stays 
   assert.deepEqual(await post('/api/chat/send', { ...who, text: 'hang here' }), { ok: true });
   assert.deepEqual(await post('/api/chat/stop', who), { ok: true });
   await until(async () => !(await chat()).live, 'the process to be closed');
+  assert.deepEqual(await post('/api/chat/new', who), { ok: true });
+});
+
+test('a chat with a background task still running counts as working, not as your turn', async () => {
+  const q = 'project=demo&slug=demo-plan', who = { project: 'demo', slug: 'demo-plan' };
+  const chat = async () => (await get('/api/chat?' + q)).json();
+  const until = async (fn, what) => {
+    const deadline = Date.now() + 12000;
+    while (Date.now() < deadline) { const v = await fn(); if (v) return v; await sleep(100); }
+    assert.fail('timed out waiting for ' + what);
+  };
+  assert.deepEqual(await post('/api/chat/send', { ...who, text: 'background check' }), { ok: true });
+  const mid = await until(async () => { const st = await chat(); return !st.busy && st.bg === 1 && st; }, 'the end of the first turn');
+  assert.equal(mid.bg, 1, 'the turn ended, the background task runs');
+  assert.equal((await onlyPlan()).chatting, true, 'the plan shows working while the task runs');
+  await until(async () => { const st = await chat(); return !st.busy && st.bg === 0; }, 'the end of the background task');
+  assert.equal((await onlyPlan()).chatting, false, 'done: the plan is idle again');
   assert.deepEqual(await post('/api/chat/new', who), { ok: true });
 });
 
@@ -1789,7 +1879,254 @@ test('the page: the upgrade chip shows the run state, and only an open PR for th
   assert.match(failed, /title="git fetch &quot;origin&quot; &lt;failed&gt; — click to start again"/);
 });
 
+test('the page: a sent slash command with args on new lines leaves the live area when the log has it', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const m = src.match(/^function sentLanded\(s, it\) \{[\s\S]*?\n\}$/m);
+  assert.ok(m, 'app.js has sentLanded');
+  const sentLanded = new Function(m[0] + '\nreturn sentLanded;')();
+  const sent = { text: '/merge-parent\n\nFix findings from the report.', from: 10 };
+  // the server writes a command as "<command-name> <command-args>"
+  assert.equal(sentLanded(sent, { i: 12, text: '/merge-parent Fix findings from the report.' }), true);
+  assert.equal(sentLanded({ text: 'plain text', from: 3 }, { i: 3, text: 'plain text\n' }), true);
+  assert.equal(sentLanded(sent, { i: 9, text: '/merge-parent Fix findings from the report.' }), false, 'an older message with the same text');
+  assert.equal(sentLanded(sent, { i: 12, text: '/merge-parent Something else' }), false);
+});
+
+test('the page: revealInSide opens the folds and clears a search that hide a plan or a worktree item', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const m = src.match(/^function revealInSide\(key\) \{[\s\S]*?\n\}$/m);
+  assert.ok(m, 'app.js has revealInSide');
+  const plan = { key: 'acme/20260101-000000-demo', project: 'acme', title: 'Demo' };
+  const wt = { key: 'acme/wt.fix', kind: 'wt', project: 'acme', name: 'fix' };
+  const make = (q) => {
+    const env = { collapsedProjects: new Set(['acme', 'wt:acme', 'other']), saved: 0, box: { value: q } };
+    const reveal = new Function('find', 'collapsedProjects', 'saveCollapsed', 'byId', 'matchesQ', 'visibleWts',
+      m[0] + '\nreturn revealInSide;')(
+      (k) => [plan, wt].find((x) => x.key === k), env.collapsedProjects, () => env.saved++, () => env.box,
+      (p, s) => p.title.toLowerCase().includes(s), () => (env.box.value ? [] : [wt]));
+    return { env, reveal };
+  };
+  let { env, reveal } = make('');
+  reveal(plan.key);
+  assert.deepEqual([...env.collapsedProjects], ['wt:acme', 'other'], 'a plan opens its project only');
+  assert.equal(env.saved, 1);
+  ({ env, reveal } = make('nomatch'));
+  reveal(wt.key);
+  assert.deepEqual([...env.collapsedProjects], ['other'], 'a worktree item opens the project and its Worktrees fold');
+  assert.equal(env.box.value, '', 'a search that hides the worktree item is cleared');
+  ({ env, reveal } = make('demo'));
+  reveal(plan.key);
+  assert.equal(env.box.value, 'demo', 'a search that shows the plan stays');
+  reveal('acme/unknown');
+  assert.equal(env.saved, 1, 'an unknown key changes nothing');
+});
+
+test('the page: a tab shows a readable title and a status word', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
+  const body = [pick(/^function tabStatus\(p\) \{[\s\S]*?\n\}$/m), pick(/^const tabTitle = .*$/m)].join('\n');
+  const answered = new Set(['acme/b']);
+  const { tabStatus, tabTitle } = new Function('starting', 'notStarted', 'outOf', 'chatAnswered', body + '\nreturn { tabStatus, tabTitle };')(
+    (p) => !!p.starting, (p) => !!p.failedLaunch, (p) => (p.run ? p.run.outcome : null), answered);
+  const word = (p) => tabStatus({ key: 'acme/a', ...p })[1];
+  assert.equal(word({ chatWaits: 1, live: true }), 'asks you', 'a question beats a live run');
+  assert.equal(word({ chatting: true }), 'working');
+  assert.equal(word({ run: { outcome: 'running' } }), 'working');
+  assert.equal(word({ failedLaunch: true }), 'failed');
+  assert.equal(word({ run: { outcome: 'needs-you' } }), 'your turn');
+  assert.equal(word({ key: 'acme/b' }), 'answered');
+  assert.equal(word({ pr: { state: 'MERGED' } }), 'merged');
+  assert.equal(word({}), 'idle');
+  assert.equal(word({ kind: 'wt', agent: 'working' }), 'working');
+  assert.equal(word({ kind: 'wt', agent: 'idle' }), 'idle');
+  assert.equal(tabTitle({ title: 'Contracts: cancelled D3 state', slug: '20261123-120428-contracts' }), 'Contracts: cancelled D3 state');
+  assert.equal(tabTitle({ title: '20261123-120428-contracts', slug: '20261123-120428-contracts' }), 'contracts', 'no title: the slug without its date');
+});
+
+test('the page: a double-click on a sidebar row keeps its tab and does not queue the plan', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const m = src.match(/^function sideDoubleClick\(last, key, now\) \{.*\}$/m);
+  assert.ok(m, 'app.js has sideDoubleClick');
+  const dbl = new Function(m[0] + '\nreturn sideDoubleClick;')();
+  assert.equal(dbl({ key: 'acme/a', at: 1000 }, 'acme/a', 1300), true);
+  assert.equal(dbl({ key: 'acme/a', at: 1000 }, 'acme/a', 1400), false, '400 ms or more: two clicks');
+  assert.equal(dbl({ key: 'acme/a', at: 1000 }, 'acme/b', 1100), false, 'another row');
+  assert.equal(dbl({}, 'acme/a', 1100), false);
+  const handler = src.match(/if \(sideDoubleClick\(lastItemClick, key, now\)\) \{[\s\S]*?return;\n\s*\}/);
+  assert.ok(handler, 'the row click handler uses sideDoubleClick');
+  assert.match(handler[0], /keepTab\(key\)/);
+  assert.ok(!/picked/.test(handler[0]), 'only the box queues a plan');
+});
+
+test('the page: an alert names the plan like its tab, not by its file name', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
+  const body = [pick(/^const tabTitle = .*$/m), pick(/^const alertBody = .*$/m)].join('\n');
+  const alertBody = new Function('projLook', body + '\nreturn alertBody;')(() => ({ short: 'acme-web' }));
+  assert.equal(alertBody({ project: 'acme-web', title: 'Claim type: empty and clear fields', slug: '20261123-204723-claim', pr: { number: 903 } }),
+    'acme-web · PR #903 / Claim type: empty and clear fields');
+  assert.equal(alertBody({ project: 'acme-web', title: '20261123-204723-claim', slug: '20261123-204723-claim' }), 'acme-web / claim');
+  const calls = src.split('\n').filter((l) => /alertUser\('/.test(l) || /^\s+alertBody\(p\)|p\.project \+ ' \/ ' \+ p\.file, p\.key/.test(l));
+  assert.ok(calls.length >= 4 && calls.every((l) => !/p\.file/.test(l)), 'no alert uses the file name');
+});
+
+test('the page: the merged card shows for a fresh merge or a worktree left on disk, until you close it', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
+  const shows = new Function(pick(/^const MERGED_CARD_DAYS = .*$/m) + '\n' +
+    pick(/^function mergedCardShows\(p, closed, now\) \{[\s\S]*?\n\}$/m) + '\nreturn mergedCardShows;')();
+  const now = Date.parse('2026-11-25T12:00:00Z'), day = 86400000;
+  const merged = (daysAgo, more = {}) => ({ key: 'acme/a', pr: { state: 'MERGED', mergedAt: new Date(now - daysAgo * day).toISOString() }, ...more });
+  const none = new Set();
+  assert.equal(shows(merged(1), none, now), true, 'merged yesterday');
+  assert.equal(shows(merged(30), none, now), false, 'an old merge stays quiet');
+  assert.equal(shows(merged(30, { worktree: true }), none, now), true, 'an old merge with its worktree still on disk');
+  assert.equal(shows(merged(1), new Set(['acme/a']), now), false, 'closed with Okay, close');
+  assert.equal(shows({ key: 'acme/a', pr: { state: 'OPEN' } }, none, now), false);
+  assert.equal(shows({ key: 'acme/a' }, none, now), false);
+  assert.equal(shows(null, none, now), false);
+  // – hides the card without closing the plan; the merged line has a button that shows it again
+  assert.match(src, /if \(small\) \{ M\.hidden = true; return; \}/);
+  assert.match(src, /const mergedCardButton = \(p\) => mergedCardShows\(p, mergedClosed, Date\.now\(\)\)/);
+  assert.equal((src.match(/'<\/span>' \+ mergedCardButton\(p\) \+ '<a href="'/g) || []).length, 2, 'both merged lines (plan and worktree) have the button');
+});
+
+test('the page: the tab label takes a PR number that is a number', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
+  const body = [pick(/^const esc = .*$/m), pick(/^const escA = .*$/m), pick(/^const tabTitle = .*$/m), pick(/^function tabLabelHtml\(p\) \{[\s\S]*?\n\}$/m)].join('\n');
+  const label = new Function('projPill', 'tabStatus', body + '\nreturn tabLabelHtml;')(
+    (name) => '<span class="ppill">' + name + '</span>', () => ['live', 'working']);
+  const html = label({ project: 'acme', title: 'Fix <b> login', slug: '20260101-000000-fix', pr: { number: 873 } });
+  assert.match(html, /<span class="stabpr">#873<\/span>/);
+  // a tab with a PR shows its number, not its title, so more tabs fit in the header row
+  assert.ok(!/stabn|login/.test(html), 'PR: no title');
+  assert.match(html, /<span class="dot stabdot live" title="working"><\/span><span class="srt">working<\/span>/);
+  const noPr = label({ project: 'acme', title: 'Fix <b> login', slug: '20260101-000000-fix' });
+  assert.ok(!/stabpr/.test(noPr), 'no PR: no number');
+  assert.match(noPr, /<span class="stabn">Fix &lt;b&gt; login<\/span>/, 'no PR: the title');
+});
+
+test('the page: the big PR number starts the palette, sidebar, run-strip and worktree rows', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
+  const body = [pick(/^const esc = .*$/m), pick(/^const prStateWord = .*$/m), pick(/^const prNumChip = \(pr\) => \{[\s\S]*?\n\};$/m)].join('\n');
+  const chip = new Function(body + '\nreturn prNumChip;')();
+  assert.equal(chip({ number: 900, state: 'OPEN', isDraft: true }), '<span class="chip palpr">#900 <small>draft</small></span>');
+  assert.equal(chip({ number: 7, state: 'OPEN' }), '<span class="chip palpr ok">#7 <small>open</small></span>');
+  assert.equal(chip({ number: 182, state: 'MERGED' }), '<span class="chip palpr merged">#182 <small>merged</small></span>');
+  // each row puts the number first and does not show the small PR chip again
+  assert.match(src, /<div class="name">\$\{p\.pr \? prNumChip\(p\.pr\) : ''\}/, 'sidebar plan row');
+  assert.match(src, /\$\{autoChips\(\{ \.\.\.p, pr: null \}\)/, 'sidebar plan row: no second PR chip');
+  assert.match(src, /const stripName = \(p\) => \(p\.pr \? prNumChip\(p\.pr\) : ''\)/, 'run strip');
+  assert.ok(!/const stripName = .*prChip\(/.test(src), 'run strip: no second PR chip');
+  assert.match(src, /<div class="name">\$\{w\.pr \? prNumChip\(w\.pr\) : ''\}/, 'worktree row');
+  assert.match(src, /\$\{wtChips\(w, true\)\}/, 'worktree row: no second PR chip');
+  assert.match(src, /\(p\.pr \? prNumChip\(p\.pr\) : ''\) \+\n\s*projPill\(p\.project\)/, 'palette row');
+});
+
+test('the page: the chat is always open for a plan with a session, with no button to open or close it', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  assert.match(src, /function syncChat\(p\) \{\n\s*const show = hasChat\(p\);/, 'shown whenever the plan has a session');
+  assert.ok(!/id="cclose"|data-chat=|dash-chat-open|chatBtn\(/.test(src), 'no Chat button, no close button, no saved on/off');
+});
+
+test('the page: the sticky note stays inside the window, and the page has its menu button and note', async () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const m = src.match(/^function noteClamp\([\s\S]*?\n\}$/m);
+  assert.ok(m, 'app.js has noteClamp');
+  const noteClamp = new Function(m[0] + '\nreturn noteClamp;')();
+  assert.deepEqual(noteClamp(100, 50, 240, 180, 1440, 900), { x: 100, y: 50 }, 'inside: unchanged');
+  assert.deepEqual(noteClamp(1400, 880, 240, 180, 1440, 900), { x: 1200, y: 720 }, 'past the right and bottom edges');
+  assert.deepEqual(noteClamp(-30, -10, 240, 180, 1440, 900), { x: 0, y: 0 }, 'past the left and top edges');
+  assert.deepEqual(noteClamp(10, 10, 240, 180, 200, 100), { x: 0, y: 0 }, 'a window smaller than the note keeps its top bar visible');
+  // the note runs away from the clicked part of the page
+  const d = src.match(/^function noteDodge\([\s\S]*?\n\}$/m);
+  assert.ok(d, 'app.js has noteDodge');
+  const noteDodge = new Function(m[0] + '\n' + d[0] + '\nreturn noteDodge;')();
+  const box = { l: 1000, t: 100, r: 1400, b: 300 };
+  assert.equal(noteDodge(100, 100, 240, 180, box, 1440, 900, 12), null, 'the note does not cover the click: it stays');
+  assert.deepEqual(noteDodge(1160, 90, 240, 180, box, 1440, 900, 12), { x: 1160, y: 312 }, 'it covers the click: it moves to the nearest free side (below)');
+  const tall = { l: 1000, t: 0, r: 1440, b: 900 };
+  assert.deepEqual(noteDodge(1160, 90, 240, 180, tall, 1440, 900, 12), { x: 748, y: 90 }, 'a full-height column: it moves to its left');
+  assert.equal(noteDodge(0, 0, 240, 180, { l: 0, t: 0, r: 1440, b: 900 }, 1440, 900, 12), null, 'no better place: it stays');
+  // the note moves to another district (plan list, middle page, chat) when you click the district it is in
+  const dd = src.match(/^function noteDistrict\([\s\S]*?\n\}$/m);
+  assert.ok(dd, 'app.js has noteDistrict');
+  const noteDistrict = new Function(dd[0] + '\nreturn noteDistrict;')();
+  const ds = (at = {}) => [{ id: 'list', l: 0, t: 50, r: 320, b: 900, at: at.list || 0 }, { id: 'main', l: 320, t: 50, r: 1040, b: 900, at: at.main || 0 },
+    { id: 'chat', l: 1040, t: 50, r: 1440, b: 900, at: at.chat || 0 }];
+  assert.deepEqual(noteDistrict(40, 50, 240, 180, ds(), 'list'), { x: 1120, y: 50 }, 'a click in the list: the note goes to the farthest district, at the same relative place');
+  assert.deepEqual(noteDistrict(40, 50, 240, 180, ds({ chat: 5 }), 'list'), { x: 560, y: 50 }, 'it goes to the district you clicked longest ago');
+  assert.equal(noteDistrict(1100, 400, 240, 180, ds(), 'list'), null, 'a click in another district: the note stays');
+  assert.deepEqual(noteDistrict(980, 400, 240, 180, ds(), 'main'), { x: 1040, y: 400 }, 'mostly in the chat, over the edge of the clicked page: fully into the chat');
+  assert.equal(noteDistrict(40, 50, 240, 180, ds().slice(0, 1), 'list'), null, 'no other district: it stays');
+  // a new random tilt each time the note lands at a new place: after a move away and after a drag
+  const rt = src.match(/^const noteRetilt = \(\) => \{[^\n]*\};$/m);
+  assert.ok(rt, 'app.js has noteRetilt');
+  const tilts = new Function('const note = {};\n' + rt[0] + '\nreturn () => { noteRetilt(); return note.tilt; };')();
+  for (let i = 0; i < 50; i++) { const t = Math.abs(tilts()); assert.ok(t >= 1.2 && t <= 2.2, 'tilt ' + t + ' is 1.2° to 2.2°'); }
+  assert.match(src, /note\.x = p\.x; note\.y = p\.y; noteRetilt\(\);/, 'a move away tilts it again');
+  assert.match(src, /noteRetilt\(\); placeNote\(\); saveNote\(\);/, 'a drag tilts it again');
+  assert.match(src, /document\.addEventListener\('pointerdown', \(e\) => \{\n\s*if \(!note\.open \|\| note\.x == null \|\| e\.target\.closest\?\.\('#note, #notefab'\)\) return;/, 'a click on the note itself does not move it');
+  // checkboxes in the note text
+  const e = src.match(/^function noteEdit\([\s\S]*?\n\}$/m);
+  assert.ok(e, 'app.js has noteEdit');
+  const noteEdit = new Function(e[0] + '\nreturn noteEdit;')();
+  assert.deepEqual(noteEdit('API:\n-', 6, ' '), { text: 'API:\n☐ ', pos: 7 }, '"-" and a space at a line start make a box');
+  assert.equal(noteEdit('a-', 2, ' '), null, 'a "-" inside a line stays');
+  assert.equal(noteEdit('--', 2, ' '), null, 'two dashes stay');
+  assert.deepEqual(noteEdit('☐ merge', 7, 'Enter'), { text: '☐ merge\n☐ ', pos: 10 }, 'Enter continues the list');
+  assert.deepEqual(noteEdit('☐ merge\n☐ ', 10, 'Enter'), { text: '☐ merge\n', pos: 8 }, 'Enter on an empty box ends the list');
+  assert.equal(noteEdit('merge', 5, 'Enter'), null, 'Enter on a plain line is a plain Enter');
+  assert.deepEqual(noteEdit('x\n☐ merge', 3, 'click'), { text: 'x\n☑ merge', pos: 3 }, 'a click on the box checks it');
+  assert.deepEqual(noteEdit('☑ merge', 1, 'click'), { text: '☐ merge', pos: 1 }, 'a second click unchecks it');
+  assert.equal(noteEdit('☐ merge', 5, 'click'), null, 'a click on the words does not toggle');
+  const mm = src.match(/^function noteMirrorHtml\([\s\S]*?\n\}$/m);
+  assert.ok(mm, 'app.js has noteMirrorHtml');
+  const noteMirrorHtml = new Function(mm[0] + '\nreturn noteMirrorHtml;')();
+  assert.equal(noteMirrorHtml('☑ merge #236\n☐ open <PR>\nplain'), '<s>☑ merge #236</s>\n☐ open &lt;PR&gt;\nplain\n', 'a ticked line is struck through, the text is escaped');
+  const page = await (await get('/')).text();
+  assert.match(page, /id="noteBtn"/);
+  assert.match(page, /id="note" class="note"[^>]*hidden/);
+  assert.match(page, /id="notetext"/);
+  // – minimizes the note to a round button; the button starts hidden and opens the note again
+  assert.match(page, /id="notemin"/);
+  assert.match(page, /id="notefab" class="notefab"[^>]*hidden/);
+  assert.match(src, /el\.hidden = !note\.open \|\| note\.min;\n\s*fab\.hidden = !note\.open \|\| !note\.min;/);
+  // the round button drags (past 5 px) and keeps its place; a click without a drag opens the note
+  assert.match(src, /byId\('notefab'\)\.addEventListener\('pointerdown'[\s\S]{0,400}?< 5\) return;[\s\S]{0,200}?note\.x = ev\.clientX - dx; note\.y = ev\.clientY - dy; placeFab\(\);[\s\S]{0,300}?if \(fabDragged\) saveNote\(\);/);
+  assert.match(src, /byId\('notefab'\)\.addEventListener\('click', \(\) => \{ if \(fabDragged\) \{ fabDragged = false; return; \} showNote\(true\); \}\);/);
+});
+
+test('the page: the first paint and Back reveal and scroll to the open plan', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  assert.match(src, /const reveal = !firstPaint && selected;\n\s*if \(reveal\) revealInSide\(selected\);\n\s*renderList\(\);\n\s*if \(reveal\) scrollToSelected\(\);/);
+  // a plan in the run strip is shown there, not in its project section; a click on a strip row does not scroll
+  assert.match(src, /function scrollToSelected\(\) \{\n[^\n]*\n\s*const strip = byId\('runstrip'\)\.querySelector\('\.rp\.sel'\);\n\s*if \(strip\) \{[\s\S]{0,300}?strip\.scrollIntoView\(\{ block: 'nearest' \}\); return;\n\s*\}/);
+  // each run-strip group is a section, so its caption sticks while its rows scroll
+  assert.match(src, /const stripGroup = \(cls, cap, list, row\) => list\.length \? '<div class="sgsec"><div class="cap '/);
+  assert.match(src, /selected = el\.dataset\.go; revealInSide\(selected\); renderList\(\); renderDetail\(true\);\n/, 'strip click: no scroll');
+  // the row lands below its project's sticky header, measured each time
+  assert.match(src, /function scrollToSelected\(\) \{[\s\S]*?querySelector\('\.phead'\);\n\s*el\.style\.scrollMarginTop = \(head \? head\.offsetHeight/);
+  assert.match(src, /addEventListener\('popstate', \(\) => \{\n\s*readUrl\(\); if \(selected\) revealInSide\(selected\);[^\n]*\n[^\n]*scrollToSelected\(\);/);
+});
+
 test('the page: an outdated project with no GitHub origin keeps the copy-prompt chip', () => {
   const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
   assert.match(src, /sp\.bootstrap === 'outdated' && sp\.issuesUrl \? bootstrapUpgradeChip\(pr, sp\)/);
+});
+
+test('the page: the chat pins the last message that scrolled above the view', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const m = src.match(/^function pinnedAsk\(boxes, viewTop\) \{[\s\S]*?\n\}$/m);
+  assert.ok(m, 'app.js has pinnedAsk');
+  const pinnedAsk = new Function(m[0] + '\nreturn pinnedAsk;')();
+  const asks = [{ top: -400, bottom: -350 }, { top: -120, bottom: -60 }, { top: 300, bottom: 340 }];
+  assert.equal(pinnedAsk(asks, 0), 1, 'the newest message above the view, not the one still on screen');
+  assert.equal(pinnedAsk(asks, -380), -1, 'nothing pinned while every message is in or below the view');
+  assert.equal(pinnedAsk([{ top: -40, bottom: 20 }], 0), -1, 'a message cut at the top is still in view');
+  assert.equal(pinnedAsk([], 0), -1);
+  // the chat panel calls it on its log
+  assert.match(src, /jumpToBottom\(L\);\n\s*pinLastAsk\(L\);/);
 });

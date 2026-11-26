@@ -223,9 +223,10 @@ test('a merge starts the waiting plan once, in PR mode; an example in the body n
   assert.deepEqual(ofType(webEv, 'wait-met').map((e) => [e.slug, e.conditions]), [['waiting', ['api1 PR #7 merged']]]);
   assert.deepEqual(ofType(webEv, 'auto-launch').map((e) => [e.slug, e.mode]), [['waiting', 'pr']]);
   assert.deepEqual(webEv.filter((e) => ['wait-met', 'auto-launch'].includes(e.type)).map((e) => e.type), ['wait-met', 'auto-launch'], 'oldest first');
-  await until(() => notes().some((l) => l.includes('-message Started waiting -open') && l.includes('?sel=web1%2Fwaiting')), 'the Started notification');
+  await until(() => notes().some((l) => l.includes('-title web1 · started -subtitle ') && l.includes('-message Started by the plans watcher -open')
+    && l.includes('?sel=web1%2Fwaiting')), 'the Started notification');
   await ticks(3);
-  assert.equal(notes().filter((l) => l.includes('-message Started waiting')).length, 1, 'one Started notification');
+  assert.equal(notes().filter((l) => l.includes('-message Started by the plans watcher')).length, 1, 'one Started notification');
   assert.deepEqual(argsOf(web), ['--to-pr waiting.md'], 'started once');
   assert.equal((await plan('web1', 'waiting')).waits, null, 'a started plan waits no more');
   assert.equal((await plan('web1', 'body-example')).waits, null);
@@ -278,7 +279,8 @@ test('gh errors: redacted everywhere and no notification; a config error notifie
   const ev = await until(async () => { const e = await events('web5'); return ofType(e, 'wait-error').length >= 2 && e; }, 'two wait-error events');
   assert.doesNotMatch(JSON.stringify(ev), /abc/);
   assert.deepEqual(ofType(ev, 'wait-error').find((e) => e.slug === 'no-such').reason, 'unknown project');
-  await until(() => notes().some((l) => l.includes('no-such cannot start by itself: unknown project')), 'the config error notification');
+  await until(() => notes().some((l) => l.includes('-title web5 · cannot start by itself -subtitle ') && l.includes('-message unknown project')
+    && l.includes('?sel=web5%2Fno-such')), 'the config error notification');
   await ticks(3);
   assert.equal(notes().filter((l) => l.includes('no-such')).length, 1, 'notified once');
   assert.equal(notes().filter((l) => l.includes('gh-down')).length, 0, 'a passing gh error does not notify');
@@ -299,7 +301,7 @@ test('a failed auto-start is reported with redacted text and a notification, and
   assert.match(failed.output, /^SKIP: skipped\.md is not on origin\/main/);
   assert.doesNotMatch(failed.output, /abc/);
   assert.ok(failed.output.length <= 500);
-  await until(() => notes().some((l) => l.includes('skipped did not start')), 'the notification');
+  await until(() => notes().some((l) => l.includes('-title web7 · did not start -subtitle ') && l.includes('-message SKIP: skipped.md is not on origin/main') && l.includes('%2Fskipped')), 'the notification');
   await ticks(3);
   assert.equal(argsOf(web).length, 1, 'no second launch');
   assert.equal(ofType(await events('web7'), 'auto-launch').length, 1);
@@ -376,7 +378,7 @@ test('plan … merged with a slug that has no plan file and no PR is an error th
   register([{ name: 'api10t', root: api }, { name: 'web10t', root: web }]);
   const ev = await until(async () => { const e = await events('web10t'); return ofType(e, 'wait-error').length && e; }, 'wait-error');
   assert.deepEqual(ofType(ev, 'wait-error').map((e) => [e.slug, e.reason]), [['typo', 'unknown plan']]);
-  await until(() => notes().some((l) => l.includes('typo cannot start by itself: unknown plan')), 'the notification');
+  await until(() => notes().some((l) => l.includes(' · cannot start by itself -subtitle ') && l.includes('-message unknown plan') && l.includes('%2Ftypo')), 'the notification');
   assert.deepEqual(argsOf(web), []);
   unregister(['api10t', 'web10t']);
 });
@@ -445,7 +447,7 @@ test('submodule condition: starts when the pointer on origin/<base> contains the
   const ev = await until(async () => { const e = await events('web13'); return ofType(e, 'wait-error').length >= 2 && e; }, 'two wait-errors');
   assert.deepEqual(ofType(ev, 'wait-error').map((e) => [e.slug, e.reason]).sort(),
     [['sub-bad', 'commit not found (unknown or ambiguous)'], ['sub-none', 'submodule not initialized in the main checkout']]);
-  await until(() => notes().some((l) => l.includes('sub-bad cannot start by itself: commit not found')), 'the notification');
+  await until(() => notes().some((l) => l.includes(' · cannot start by itself -subtitle ') && l.includes('-message commit not found') && l.includes('%2Fsub-bad')), 'the notification');
   assert.deepEqual((await plan('web13', 'sub-wait')).waits[0].met, false);
   assert.deepEqual(argsOf(web), []);
 
@@ -550,7 +552,7 @@ test('a merge on GitHub pulls the main checkout, and the run worktrees stay', as
 
 test('run outcome events, and one notification per outcome change with a link to the plan', async () => {
   const web = makeRepo('web19', { plans: { a: '# Plan: a\n', b: '# Plan: b\n' } });
-  setPrs('web19', []);
+  setPrs('web19', [prRow(4, 'OPEN', { headRefName: 'auto/b' })]);
   report(web, 'a', 'RUNNING');
   report(web, 'b', 'RUNNING');
   register([{ name: 'web19', root: web }]);
@@ -559,15 +561,19 @@ test('run outcome events, and one notification per outcome change with a link to
   report(web, 'a', 'PR OPEN — https://example.test/pr/3');
   await until(async () => ofType(await events('web19'), 'run-outcome').some((e) => e.slug === 'a' && e.outcome === 'needs-you'), 'needs-you');
   await until(() => lines('a').length === 1, 'the first notification');
-  assert.match(lines('a')[0], new RegExp('-message a: PR OPEN — https://example.test/pr/3 -open http://127.0.0.1:' + port + '/\\?sel=web19%2Fa'));
+  // read like a tab: project and what happened in the title, the plan under it, no link in the text
+  assert.match(lines('a')[0], new RegExp('-title web19 · your turn -subtitle a -message PR OPEN -open http://127.0.0.1:' + port + '/\\?sel=web19%2Fa'));
   report(web, 'a', 'FAILED: test');
   await until(async () => ofType(await events('web19'), 'run-outcome').some((e) => e.slug === 'a' && e.outcome === 'failed'), 'failed');
   await until(() => lines('a').length === 2, 'the second notification');
+  assert.match(lines('a')[1], /-title web19 · run failed -subtitle a -message FAILED: test -open/);
 
   report(web, 'b', 'COMMITTED — READY TO PUSH');
   await until(() => lines('b').length === 1, 'the COMMITTED notification');
   report(web, 'b', 'PR OPEN — https://example.test/pr/4');
   await until(() => lines('b').length === 2, 'the PR OPEN notification');
+  assert.match(lines('b')[1], /-title web19 · your turn · PR #4 -subtitle b -message PR OPEN -open/);
+  assert.doesNotMatch(notes().join('\n'), /example\.test/, 'no link in a notification text');
   await ticks(3);
   assert.equal(lines('a').length, 2);
   assert.equal(lines('b').length, 2, 'never two for one change');
@@ -617,7 +623,7 @@ test('an auto-start that shows no run after 10 minutes is reported as failed, on
   register([{ name: 'web27', root: web }]);
   const ev = await until(async () => ofType(await events('web27'), 'auto-launch-failed')[0], 'auto-launch-failed');
   assert.deepEqual([ev.slug, ev.output], ['stuck', 'no run started']);
-  await until(() => notes().some((l) => l.includes('stuck did not start: no run started')), 'the notification');
+  await until(() => notes().some((l) => l.includes(' · did not start -subtitle ') && l.includes('-message no run started') && l.includes('%2Fstuck')), 'the notification');
   await ticks(3);
   assert.equal(ofType(await events('web27'), 'auto-launch-failed').length, 1, 'reported once');
   assert.equal(watchJson('web27').launched.stuck.state, 'failed');
@@ -845,4 +851,18 @@ test('a stale lock is taken: a PID of another program, and an unreadable file ol
   utimesSync(lock, old, old);
   await until(() => { try { return JSON.parse(readFileSync(lock, 'utf8')).pid === s.pid; } catch { return false; } }, 'the takeover of an old unreadable lock');
   await stop(s);
+});
+
+test('an archived plan says whether its worktree is still on disk, for the merged card', async () => {
+  const web = makeRepo('web21');
+  mkdirSync(path.join(web, '.plans', 'done'), { recursive: true });
+  for (const slug of ['shipped', 'cleaned']) writeFileSync(path.join(web, '.plans', 'done', slug + '.md'), '# Plan: ' + slug + '\n');
+  mkdirSync(path.join(tmp, 'worktrees', 'web21', 'shipped'), { recursive: true });
+  setPrs('web21', []);
+  register([{ name: 'web21', root: web }]);
+  const shipped = await until(() => plan('web21', 'shipped'), 'the archived plan');
+  assert.equal(shipped.archived, true);
+  assert.equal(shipped.worktree, true, 'the worktree is still there: the card offers Clean up');
+  assert.equal((await plan('web21', 'cleaned')).worktree, false);
+  unregister(['web21']);
 });
