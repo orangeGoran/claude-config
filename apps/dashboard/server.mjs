@@ -81,6 +81,10 @@ Environment
                       e.g. sonnet or claude-opus-5-5
   DASH_WATCH_MS=<n>   how often the event watcher runs, in ms (default 60000;
                       0 turns it off — set it for a test dashboard with the real HOME)
+  DASH_STATE_CACHE_MS=<n>
+                      how long, from the start of a build, all clients share that
+                      /api/state build and its answer, in ms (default 1000; 0 turns
+                      the sharing off). Each request that is not a GET clears it
   DASH_NO_NOTIFY=1    the watcher sends no macOS notifications
   DASH_NOTIFIER=<f>   the notifier program the watcher calls (default
                       terminal-notifier when installed, else osascript)
@@ -316,28 +320,82 @@ const planBase = (content) => {
   const m = content.match(/^\s*[-*]\s*\*\*Base\*\*:\s*`?([\w./][\w./-]*)`?\s*$/m);
   return m ? m[1] : null;
 };
-const planBranches = {};   // root -> { slug: branch named in the plan }
+// root -> { slug: branch named in the plan }. listPlans() fills its own map and puts it here only at its end,
+// so two builds that overlap never read a map that the other build has only started.
+const planBranches = {};
 // the branch a plan names, when it is not the pipeline's own auto/<slug>
-const ownBranch = (proj, slug) => {
-  const b = (planBranches[proj.root] || {})[slug];
+const ownBranch = (proj, slug, map = planBranches[proj.root] || {}) => {
+  const b = map[slug];
   return b && b !== 'auto/' + slug ? b : null;
 };
 // Counts the rounds of a plan that have at least one validator report, with the new
 // (`validation-claude`, `validation-codex`) and old (`validation`, `codex-raw`) names.
 // A report name belongs to one plan only, so no list of plans is needed.
 // An empty report (only blank lines, for example a Codex run that stopped early) does not count.
+// The folder is read once for each change of its mtime, and each report once for each change of its mtime or size
+// (only after the mtime is RACY_MS old; before that, each build reads them again, the folder once per build).
 const VALIDATOR_REPORT = /^(?:validation-claude|validation-codex|validation|codex-raw)-(\d+)\.md$/;
-const hasText = (file) => { try { return readFileSync(file, 'utf8').trim() !== ''; } catch { return false; } };
-const validationRounds = (proj, slug) => {
+// A file system can keep the same mtime for two changes in a short time (1 s on HFS+, 2 s on FAT, a few ms on ext4).
+// So a cache keeps a result only when the mtime is RACY_MS or more in the past: a later change then gets a new mtime.
+const RACY_MS = 2000;
+const settled = (mtimeMs) => Date.now() - mtimeMs >= RACY_MS;
+// goes up at the start of each listPlans(): a folder index that is not settled holds for that pass only
+let indexPass = 0;
+// file path -> { key: 'mtimeMs:size', text }; the same pattern as sessionIdCache
+const textCache = new Map();
+const hasText = (file) => {
   try {
-    const rounds = new Set();
-    for (const f of readdirSync(proj.validDir)) {
-      if (!f.startsWith(slug + '-')) continue;
-      const m = f.slice(slug.length + 1).match(VALIDATOR_REPORT);
-      if (m && !rounds.has(m[1]) && hasText(path.join(proj.validDir, f))) rounds.add(m[1]);
+    const st = statSync(file);
+    const key = st.mtimeMs + ':' + st.size;
+    const hit = textCache.get(file);
+    if (hit && hit.key === key) return hit.text;
+    const text = readFileSync(file, 'utf8').trim() !== '';
+    if (settled(st.mtimeMs)) textCache.set(file, { key, text });
+    else textCache.delete(file);
+    return text;
+  } catch { return false; }
+};
+// folder path -> { mtime, bySlug: Map(slug -> [{ file, round }]) }
+const validIndexes = new Map();
+/**
+ * Gives the validator reports of a project, grouped by the plan slug that owns them.
+ * It reads the folder again only when the folder mtime changes. A missing folder gives an empty Map.
+ */
+const validationIndex = (proj) => {
+  const dir = proj.validDir;
+  let st;
+  try { st = statSync(dir); } catch {
+    // only a folder that had an index can have cached files: no scan of the cache for each plan of a project with no folder
+    if (validIndexes.delete(dir)) for (const f of textCache.keys()) if (path.dirname(f) === dir) textCache.delete(f);
+    return new Map();
+  }
+  const hit = validIndexes.get(dir);
+  // a settled index holds until the folder changes; one that is not settled holds for the rest of this
+  // listPlans() pass only (validationIndex runs once for each plan), so the next pass reads the folder again
+  if (hit && hit.mtime === st.mtimeMs && (hit.settled || hit.pass === indexPass)) return hit.bySlug;
+  let names;
+  try { names = readdirSync(dir); } catch { return new Map(); }
+  const bySlug = new Map();
+  for (const f of names) {
+    for (let i = f.indexOf('-', 1); i > 0; i = f.indexOf('-', i + 1)) {
+      const m = f.slice(i + 1).match(VALIDATOR_REPORT);
+      if (!m) continue;
+      const slug = f.slice(0, i);
+      if (!bySlug.has(slug)) bySlug.set(slug, []);
+      bySlug.get(slug).push({ file: f, round: m[1] });
     }
-    return rounds.size;
-  } catch { return 0; }
+  }
+  const present = new Set(names);
+  for (const f of textCache.keys()) if (path.dirname(f) === dir && !present.has(path.basename(f))) textCache.delete(f);
+  validIndexes.set(dir, { mtime: st.mtimeMs, bySlug, settled: settled(st.mtimeMs), pass: indexPass });
+  return bySlug;
+};
+const validationRounds = (proj, slug) => {
+  const rounds = new Set();
+  for (const { file, round } of validationIndex(proj).get(slug) || []) {
+    if (!rounds.has(round) && hasText(path.join(proj.validDir, file))) rounds.add(round);
+  }
+  return rounds.size;
 };
 
 // Where a run stands, for the strips and buttons: 'running' | 'needs-you' | 'failed'.
@@ -503,12 +561,13 @@ const sessionsIn = (dir, only) => {
 };
 
 const listPlans = async (proj) => {
+  indexPass++;
   const summaries = loadSummaries(proj);
   const meta = loadMeta(proj);
   const prs = prsFor(proj);
   const allPrs = (prLists[proj.root] || {}).allByBranch || {};
-  const branches = planBranches[proj.root] = {};
-  const prOf = (slug) => { const b = ownBranch(proj, slug); return (b ? allPrs[b] : prs['auto/' + slug]) || null; };
+  const branches = {};
+  const prOf = (slug) => { const b = ownBranch(proj, slug, branches); return (b ? allPrs[b] : prs['auto/' + slug]) || null; };
   const active = await Promise.all(
     planFiles(proj).map(async (f) => {
       const slug = f.replace(/\.md$/, '');
@@ -568,6 +627,7 @@ const listPlans = async (proj) => {
         pr: prOf(slug),
       };
     });
+  planBranches[proj.root] = branches;
   return [...active, ...archived];
 };
 
@@ -599,6 +659,35 @@ const fullState = async () => {
     });
   }
   return out;
+};
+
+// One shared /api/state build: stateGen goes up on each change request, stateBuilds counts the builds.
+let stateGen = 0, stateBuilds = 0, stateBuild = null;
+/** Marks the shared /api/state build as old. The next GET /api/state starts a new build. */
+const invalidateState = () => { stateGen++; };
+/**
+ * Gives the answer of GET /api/state as { n, body }: n is the build number, body is the JSON text.
+ * All requests share one build while it is less than STATE_CACHE_MS old, from the start of the build,
+ * while it runs and after it ended. The window starts at the start because the build reads the files from that time on.
+ * A request that is not a GET clears the shared build (invalidateState). A failed build is not kept.
+ * A newer build (after a clear) is never replaced by an older one (the check stateBuild === b).
+ */
+const buildStateBody = () => {
+  // performance.now() is monotonic: a clock set back cannot keep an old build for the length of the jump
+  if (stateBuild && stateBuild.gen === stateGen && performance.now() - stateBuild.at < STATE_CACHE_MS) return stateBuild.promise;
+  const b = { gen: stateGen, n: ++stateBuilds, at: performance.now() };
+  stateBuild = b;
+  b.promise = (async () => {
+    try {
+      enqueueMissingSummaries();
+      const body = JSON.stringify(await fullState());
+      return { n: b.n, body };
+    } catch (e) {
+      if (stateBuild === b) stateBuild = null;
+      throw e;
+    }
+  })();
+  return b.promise;
 };
 
 // ---------- background summarizer (auto, sequential, cached per project) ----------
@@ -1723,6 +1812,12 @@ const runPrAction = async (proj, b) => {
 // on GitHub, and sends a macOS notification when something needs the owner. One server per
 // HOME runs it (watcher.lock). Guide: docs/plans-dashboard.md, "Waits for and the event watcher".
 const WATCH_MS = process.env.DASH_WATCH_MS == null ? 60000 : +process.env.DASH_WATCH_MS;   // 0: off
+// how long all clients share one /api/state build, from its start (0: no sharing); empty or not a number: 1000
+const STATE_CACHE_MS = (() => {
+  const raw = String(process.env.DASH_STATE_CACHE_MS ?? '').trim();
+  const v = raw === '' ? NaN : Number(raw);
+  return Number.isFinite(v) && v >= 0 ? v : 1000;
+})();
 const WATCH_LIMIT = 4;                     // runs at the same time per project (orchestrator parent plan, Q6)
 const STALE_RUN_MS = 30 * 60 * 1000;       // a "running" report older than this and no process: a dead run
 const WATCH_LOCK = path.join(CENTRAL, 'watcher.lock');
@@ -3254,6 +3349,9 @@ const server = http.createServer(async (req, res) => {
   }
   const refused = crossSiteReason(req);
   if (refused) { res.writeHead(403); return res.end('refused: ' + refused); }
+  // a request that is not a GET can change the state: clear the shared /api/state build before and after it
+  const changes = req.method !== 'GET';
+  if (changes) invalidateState();
   const url = new URL(req.url, 'http://x');
   const slug = url.searchParams.get('slug');
   const pname = url.searchParams.get('project');
@@ -3266,8 +3364,9 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/scout' && req.method === 'GET') return json(res, 200, scoutStatus());
     if (url.pathname === '/api/usage') return json(res, 200, usageState());
     if (url.pathname === '/api/state') {
-      enqueueMissingSummaries();
-      return json(res, 200, await fullState());
+      const { n, body } = await buildStateBody();
+      res.writeHead(200, { 'Content-Type': 'application/json', 'X-State-Build': String(n) });
+      return res.end(body);
     }
     if (url.pathname === '/api/lanes') {
       const proj = getProj();
@@ -3489,6 +3588,8 @@ const server = http.createServer(async (req, res) => {
     json(res, 404, { error: 'not found' });
   } catch (e) {
     json(res, 500, { error: String(e) });
+  } finally {
+    if (changes) invalidateState();
   }
 });
 

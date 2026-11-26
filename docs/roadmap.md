@@ -14,7 +14,7 @@ This is the roadmap: the goals and the architecture of the repo, and the list of
 ## Architecture
 
 - **Server:** `apps/dashboard/server.mjs`, one Node process with no dependencies. It reads the registry (`~/.claude/pipeline-projects.json`), the plan files, the run reports and `gh`, and serves the page and the `/api/*` endpoints on 127.0.0.1:4899. It accepts only local host names and same-origin requests.
-- **Page:** `apps/dashboard/page/` (`page.html`, `app.js`, `app.css`), inlined into one page by the server. It polls `/api/state` every 5 s and keeps per-viewer settings in `localStorage`.
+- **Page:** `apps/dashboard/page/` (`page.html`, `app.js`, `app.css`), inlined into one page by the server. It polls `/api/state` every 5 s. All clients share one state build for 1 s from its start by default (`DASH_STATE_CACHE_MS`). It keeps per-viewer settings in `localStorage`.
 - **Service:** a launchd login service (`scripts/launchd/com.plans-dashboard.plist.template`) runs the main checkout's server; Caddy (`scripts/caddy/plans.caddy.template`) serves it as https://shipyard.test. `npm run restart` restarts it.
 - **Mac app:** `apps/plans-mac/` (`npm run build-app`) is an optional AppKit + WKWebView window around the page, with the ⌘ menu keys; it calls the page only through `window.dashboard`.
 - **Chats:** each plan's chat runs `claude` under `apps/dashboard/chat-relay.mjs`, outside the service, so chats survive a restart.
