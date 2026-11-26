@@ -320,10 +320,12 @@ const planBase = (content) => {
   const m = content.match(/^\s*[-*]\s*\*\*Base\*\*:\s*`?([\w./][\w./-]*)`?\s*$/m);
   return m ? m[1] : null;
 };
-const planBranches = {};   // root -> { slug: branch named in the plan }
+// root -> { slug: branch named in the plan }. listPlans() fills its own map and puts it here only at its end,
+// so two builds that overlap never read a map that the other build has only started.
+const planBranches = {};
 // the branch a plan names, when it is not the pipeline's own auto/<slug>
-const ownBranch = (proj, slug) => {
-  const b = (planBranches[proj.root] || {})[slug];
+const ownBranch = (proj, slug, map = planBranches[proj.root] || {}) => {
+  const b = map[slug];
   return b && b !== 'auto/' + slug ? b : null;
 };
 // Counts the rounds of a plan that have at least one validator report, with the new
@@ -564,8 +566,8 @@ const listPlans = async (proj) => {
   const meta = loadMeta(proj);
   const prs = prsFor(proj);
   const allPrs = (prLists[proj.root] || {}).allByBranch || {};
-  const branches = planBranches[proj.root] = {};
-  const prOf = (slug) => { const b = ownBranch(proj, slug); return (b ? allPrs[b] : prs['auto/' + slug]) || null; };
+  const branches = {};
+  const prOf = (slug) => { const b = ownBranch(proj, slug, branches); return (b ? allPrs[b] : prs['auto/' + slug]) || null; };
   const active = await Promise.all(
     planFiles(proj).map(async (f) => {
       const slug = f.replace(/\.md$/, '');
@@ -625,6 +627,7 @@ const listPlans = async (proj) => {
         pr: prOf(slug),
       };
     });
+  planBranches[proj.root] = branches;
   return [...active, ...archived];
 };
 

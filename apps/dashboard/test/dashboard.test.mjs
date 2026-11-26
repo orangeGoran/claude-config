@@ -1862,6 +1862,65 @@ test('/api/state: one build for requests that come together, a result cache, and
   }
 });
 
+test('two state builds that overlap: an archived plan that names its branch still hides its worktree', async () => {
+  const box = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'plans-dash-overlap-')));
+  let child;
+  try {
+    const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', env: { ...process.env,
+      GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+    const oHome = path.join(box, 'home'), oRepo = path.join(box, 'repo'), oPlans = path.join(oRepo, '.plans');
+    mkdirSync(path.join(oHome, '.claude'), { recursive: true });
+    mkdirSync(path.join(oPlans, 'done'), { recursive: true });
+    mkdirSync(path.join(oRepo, '.claude', 'scripts'), { recursive: true });
+    writeFileSync(path.join(oRepo, '.claude', 'scripts', 'auto-pipeline.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    git(oRepo, 'init', '-q', '-b', 'main');
+    writeFileSync(path.join(oRepo, 'a.txt'), 'a');
+    git(oRepo, 'add', 'a.txt'); git(oRepo, 'commit', '-qm', 'base');
+    git(oRepo, 'remote', 'add', 'origin', 'git@github.com:o/r.git');
+    git(oRepo, 'worktree', 'add', '-q', '-b', 'feature/x', path.join(oRepo, '.claude', 'worktrees', 'feat-x'));
+    // feat-y: no plan names its branch, so it always shows; it tells the test that the worktree list is loaded
+    git(oRepo, 'worktree', 'add', '-q', '-b', 'feature/y', path.join(oRepo, '.claude', 'worktrees', 'feat-y'));
+    // an active plan (its row awaits pgrep) and an archived plan that names feature/x
+    writeFileSync(path.join(oPlans, 'live-plan.md'), '# Plan: Live plan\n');
+    writeFileSync(path.join(oPlans, 'done', 'old-x.md'), '# Plan: Old x\n\n- **Branch**: feature/x\n');
+    writeFileSync(path.join(oHome, '.claude', 'pipeline-projects.json'), JSON.stringify({
+      projects: [{ name: 'overlap', client: 'Test', root: oRepo, plansDir: oPlans, launchers: [] }],
+    }));
+    mkdirSync(path.join(box, 'bin'));
+    writeFileSync(path.join(box, 'bin', 'pgrep'), '#!/bin/sh\nsleep 0.5\nexit 1\n', { mode: 0o755 });
+    mkdirSync(path.join(box, 'gh'));
+    const oPort = await freePort(), oQaPort = await freePort();
+    child = spawn(process.execPath, [SCRIPT], {
+      env: { ...process.env, HOME: oHome, DASH_PORT: String(oPort), QA_REPORTS_PORT: String(oQaPort),
+             DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1', CLAUDE_TMP: path.join(box, 'claude-tmp'), QA_HOME: '',
+             DASH_WATCH_MS: '0', DASH_NO_NOTIFY: '1', DASH_STATE_CACHE_MS: '0',
+             PATH: path.join(box, 'bin') + ':' + path.join(ghDir, 'bin') + ':' + process.env.PATH,
+             FAKE_GH_DIR: path.join(box, 'gh') },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let err = '';
+    child.stderr.on('data', (c) => (err += c));
+    const at = (p, init) => fetch(`http://127.0.0.1:${oPort}${p}`, init);
+    const names = async (r) => ((await r.json())[0].worktrees || []).map((w) => w.branch).sort();
+    let seen = [];
+    for (const deadline = Date.now() + 15000; Date.now() < deadline && child.exitCode == null; await sleep(200)) {
+      try { seen = await names(await at('/api/state')); } catch {}
+      if (seen.includes('feature/y')) break;
+    }
+    assert.deepEqual(seen, ['feature/y'], 'the worktree list is loaded and feat-x shows as its plan: ' + err);
+    // build 1 waits for pgrep; build 2 starts while build 1 runs, and starts a new branch map
+    const first = at('/api/state');
+    await sleep(150);
+    const second = at('/api/state');
+    const [one, two] = await Promise.all([first.then(names), second.then(names)]);
+    assert.deepEqual(one, ['feature/y'], 'the first build does not read the map of the second build');
+    assert.deepEqual(two, ['feature/y']);
+  } finally {
+    await stop(child);
+    rmSync(box, { recursive: true, force: true });
+  }
+});
+
 test('DASH_STATE_CACHE_MS that is not a number gives 1000 ms, and compare fails on other project names without naming them', async () => {
   const box = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'plans-dash-env-')));
   let child;
