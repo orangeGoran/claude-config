@@ -15,8 +15,8 @@ A single-file, dependency-free Node server that lists the `*.md` plan files of e
 | --- | --- |
 | Try it without installing | `node apps/dashboard/server.mjs` → http://127.0.0.1:4899 |
 | Add a project | follow [Add a project to the dashboard](add-project.md) |
-| Run it at login on https://plans.test | `scripts/setup-macos.sh` — see [Install](#install-it-to-run-at-login-macos) |
-| **Apply my code changes to plans.test** | `npm run restart` in this repo — see [After editing](#after-editing-the-dashboard-code) |
+| Run it at login on https://shipyard.test | `scripts/setup-macos.sh` — see [Install](#install-it-to-run-at-login-macos) |
+| **Apply my code changes to shipyard.test** | `npm run restart` in this repo — see [After editing](#after-editing-the-dashboard-code) |
 | Read the logs | `~/.claude/pipeline-dashboard/server.log` |
 | Run the tests | `npm test` |
 | Uninstall | see [Uninstall](#uninstall) |
@@ -36,20 +36,22 @@ Requires Node 18+ (developed on 24).
 ## Install it to run at login (macOS)
 
 ```bash
-# Install the dashboard to run at login. It asks for a domain; press Enter to keep plans.test
+# Install the dashboard to run at login. It asks for a domain; press Enter to keep shipyard.test
 scripts/setup-macos.sh
 ```
 
 `scripts/setup.sh` runs this for you when you pick the dashboard part.
 
-Then open **https://plans.test**. The script installs [Caddy](https://caddyserver.com) if missing, a launchd agent that keeps the dashboard running on `127.0.0.1:4899`, and a Caddy site that serves it over HTTPS and drops requests from other machines. It adds the domain to `/etc/hosts` and trusts Caddy's certificate (both ask for your password). HTTPS is what lets the browser use the clipboard and notifications; if Firefox still warns, set `security.enterprise_roots.enabled` in `about:config`.
+Then open **https://shipyard.test**. The script installs [Caddy](https://caddyserver.com) if missing, a launchd agent that keeps the dashboard running on `127.0.0.1:4899`, and a Caddy site that serves it over HTTPS and drops requests from other machines. It adds the domain to `/etc/hosts` and trusts Caddy's certificate (both ask for your password). HTTPS is what lets the browser use the clipboard and notifications; if Firefox still warns, set `security.enterprise_roots.enabled` in `about:config`.
 
 Re-run it to change the domain or port, after switching Node versions with nvm (the agent stores Node's full path), or when the login service does not start after a `git pull` or a move of the repo (the agent stores the server's full path; `npm run restart` refuses and says so when that path does not exist). A re-run without `--port` keeps the port of the installed service; a re-run with unchanged settings leaves the running dashboard and Caddy alone. `npm run restart` waits for the port that the service uses.
+
+An install from before the default changed keeps its old domain (for example plans.test). To move to shipyard.test, run `scripts/setup-macos.sh --domain shipyard.test`, then `npm run build-app`. The new domain starts with empty browser storage: open tabs, 🔔 and the theme are set again once.
 
 ## After editing the dashboard code
 
 > [!IMPORTANT]
-> plans.test does **not** pick up edits by itself. The agent runs `apps/dashboard/server.mjs` straight from this repo but reads it, and the page files in `apps/dashboard/page/` (`page.html`, `app.css`, `app.js`), only at startup. After every change, restart it:
+> shipyard.test does **not** pick up edits by itself. The agent runs `apps/dashboard/server.mjs` straight from this repo but reads it, and the page files in `apps/dashboard/page/` (`page.html`, `app.css`, `app.js`), only at startup. After every change, restart it:
 >
 > ```bash
 > # Restart the dashboard so it loads your changes
@@ -194,7 +196,7 @@ Shipyard (`~/Applications/Shipyard.app`) is an optional Mac app: one window that
 
 Run `npm run build-app` to build and install it. It needs the Swift compiler of the Command Line Tools (`xcode-select --install`). `scripts/setup.sh` asks before it builds the app. To use a new build, quit Shipyard (⌘Q) and open it again.
 
-The app opens the domain of the installed dashboard (from `~/.claude/pipeline-dashboard/caddy-site.caddy`), else https://plans.test. `node apps/plans-mac/build.mjs --url https://<domain>` builds it for another https domain.
+The app opens the domain of the installed dashboard (from `~/.claude/pipeline-dashboard/caddy-site.caddy`), else https://shipyard.test. `node apps/plans-mac/build.mjs --url https://<domain>` builds it for another https domain.
 
 | Key | What it does |
 |---|---|

@@ -5,10 +5,10 @@
 import AppKit
 import WebKit
 
-/// The dashboard URL that build.mjs wrote into Info.plist, else https://plans.test.
+/// The dashboard URL that build.mjs wrote into Info.plist, else https://shipyard.test.
 let appURL: URL = {
-  let s = Bundle.main.object(forInfoDictionaryKey: "PlansURL") as? String ?? "https://plans.test"
-  return URL(string: s) ?? URL(string: "https://plans.test")!
+  let s = Bundle.main.object(forInfoDictionaryKey: "PlansURL") as? String ?? "https://shipyard.test"
+  return URL(string: s) ?? URL(string: "https://shipyard.test")!
 }()
 
 /// Gives the origin of a URL as scheme, host and port (443 when an https URL has no port, 80 for http).

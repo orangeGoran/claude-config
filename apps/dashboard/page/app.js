@@ -126,7 +126,7 @@ const selectionIn = (el) => {
 const selectionLive = () =>
   ['detail', 'side', 'logbody', 'runstrip', 'board'].some((id) => selectionIn(byId(id)));
 // navigator.clipboard exists only in a secure context. 127.0.0.1 and *.localhost
-// qualify; a vanity domain like http://plans.test does not — and that is the URL
+// qualify; a vanity domain like http://shipyard.test does not — and that is the URL
 // this server prefers when /etc/hosts has it. Fall back to the legacy path there.
 // the text a chat chip stands for: the selected lines that went (or go) with a message
 document.addEventListener('click', (e) => {
@@ -5309,7 +5309,7 @@ document.addEventListener('pointerdown', (e) => {
   saveNote();
   setTimeout(() => el.classList.remove('noteslide'), 260);
 }, true);
-// another plans.test tab changed the note
+// another shipyard.test tab changed the note
 window.addEventListener('storage', (e) => {
   if (e.key !== 'dash-note') return;
   try { note = { ...note, ...JSON.parse(e.newValue || '{}') }; } catch {}

@@ -1057,7 +1057,7 @@ test('refuses requests from other websites and from unknown host names', async (
   // the dashboard's own page, under every local name it is served on
   assert.equal(await raw('GET', '/api/state', { Host: self, 'Sec-Fetch-Site': 'same-origin' }), 200);
   assert.equal(await raw('GET', '/api/state', { Host: `localhost:${port}` }), 200);
-  assert.equal(await raw('GET', '/', { Host: `plans.localhost:${port}`, 'Sec-Fetch-Site': 'none' }), 200);
+  assert.equal(await raw('GET', '/', { Host: `shipyard.localhost:${port}`, 'Sec-Fetch-Site': 'none' }), 200);
   assert.equal(await raw('POST', '/api/meta', { Host: self, Origin: `http://${self}`, 'Content-Type': 'application/json' },
     JSON.stringify({ project: 'demo', slug: 'demo-plan', status: 'todo', tags: [] })), 200);
 });

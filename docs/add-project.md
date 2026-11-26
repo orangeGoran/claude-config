@@ -14,10 +14,10 @@ For a new repository, run `/bootstrap-project` in Claude Code first. It writes t
 
    | Your situation | Do this |
    | --- | --- |
-   | You installed the dashboard with `scripts/setup.sh` | Click **[https://plans.test/?guide=1](https://plans.test/?guide=1)** |
+   | You installed the dashboard with `scripts/setup.sh` | Click **[https://shipyard.test/?guide=1](https://shipyard.test/?guide=1)** |
    | You did not install it | In the `claude-config` repository, run `node apps/dashboard/server.mjs`. Then click **[http://127.0.0.1:4899/?guide=1](http://127.0.0.1:4899/?guide=1)** |
 
-   If you are not sure, click the first link. If the page does not open, use the second line. If you typed a different domain during the install, use that domain instead of `plans.test`.
+   If you are not sure, click the first link. If the page does not open, use the second line. If you typed a different domain during the install, use that domain instead of `shipyard.test`.
 
    When the dashboard is already open, click **Guide** in the top bar.
 

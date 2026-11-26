@@ -4,7 +4,7 @@
 #
 #   scripts/setup.sh                      asks what to set up, then asks inside each part
 #   scripts/setup.sh --yes                sets up everything without asking
-#   scripts/setup.sh --domain plans.test  domain for the dashboard (default: asks, plans.test)
+#   scripts/setup.sh --domain shipyard.test  domain for the dashboard (default: asks, shipyard.test)
 #
 # Parts
 #   1. Claude Code config   scripts/setup-claude.sh — CLAUDE.md, skills, settings
@@ -28,7 +28,7 @@ done
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 LABELS=("Claude Code config — CLAUDE.md, skills, settings"
-        "Plans dashboard — runs at login on https://${DOMAIN:-plans.test}")
+        "Plans dashboard — runs at login on https://${DOMAIN:-shipyard.test}")
 PICKED=(1 1)
 # the dashboard's login agent, Caddy and /etc/hosts are macOS-only
 if [ "$(uname)" != Darwin ]; then
@@ -65,12 +65,12 @@ fi
 if [ "${PICKED[1]}" = 1 ]; then
   printf '\n━━ 2. Plans dashboard\n'
   # --yes means no prompts at all, so the domain falls back to its default
-  [ "$YES" = 1 ] && DOMAIN="${DOMAIN:-plans.test}"
+  [ "$YES" = 1 ] && DOMAIN="${DOMAIN:-shipyard.test}"
   args=(); [ -n "$DOMAIN" ] && args+=(--domain "$DOMAIN")
   "$HERE/setup-macos.sh" ${args[@]+"${args[@]}"}
   # setup-macos.sh asked for the domain if we didn't pass one; read back what it served
   url="$(sed -n 's/^\([^ {]*\) {.*/https:\/\/\1/p' "$HOME/.claude/pipeline-dashboard/caddy-site.caddy" 2>/dev/null | head -1)"
-  url="${url:-https://${DOMAIN:-plans.test}}"
+  url="${url:-https://${DOMAIN:-shipyard.test}}"
   # the scout's config and AWS keys stay on each Mac (not in this repo): install its daily job only
   # when this Mac has a config; otherwise the 🔭 Scout drawer lists the steps
   if [ -f "$HOME/.claude/scout.json" ]; then

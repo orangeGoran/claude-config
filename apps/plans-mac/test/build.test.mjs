@@ -18,7 +18,7 @@ const IS_MAC = process.platform === 'darwin';
 const canCompile = IS_MAC && spawnSync(process.execPath, [SCRIPT, '--check']).status === 0;
 
 test('siteUrl gives the first site of the Caddy file, or null', () => {
-  assert.equal(siteUrl('plans.test {\n\ttls internal\n}'), 'https://plans.test');
+  assert.equal(siteUrl('shipyard.test {\n\ttls internal\n}'), 'https://shipyard.test');
   assert.equal(siteUrl('dash.example.test {\n}'), 'https://dash.example.test');
   assert.equal(siteUrl('# made by setup-macos.sh {\ndash.example.test {\n}'), 'https://dash.example.test');
   // the same reading as apps/dashboard/server.mjs: a tab or no space before the brace
@@ -28,12 +28,12 @@ test('siteUrl gives the first site of the Caddy file, or null', () => {
   assert.equal(siteUrl('nothing here'), null);
 });
 
-test('appUrl takes --url as given, else the Caddy site, else https://plans.test, and accepts only https', () => {
+test('appUrl takes --url as given, else the Caddy site, else https://shipyard.test, and accepts only https', () => {
   assert.equal(appUrl({ flag: 'https://dash.example.test:8443' }), 'https://dash.example.test:8443');
   assert.equal(appUrl({ caddyText: 'dash.example.test {\n}' }), 'https://dash.example.test');
-  assert.equal(appUrl({ caddyText: '' }), 'https://plans.test');
-  assert.equal(appUrl({ flag: 'https://dash.example.test:8443', caddyText: 'plans.test {\n}' }), 'https://dash.example.test:8443', '--url wins over the Caddy site');
-  assert.throws(() => appUrl({ flag: 'http://plans.test' }), /--url must be an https:\/\/ URL/);
+  assert.equal(appUrl({ caddyText: '' }), 'https://shipyard.test');
+  assert.equal(appUrl({ flag: 'https://dash.example.test:8443', caddyText: 'shipyard.test {\n}' }), 'https://dash.example.test:8443', '--url wins over the Caddy site');
+  assert.throws(() => appUrl({ flag: 'http://shipyard.test' }), /--url must be an https:\/\/ URL/);
   assert.throws(() => appUrl({ flag: 'not a url' }), /--url must be an https:\/\/ URL/);
 });
 
@@ -240,13 +240,13 @@ test('build.mjs compiles, signs and does not install with --no-install', { skip:
   const tmp = mkdtempSync(path.join(os.tmpdir(), 'plans-build-'));
   const home = mkdtempSync(path.join(os.tmpdir(), 'plans-home-'));
   try {
-    const r = spawnSync(process.execPath, [SCRIPT, '--out', tmp, '--no-install', '--url', 'https://plans.test'],
+    const r = spawnSync(process.execPath, [SCRIPT, '--out', tmp, '--no-install', '--url', 'https://shipyard.test'],
       { env: { ...process.env, HOME: home }, encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr + r.stdout);
     const bin = path.join(tmp, 'Shipyard.app', 'Contents', 'MacOS', 'Shipyard');
     assert.ok(existsSync(bin));
     assert.ok(statSync(bin).mode & 0o111, 'the binary is executable');
-    assert.match(readFileSync(path.join(tmp, 'Shipyard.app', 'Contents', 'Info.plist'), 'utf8'), /https:\/\/plans\.test/);
+    assert.match(readFileSync(path.join(tmp, 'Shipyard.app', 'Contents', 'Info.plist'), 'utf8'), /https:\/\/shipyard\.test/);
     assert.equal(spawnSync('codesign', ['--verify', path.join(tmp, 'Shipyard.app')]).status, 0);
     assert.ok(!existsSync(path.join(home, 'Applications', 'Shipyard.app')));
   } finally {
@@ -278,7 +278,7 @@ test('npm run build-app runs build.mjs', () => {
 });
 
 test('build.mjs refuses an http --url before it compiles', { skip: !IS_MAC }, () => {
-  const r = spawnSync(process.execPath, [SCRIPT, '--url', 'http://plans.test', '--no-install'], { encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [SCRIPT, '--url', 'http://shipyard.test', '--no-install'], { encoding: 'utf8' });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /--url must be an https:\/\/ URL/);
 });

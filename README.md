@@ -37,7 +37,7 @@ scripts/setup.sh
 
 ### After setup
 
-That's it. Setup opens your dashboard at **[https://plans.test](https://plans.test)** (or the domain you typed), in Shipyard (the Mac app) when you built it, else in the browser. Next:
+That's it. Setup opens your dashboard at **[https://shipyard.test](https://shipyard.test)** (or the domain you typed), in Shipyard (the Mac app) when you built it, else in the browser. Next:
 
 1. **Add your first project.** The guide on the dashboard finds your repos and walks you through it. Step by step with screenshots: [Add a project to the dashboard](docs/add-project.md).
 2. **Write a plan.** Put a Markdown file in the project's plans folder (`.plans` by default) that says what to change and how to check it. It shows up on the dashboard.

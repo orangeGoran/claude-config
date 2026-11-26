@@ -5,7 +5,7 @@
 //   node apps/plans-mac/build.mjs --check     (exit 0 when the Swift compiler is usable)
 //
 // The app opens the domain that scripts/setup-macos.sh serves (~/.claude/pipeline-dashboard/caddy-site.caddy),
-// else https://plans.test; --url overrides it. It compiles src/*.swift with swiftc (macOS only) and signs ad hoc.
+// else https://shipyard.test; --url overrides it. It compiles src/*.swift with swiftc (macOS only) and signs ad hoc.
 // It never stops the running app: quit Shipyard (⌘Q) and open it again to use the new build.
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, existsSync } from 'node:fs';
@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const DEFAULT_URL = 'https://plans.test';
+const DEFAULT_URL = 'https://shipyard.test';
 
 /**
  * Gives 'https://' + the first site name of a Caddy file (the first line `<name> {`, comment lines skipped),
@@ -26,7 +26,7 @@ export const siteUrl = (caddyText) => {
 
 /**
  * Gives the URL the app opens, exactly as given: the --url flag when set, else the site of the Caddy text,
- * else https://plans.test. Throws when the result is not an https: URL.
+ * else https://shipyard.test. Throws when the result is not an https: URL.
  */
 export const appUrl = ({ flag, caddyText } = {}) => {
   const url = flag || siteUrl(caddyText) || DEFAULT_URL;

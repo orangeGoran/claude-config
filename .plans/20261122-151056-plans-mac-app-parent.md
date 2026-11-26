@@ -1,4 +1,4 @@
-# Plan: Plans Mac app — parent plan
+# Plan: Shipyard, the Mac app of the plans dashboard — parent plan
 
 > **Master plan.** This file holds no implementation steps. Each phase below gets its own child plan through `/skill-1-plan`, and only those child plans are implemented. Each child plan names this file in its `- **Parent**:` line.
 
@@ -10,12 +10,12 @@ A native Mac app around the dashboard, so the owner can switch between working s
 
 ## Decisions taken by the owner (2026-11-22)
 
-- The app is a thin Swift + WKWebView shell that loads https://plans.test (the same engine Tauri uses on macOS; Electron only if WKWebView breaks a page part). Page updates reach the app through the server, as today; only the shell needs a rebuild.
+- The app is a thin Swift + WKWebView shell that loads the dashboard's domain, https://shipyard.test by default (the same engine Tauri uses on macOS; Electron only if WKWebView breaks a page part). Page updates reach the app through the server, as today; only the shell needs a rebuild.
 - Tabs live inside the page, the same in the browser and the app: every plan you open becomes a tab. Closing a tab never stops an agent or a run.
 - ⌘N opens a sheet with three choices: ask about the project, new plan, launch a ready plan.
 - Release 1 covers all three phases below.
-- The app is named **Shipyard** (`~/Applications/Shipyard.app`; owner decision 2026-11-26). The folder stays `apps/plans-mac/`, and the dashboard page keeps its "Plans" title.
-- The web dashboard (https://plans.test in any browser) stays complete on its own: every feature works there, with Ctrl keys where the browser keeps the ⌘ keys. The Mac app is optional: `scripts/setup.sh` asks before it builds and installs it, and the page sends messages to the app only when `window.webkit` exists.
+- The app is named **Shipyard** (`~/Applications/Shipyard.app`; owner decision 2026-11-26). The folder stays `apps/plans-mac/`, and the dashboard page keeps its "Plans" title. The default dashboard domain is `shipyard.test` (was `plans.test`; owner decision 2026-11-26).
+- The web dashboard (https://shipyard.test in any browser) stays complete on its own: every feature works there, with Ctrl keys where the browser keeps the ⌘ keys. The Mac app is optional: `scripts/setup.sh` asks before it builds and installs it, and the page sends messages to the app only when `window.webkit` exists.
 
 ## Phases
 
