@@ -308,13 +308,24 @@ for (const line of gitLines(['status', '--porcelain', '--', '.plans'])) {
 }
 
 // --- validation evidence ---------------------------------------------------------------
-const validationRounds = {};
+// Report forms: new `validation-claude`, `validation-codex`; old `validation`, `codex-raw`.
+// A name belongs to one plan only, so no list of plans is needed. Counts are distinct rounds.
+// Objects with no prototype: a file name such as `constructor-validation-1.md` must not hit Object.prototype.
+// An empty report (only blank lines, for example a Codex run that stopped early) does not count.
+const validationRounds = Object.create(null);
 if (existsSync(VALID_DIR)) {
+  const seen = Object.create(null);
+  const hasText = (file) => { try { return readFileSync(file, 'utf8').trim() !== ''; } catch { return false; } };
   for (const f of readdirSync(VALID_DIR)) {
-    const m = f.match(/^(.*?)-(validation|codex)-(\d+)\.md$/);
-    if (!m) continue;
-    validationRounds[m[1]] ??= { claude: 0, codex: 0 };
-    validationRounds[m[1]][m[2] === 'validation' ? 'claude' : 'codex']++;
+    const m = f.match(/^(.*?)-(validation-claude|validation-codex|validation|codex-raw)-(\d+)\.md$/);
+    if (!m || !hasText(path.join(VALID_DIR, f))) continue;
+    const who = m[2] === 'validation-claude' || m[2] === 'validation' ? 'claude' : 'codex';
+    seen[m[1]] ??= { claude: new Set(), codex: new Set(), rounds: new Set() };
+    seen[m[1]][who].add(m[3]);
+    seen[m[1]].rounds.add(m[3]);
+  }
+  for (const [slug, s] of Object.entries(seen)) {
+    validationRounds[slug] = { claude: s.claude.size, codex: s.codex.size, rounds: s.rounds.size };
   }
 }
 
@@ -373,7 +384,7 @@ const plans = Object.entries(planText).map(([slug, text]) => {
     opsManual: opsHits >= 5 && hard.length < 8,
     looksRoadmap,
     looksHandoff: /^# Handoff/m.test(text),
-    validation: validationRounds[slug] ?? { claude: 0, codex: 0 },
+    validation: validationRounds[slug] ?? { claude: 0, codex: 0, rounds: 0 },
     autoRunStatus: runStatus[slug] ?? null,
     hasLiveWorktree: worktreePath.has(slug),
     runState: state,
@@ -468,7 +479,7 @@ for (const o of overlaps) {
   conflictsWith.get(o.b).add(o.a);
 }
 const score = (p) => (p.status === 'ready' ? 1000 : 0)
-  + (p.validation.claude + p.validation.codex) * 50
+  + p.validation.rounds * 50
   - (p.blockedByActiveRun.length ? 300 : 0)
   - p.hardFileCount;
 const batch = [];
@@ -553,9 +564,9 @@ if (process.argv.includes('--json')) {
   }
   console.log('RECOMMENDED PARALLEL BATCH (one plan per lane)');
   for (const r of recommendedBatch) {
-    const v = r.validation.claude + r.validation.codex;
+    const v = r.validation.rounds;
     console.log(`  · ${r.slug}  [lane ${r.lane}]`);
-    console.log(`      status=${r.status ?? '—'} files=${r.hardFileCount} validation=${v ? `${r.validation.claude}c/${r.validation.codex}x` : 'none'}`);
+    console.log(`      status=${r.status ?? '—'} files=${r.hardFileCount} validation=${v ? `${r.validation.claude}c/${r.validation.codex}x/${v}r` : 'none'}`);
     console.log(`      areas: ${r.areas.join(', ')}`);
     for (const m of r.minorWith) console.log(`      ~ shares ${m.files.join(', ')} with ${m.slug} — expect a merge conflict`);
     for (const b of r.blockedByActiveRun) {
