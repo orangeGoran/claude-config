@@ -39,6 +39,42 @@ export const appUrl = ({ flag, caddyText } = {}) => {
 /** The name of the app: the bundle, its program and the menu. */
 export const APP_NAME = 'Shipyard';
 
+/** The name of the icon file in Contents/Resources (AppIcon.icns), made from the page icon. */
+export const ICON_NAME = 'AppIcon';
+
+/** The PNG files of a macOS .iconset: [file name, pixel size] for 16, 32, 128, 256 and 512 pt, each at 1x and 2x. */
+export const iconsetFiles = () => [16, 32, 128, 256, 512].flatMap((pt) => [
+  ['icon_' + pt + 'x' + pt + '.png', pt],
+  ['icon_' + pt + 'x' + pt + '@2x.png', pt * 2],
+]);
+
+/**
+ * Writes <resources>/AppIcon.icns from an SVG file: Quick Look renders the SVG at 1024 px, sips scales it to
+ * each iconset size, iconutil packs the set. Gives true on success; on a failure it warns and gives false,
+ * and the app gets the default icon.
+ */
+const writeIcon = (svg, resources, tmpDir) => {
+  try {
+    const ql = path.join(tmpDir, 'ql');
+    const set = path.join(tmpDir, ICON_NAME + '.iconset');
+    mkdirSync(ql, { recursive: true });
+    mkdirSync(set, { recursive: true });
+    execFileSync('qlmanage', ['-t', '-s', '1024', '-o', ql, svg], { stdio: 'ignore' });
+    const png = path.join(ql, path.basename(svg) + '.png');
+    for (const [name, px] of iconsetFiles()) {
+      execFileSync('sips', ['-z', String(px), String(px), png, '--out', path.join(set, name)], { stdio: 'ignore' });
+    }
+    mkdirSync(resources, { recursive: true });
+    execFileSync('iconutil', ['-c', 'icns', set, '-o', path.join(resources, ICON_NAME + '.icns')], { stdio: 'ignore' });
+    return true;
+  } catch (e) {
+    console.warn('Could not make the app icon (' + e.message + '); the app gets the default icon.');
+    return false;
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+};
+
 const xml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /** Gives the Info.plist XML of the app, with the dashboard URL as PlansURL. Each value is XML-escaped. */
@@ -49,6 +85,7 @@ export const infoPlist = ({ url, version }) => {
     ['CFBundleExecutable', APP_NAME],
     ['CFBundlePackageType', 'APPL'],
     ['CFBundleShortVersionString', version],
+    ['CFBundleIconFile', ICON_NAME],
     ['LSMinimumSystemVersion', '13.0'],
     ['PlansURL', url],
   ];
@@ -131,6 +168,8 @@ if (IS_MAIN) {
   const APP = path.join(out, APP_NAME + '.app');
   mkdirSync(path.join(APP, 'Contents', 'MacOS'), { recursive: true });
   writeFileSync(path.join(APP, 'Contents', 'Info.plist'), infoPlist({ url, version }));
+  writeIcon(path.join(HERE, '..', 'dashboard', 'page', 'icon.svg'), path.join(APP, 'Contents', 'Resources'),
+    mkdtempSync(path.join(os.tmpdir(), 'plans-icon-')));
   const SRC = path.join(HERE, 'src');
   const sources = readdirSync(SRC).filter((f) => f.endsWith('.swift')).sort().map((f) => path.join(SRC, f));
   const target = (process.arch === 'arm64' ? 'arm64' : 'x86_64') + '-apple-macos13.0';

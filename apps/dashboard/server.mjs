@@ -3597,10 +3597,14 @@ const server = http.createServer(async (req, res) => {
 const UI_DIR = fileURLToPath(new URL('./page/', import.meta.url));
 const uiFile = (f) => readFileSync(path.join(UI_DIR, f), 'utf8');
 const fill = (s, mark, value) => s.split(mark).join(value); // split/join: no $-patterns as in String.replace
-const PAGE = fill(fill(fill(fill(uiFile('page.html'),
+// The Shipyard icon (page/icon.svg, also the Mac app icon) as a data: URI, cut to its square: the 100 px margin of
+// the macOS icon grid would only make the 16 px tab icon smaller.
+const ICON_URI = 'data:image/svg+xml,' + encodeURIComponent(uiFile('icon.svg').replace('viewBox="0 0 1024 1024"', 'viewBox="100 100 824 824"'));
+const PAGE = fill(fill(fill(fill(fill(uiFile('page.html'),
   '<!--@CSS-->', uiFile('app.css')),
   '<!--@JS-->', uiFile('app.js')),
   '{{QA_PORT}}', String(QA_PORT)),
+  '{{ICON}}', ICON_URI),
   '/*@CHAT_MODES*/[]', JSON.stringify(CHAT_MODES));
 
 // Report pages of the browser-usability-test skill, read-only, so a chat link can open

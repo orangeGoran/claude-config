@@ -27,6 +27,7 @@
            align-items:center; gap:14px; flex-shrink:0; }
   h1 { font-size:calc(15px * var(--fs)); margin:0; }
   #home { color:inherit; text-decoration:none; }
+  #home .logo { width:1.15em; height:1.15em; vertical-align:-0.2em; border-radius:22%; }
   /* one header row: Plans, the ⋯ menu, Code, the Plan · PR switch, the open-plan tabs, then the status on the right.
      The buttons used less often are in the ⋯ menu (#hdmenu), so the row also holds the open-plan tabs */
   header.mainhd { padding:5px 14px; gap:10px; min-height:calc(40px * var(--fs)); }
@@ -771,7 +772,7 @@
   /* the paper starts 12px below the top of the box, so the tape sticks out above it; drop-shadow follows the paper and the tape, not the box.
      The whole note tilts by --tilt, like paper stuck on by hand */
   .note { --nc:#fde68a; position:fixed; z-index:42; width:240px; min-width:160px; min-height:110px; display:flex; flex-direction:column;
-          padding-top:12px; box-sizing:border-box; color:#1f2328; resize:both; overflow:hidden; transform:rotate(var(--tilt, -1.5deg)); transition:transform .25s ease;
+          padding-top:12px; box-sizing:border-box; color:#1f2328; overflow:hidden; transform:rotate(var(--tilt, -1.5deg)); transition:transform .25s ease;
           border-radius:0 0 3px 22px / 0 0 3px 8px;
           background:linear-gradient(185deg, var(--nc) 55%, color-mix(in srgb, var(--nc) 88%, #000) 100%) 0 12px / 100% calc(100% - 12px) no-repeat;
           filter:drop-shadow(0 1px 1px rgba(0,0,0,.3)) drop-shadow(0 8px 7px rgba(0,0,0,.35)); }
@@ -786,6 +787,7 @@
   .notebar { display:flex; align-items:center; gap:6px; padding:4px 6px; cursor:grab; touch-action:none; user-select:none;
              background:color-mix(in srgb, var(--nc) 80%, #000 8%); }
   body.notedrag, body.notedrag .notebar, body.notedrag .notefab { cursor:grabbing; user-select:none; }
+  body.noteresize, body.noteresize .notegrip { cursor:nwse-resize; user-select:none; }
   .notecolors { display:flex; gap:4px; }
   .notecolors button { width:11px; height:11px; padding:0; border-radius:50%; border:1px solid rgba(0,0,0,.25); cursor:pointer; }
   .notecolors [data-color="yellow"] { background:#fde68a; } .notecolors [data-color="green"] { background:#bbf7d0; }
@@ -805,6 +807,9 @@
   .note textarea::placeholder { color:rgba(31,35,40,.45); }
   .notemirror { color:inherit; overflow:hidden; pointer-events:none; }
   .notemirror s { opacity:.5; }
+  /* the resize corner: drawn by the page, not the browser (the browser corner does not work on a tilted note in WebKit) */
+  .notegrip { position:absolute; right:0; bottom:0; z-index:2; width:16px; height:16px; cursor:nwse-resize; touch-action:none;
+              background:linear-gradient(135deg, transparent 0 45%, rgba(0,0,0,.3) 45% 52%, transparent 52% 66%, rgba(0,0,0,.3) 66% 73%, transparent 73%); }
   /* the minimized note: a small yellow sticky note with a folded corner where the note was; drag it to move it, a click opens the note */
   .notefab { position:fixed; z-index:42; width:38px; height:38px; padding:0; border:0; border-radius:4px 4px 12px 4px; cursor:grab;
              touch-action:none; user-select:none; color:rgba(31,35,40,.55); display:grid; place-items:center;

@@ -8,7 +8,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSy
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { appUrl, infoPlist, installApp, siteUrl } from '../build.mjs';
+import { appUrl, iconsetFiles, infoPlist, installApp, siteUrl } from '../build.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, '..', 'build.mjs');
@@ -44,7 +44,16 @@ test('infoPlist writes the bundle keys and an XML-escaped PlansURL', () => {
   assert.match(x, /<key>CFBundleExecutable<\/key>\s*<string>Shipyard<\/string>/);
   assert.match(x, /<key>CFBundlePackageType<\/key>\s*<string>APPL<\/string>/);
   assert.match(x, /<key>LSMinimumSystemVersion<\/key>\s*<string>13\.0<\/string>/);
+  assert.match(x, /<key>CFBundleIconFile<\/key>\s*<string>AppIcon<\/string>/);
   assert.doesNotMatch(x, /&b=/);
+});
+
+test('iconsetFiles lists the ten PNG files of a macOS iconset, 16 to 1024 px', () => {
+  const f = iconsetFiles();
+  assert.equal(f.length, 10);
+  assert.deepEqual(f[0], ['icon_16x16.png', 16]);
+  assert.deepEqual(f[1], ['icon_16x16@2x.png', 32]);
+  assert.deepEqual(f.at(-1), ['icon_512x512@2x.png', 1024]);
 });
 
 // the window.dashboard object of the page, as its key names
@@ -246,6 +255,7 @@ test('build.mjs compiles, signs and does not install with --no-install', { skip:
     const bin = path.join(tmp, 'Shipyard.app', 'Contents', 'MacOS', 'Shipyard');
     assert.ok(existsSync(bin));
     assert.ok(statSync(bin).mode & 0o111, 'the binary is executable');
+    assert.ok(existsSync(path.join(tmp, 'Shipyard.app', 'Contents', 'Resources', 'AppIcon.icns')), 'the app has its icon');
     assert.match(readFileSync(path.join(tmp, 'Shipyard.app', 'Contents', 'Info.plist'), 'utf8'), /https:\/\/shipyard\.test/);
     assert.equal(spawnSync('codesign', ['--verify', path.join(tmp, 'Shipyard.app')]).status, 0);
     assert.ok(!existsSync(path.join(home, 'Applications', 'Shipyard.app')));

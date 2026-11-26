@@ -1,5 +1,7 @@
 # claude-config
 
+<img src="apps/dashboard/page/icon.svg" alt="Shipyard icon" width="96">
+
 A Claude Code setup in one repo: a local dashboard that runs plan files in the background, plus global rules and skills linked into `~/.claude/`.
 
 ## Why
