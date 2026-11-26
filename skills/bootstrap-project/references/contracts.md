@@ -131,7 +131,7 @@ The dashboard's "⚡ All" refuses until every registered project has this script
 - `bootstrap-upgrade.json`: the run status, `{ state, step, hash, base, branch, worktree, runDir, pid, pr, error, startedAt, endedAt, replaces }`.
   - `replaces`: `{ number, hash }` of the PR of an earlier run, or `null`. A run keeps it across failed runs; a PR for another hash gets the owner checkbox "close #<number> without a merge".
   - `state`: `running` | `pr` | `committed` | `same` | `failed`.
-  - `step`: the last step that started: `prepare`, `render`, `claude`, `apply`, `verify`, `commit`, `push`, `pr`.
+  - `step`: the last step that started: `prepare`, `render`, `claude`, `apply`, `verify`, `install`, `commit`, `push`, `pr`. `install` runs `stack.installCmd` in the worktree, so the project's git hooks find their tools; it is skipped when `installCmd` is empty or the worktree has no `stack.manifest`.
   - `pr`: `{ number, url }` or `null`. `error`: redacted, at most 500 characters; a failure in the render to commit steps starts with the run folder path. In state `pr`, `error` is `null`, or a note when the owner must add the label `no-changelog` by hand (gh could not add it, and could not put the checkbox into the PR body).
 - `bootstrap-upgrade-pr-body-<hash>.md`: the PR body, one file per hash, written right before the commit. Its first line is `<!-- bootstrap-upgrade <hash> -->`. A resumed run uses it only for the same hash. The text from Claude is redacted.
 - `bootstrap-upgrade.log`: the output of the script and of the Claude session.

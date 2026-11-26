@@ -86,6 +86,17 @@ if (a[0] === 'pr' && a[1] === 'view') {
 process.exit(0);
 `;
 
+// the fake pnpm (the example answers install with pnpm): logs its argv and cwd, and makes
+// .husky/_/h.sh like a husky prepare script. A file fail-install in FAKE_DIR makes it fail.
+const FAKE_PNPM = `#!/usr/bin/env node
+const fs = require('fs'), path = require('path');
+const dir = process.env.FAKE_DIR;
+fs.appendFileSync(path.join(dir, 'pnpm.log'), JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + '\\n');
+if (fs.existsSync(path.join(dir, 'fail-install'))) { process.stderr.write('ERR_PNPM_FAKE install failed'); process.exit(1); }
+fs.mkdirSync('.husky/_', { recursive: true });
+fs.writeFileSync('.husky/_/h.sh', 'true\\n');
+`;
+
 /**
  * Makes a rendered repo with a bare origin. With `change`, one answer changes and one rendered
  * skill file gets a project line after the apply, so the run has work to do.
@@ -96,6 +107,7 @@ function setup({ edit = (p) => { p.git.base = 'main'; return p; }, branch = 'mai
   mkdirSync(home); mkdirSync(bin);
   writeFileSync(path.join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
   writeFileSync(path.join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
+  writeFileSync(path.join(bin, 'pnpm'), FAKE_PNPM, { mode: 0o755 });
   const env = { ...process.env, HOME: home, PATH: bin + ':' + process.env.PATH, FAKE_DIR: dir,
     GIT_AUTHOR_NAME: 'Ana Example', GIT_COMMITTER_NAME: 'Ana Example',
     GIT_AUTHOR_EMAIL: 'ana@example.test', GIT_COMMITTER_EMAIL: 'ana@example.test', GIT_CONFIG_NOSYSTEM: '1' };
@@ -553,6 +565,73 @@ test('nothing to upgrade: status "same" and no worktree or branch is left', () =
     noLeftover(t, n);
     assert.equal(t.g(t.repo, 'branch', '--list', 'auto/bootstrap-upgrade-*'), '');
   } finally { done(t); }
+});
+
+// a husky-style pre-commit hook: it needs .husky/_/h.sh, which only the install step makes
+const addHuskyHook = (t) => {
+  mkdirSync(path.join(t.repo, '.husky'));
+  writeFileSync(path.join(t.repo, '.husky/pre-commit'), '#!/bin/sh\n. "$(dirname "$0")/_/h.sh"\n', { mode: 0o755 });
+  appendFileSync(path.join(t.repo, '.gitignore'), '\n.husky/_/\n');
+  commitPush(t, 'acme: husky hook');
+  t.g(t.repo, 'config', 'core.hooksPath', '.husky');
+};
+const pnpmLog = (t) => read(path.join(t.dir, 'pnpm.log')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+
+test('the install step runs in the worktree before the commit, so a husky hook finds its files', () => {
+  const t = setup();
+  try {
+    addHuskyHook(t);
+    const n = names(t);
+    const r = up(t, ['--no-push']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(status(t).state, 'committed');
+    const calls = pnpmLog(t);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].argv, ['install', '--prefer-offline']);
+    assert.equal(realpathSync(calls[0].cwd), realpathSync(n.wt));
+    assert.ok(!existsSync(path.join(t.repo, '.husky/_')), 'the main checkout is not installed');
+  } finally { done(t); }
+});
+
+test('a failed install step fails the run at step install with the tool output, and no commit is made', () => {
+  const t = setup();
+  try {
+    addHuskyHook(t);
+    touch(t, 'fail-install');
+    const n = names(t);
+    assert.equal(up(t, ['--no-push']).status, 1);
+    const s = status(t);
+    assert.equal(s.state, 'failed');
+    assert.equal(s.step, 'install');
+    assert.match(s.error, /pnpm install --prefer-offline` failed: ERR_PNPM_FAKE/);
+    noLeftover(t, n);
+    unlinkSync(path.join(t.dir, 'fail-install'));
+    const r = up(t, ['--no-push']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(status(t).state, 'committed');
+  } finally { done(t); }
+});
+
+test('an install tool that is not on PATH fails the run with the answer to fix', () => {
+  const t = setup({ edit: (p) => { p.git.base = 'main'; p.stack.installCmd = 'acme-missing-pm install'; return p; } });
+  try {
+    assert.equal(up(t, ['--no-push']).status, 1);
+    assert.equal(status(t).step, 'install');
+    assert.match(status(t).error, /acme-missing-pm is not on PATH \(stack\.installCmd/);
+  } finally { done(t); }
+});
+
+test('no installCmd or no manifest: the install step is skipped', () => {
+  for (const edit of [(p) => { p.git.base = 'main'; p.stack.installCmd = ''; return p; },
+    (p) => { p.git.base = 'main'; p.stack.manifest = 'acme.lock.json'; return p; }]) {
+    const t = setup({ edit });
+    try {
+      const r = up(t, ['--no-push']);
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(status(t).state, 'committed');
+      assert.equal(pnpmLog(t).length, 0);
+    } finally { done(t); }
+  }
 });
 
 test('a retry after a failure before the commit starts clean', () => {

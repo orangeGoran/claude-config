@@ -14,6 +14,7 @@
 //            /bootstrap-project --upgrade --unattended <run folder>/task.json
 //   apply    check decisions.json, write the new, replaced and merged files into the worktree
 //   verify   verify.mjs before and after the apply; a check that newly fails fails the run
+//   install  stack.installCmd in the worktree (when set and the manifest exists), so the hooks find their tools
 //   commit   one commit (the project's git hooks run)
 //   push, pr push the branch and open a draft PR (skipped with --no-push)
 //
@@ -320,7 +321,25 @@ export function prBody({ hash, slug, files, changed, decisions, alreadyFailing, 
   return L.join('\n');
 }
 
-/** Steps 4–10: render, Claude, apply, verify, commit. Gives the exit code. */
+const INSTALL_TIMEOUT_MS = 20 * 60 * 1000;
+
+/**
+ * Runs the install step of the answers (`stack.installCmd`) in the worktree, as auto-pipeline.sh does,
+ * so that the project's git hooks find their tools (for example husky's `.husky/_/`).
+ * It does nothing when `installCmd` is empty or the worktree has no `stack.manifest` (default `package.json`).
+ * It throws when the tool is not on PATH or the install fails.
+ */
+export function installDeps(repo, wt, params) {
+  const argv = String(params?.stack?.installCmd ?? '').trim().split(/\s+/).filter(Boolean);
+  const manifest = String(params?.stack?.manifest || 'package.json');
+  if (!argv.length || !existsSync(path.join(wt, manifest))) return;
+  writeStatus(repo, { step: 'install' });
+  const r = run(argv[0], argv.slice(1), wt, { timeout: INSTALL_TIMEOUT_MS });
+  if (r.status === null && /ENOENT/.test(r.stderr)) throw new Error(`${argv[0]} is not on PATH (stack.installCmd in .claude/bootstrap.json)`);
+  if (r.status !== 0) throw new Error(`the install step \`${argv.join(' ')}\` failed: ${(r.stderr || r.stdout || 'timed out').trim().split('\n').slice(-5).join(' ')}`);
+}
+
+/** Steps 4–10: render, Claude, apply, verify, install, commit. Gives the exit code. */
 async function upgradeInWorktree(ctx, opt) {
   const { repo, wt, branch, hash, slug } = ctx;
   let committed = false, ok = false;
@@ -399,6 +418,8 @@ async function upgradeInWorktree(ctx, opt) {
       return 0;
     }
     writeFileSync(bodyFile(repo, hash), prBody({ hash, slug, files, changed, decisions, alreadyFailing, replaces: ctx.replaces }));
+    installDeps(repo, wt, ctx.params);
+    writeStatus(repo, { step: 'commit' });
     must('git', ['-C', wt, 'commit', '-m', `${PR_TITLE} (${hash})`], wt);
     committed = true;
     if (opt.noPush) {

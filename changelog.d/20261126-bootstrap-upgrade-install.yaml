@@ -1,0 +1,7 @@
+kind: fixed
+audience: internal
+scope: bootstrap-project
+summary: |
+  The unattended scaffolding upgrade ("bootstrap update ▶") no longer fails at the commit in a project with husky hooks. It now runs the project's install step in the new worktree before the commit, like the auto-pipeline does.
+internal: |
+  `upgrade-run.mjs` has a new step `install` between `verify` and `commit`: it runs `stack.installCmd` in the worktree when it is set and `stack.manifest` (default `package.json`) exists. A missing tool or a failed install fails the run at step `install`, with no commit and no worktree left.
