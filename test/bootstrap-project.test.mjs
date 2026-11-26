@@ -411,8 +411,14 @@ test('plan-lanes counts Claude and Codex rounds with old and new names', () => {
     const text = lanesWith(a, {}, [], false);
     assert.ok(out.recommendedBatch.some((p) => p.slug === 'ana-plan'), JSON.stringify(out.excluded));
     assert.match(text, /validation=3c\/3x\/4r/);
+    // an empty report (a Codex run that stopped early) and a report of blank lines count for no validator and no round
+    const bdir = path.join(b.repo, '.plans/.validations');
+    mkdirSync(bdir, { recursive: true });
+    writeFileSync(path.join(bdir, 'ana-plan-validation-claude-1.md'), '');
+    writeFileSync(path.join(bdir, 'ana-plan-validation-codex-3.md'), '');
+    writeFileSync(path.join(bdir, 'ana-plan-validation-claude-4.md'), '\n  \n');
     // one owner per name: -validation-codex-1 is ana-plan's new Codex report, -validation-codex-raw-1 is ana-plan-validation's old one
-    const two = JSON.parse(lanesWith(b, { 'ana-plan': 'Ana plan', 'ana-plan-validation': 'Ana validation' },
+    const two =JSON.parse(lanesWith(b, { 'ana-plan': 'Ana plan', 'ana-plan-validation': 'Ana validation' },
       // a report name that is also an Object.prototype key must not crash the script
       ['ana-plan-validation-codex-1.md', 'ana-plan-validation-codex-raw-1.md', 'constructor-validation-1.md']));
     const by = (slug) => two.plans.find((p) => p.slug === slug).validation;

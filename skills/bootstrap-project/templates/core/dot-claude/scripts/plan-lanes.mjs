@@ -311,12 +311,14 @@ for (const line of gitLines(['status', '--porcelain', '--', '.plans'])) {
 // Report forms: new `validation-claude`, `validation-codex`; old `validation`, `codex-raw`.
 // A name belongs to one plan only, so no list of plans is needed. Counts are distinct rounds.
 // Objects with no prototype: a file name such as `constructor-validation-1.md` must not hit Object.prototype.
+// An empty report (only blank lines, for example a Codex run that stopped early) does not count.
 const validationRounds = Object.create(null);
 if (existsSync(VALID_DIR)) {
   const seen = Object.create(null);
+  const hasText = (file) => { try { return readFileSync(file, 'utf8').trim() !== ''; } catch { return false; } };
   for (const f of readdirSync(VALID_DIR)) {
     const m = f.match(/^(.*?)-(validation-claude|validation-codex|validation|codex-raw)-(\d+)\.md$/);
-    if (!m) continue;
+    if (!m || !hasText(path.join(VALID_DIR, f))) continue;
     const who = m[2] === 'validation-claude' || m[2] === 'validation' ? 'claude' : 'codex';
     seen[m[1]] ??= { claude: new Set(), codex: new Set(), rounds: new Set() };
     seen[m[1]][who].add(m[3]);

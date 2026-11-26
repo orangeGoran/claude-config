@@ -477,18 +477,22 @@ test('the validated count is the number of rounds, with old and new report names
     // rounds with one report form each (6, 7, 8), and round 9 with only a decision log
     'demo-plan-validation-claude-6.md', 'demo-plan-validation-codex-7.md', 'demo-plan-validation-8.md', 'demo-plan-validation-round-9.md',
     'demo-plan-validation-codex-raw-5.md'];
+  const empties = ['demo-plan-validation-codex-10.md', 'demo-plan-validation-claude-11.md'];
   const secondPlan = path.join(plansDir, 'demo-plan-validation.md');
   const bySlug = async (slug) => (await state())[0].plans.find((p) => p.slug === slug);
   try {
     for (const f of reports.slice(0, -1)) writeFileSync(path.join(vdir, f), '# report\n');
-    assert.equal((await bySlug('demo-plan')).validations, 5, 'rounds 1, 2, 6, 7 and 8; logs, snapshot and external do not count');
+    // empty reports (a Codex run that stopped early, or only blank lines) do not count
+    writeFileSync(path.join(vdir, empties[0]), '');
+    writeFileSync(path.join(vdir, empties[1]), '\n  \n');
+    assert.equal((await bySlug('demo-plan')).validations, 5, 'rounds 1, 2, 6, 7 and 8; logs, snapshot, external and empty reports do not count');
     // one owner per name: -validation-codex-1 stays with demo-plan, -codex-raw-5 belongs to demo-plan-validation
     writeFileSync(secondPlan, '# Plan: Demo validation\n');
     writeFileSync(path.join(vdir, reports.at(-1)), '# report\n');
     assert.equal((await bySlug('demo-plan')).validations, 5);
     assert.equal((await bySlug('demo-plan-validation')).validations, 1);
   } finally {
-    for (const f of reports) rmSync(path.join(vdir, f), { force: true });
+    for (const f of [...reports, ...empties]) rmSync(path.join(vdir, f), { force: true });
     rmSync(secondPlan, { force: true });
   }
 });

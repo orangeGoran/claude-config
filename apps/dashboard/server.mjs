@@ -325,14 +325,16 @@ const ownBranch = (proj, slug) => {
 // Counts the rounds of a plan that have at least one validator report, with the new
 // (`validation-claude`, `validation-codex`) and old (`validation`, `codex-raw`) names.
 // A report name belongs to one plan only, so no list of plans is needed.
+// An empty report (only blank lines, for example a Codex run that stopped early) does not count.
 const VALIDATOR_REPORT = /^(?:validation-claude|validation-codex|validation|codex-raw)-(\d+)\.md$/;
+const hasText = (file) => { try { return readFileSync(file, 'utf8').trim() !== ''; } catch { return false; } };
 const validationRounds = (proj, slug) => {
   try {
     const rounds = new Set();
     for (const f of readdirSync(proj.validDir)) {
       if (!f.startsWith(slug + '-')) continue;
       const m = f.slice(slug.length + 1).match(VALIDATOR_REPORT);
-      if (m) rounds.add(m[1]);
+      if (m && !rounds.has(m[1]) && hasText(path.join(proj.validDir, f))) rounds.add(m[1]);
     }
     return rounds.size;
   } catch { return 0; }
