@@ -107,7 +107,7 @@ const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 // request must also name a local host (blocks DNS rebinding — a public name pointed
 // at 127.0.0.1) and must not come from another site (Origin / Sec-Fetch-Site).
 // Local hosts: loopback IPs, localhost, *.localhost, and any name /etc/hosts maps to
-// loopback (e.g. plans.test) — a web page cannot add one. /etc/hosts is re-read on a
+// loopback (e.g. shipyard.test) — a web page cannot add one. /etc/hosts is re-read on a
 // miss, at most every 5 s, so a domain added while the server runs still works.
 let hostsNames = new Set(), hostsReadAt = 0;
 const readHostsFile = () => {
@@ -137,7 +137,7 @@ const crossSiteReason = (req) => {
   const site = req.headers['sec-fetch-site'];
   if (site && site !== 'same-origin' && site !== 'none') return 'cross-site request';
   const origin = req.headers.origin;
-  // behind Caddy the Origin is https://plans.test and Host is plans.test — compare host[:port]
+  // behind Caddy the Origin is https://shipyard.test and Host is shipyard.test — compare host[:port]
   if (origin !== undefined && hostOf(origin) !== url.host) return 'cross-site request';
   return null;
 };
@@ -3837,16 +3837,10 @@ server.on('error', (e) => {
 server.listen(PORT, BIND, () => {
   chatReattach();
   startWatcher();
-  // prefer the /etc/hosts vanity domain when the user has added it
-  let host = 'plans.localhost';
-  try {
-    if (/^\s*127\.0\.0\.1\s+.*\bplans\.test\b/m.test(readFileSync('/etc/hosts', 'utf8')))
-      host = 'plans.test';
-  } catch {}
+  // the domain setup-macos.sh gave Caddy, else the local port
   const sfx = PORT === 80 ? '' : `:${PORT}`;
-  const url = `http://${host}${sfx}`;
   const n = allProjects().length;
-  console.log(`Plans dashboard → ${url}  (also http://127.0.0.1${sfx})`);
+  console.log(`Plans dashboard → ${dashUrl()}  (also http://127.0.0.1${sfx})`);
   console.log(`${n} project${n === 1 ? '' : 's'} from ${REG_FILE}`);
   if (!n) console.log(`No projects registered yet — create ${REG_FILE} (see header of this file).`);
   if (NO_SUMMARY) console.log('DASH_NO_SUMMARY=1 — plan summaries are off.');

@@ -2,11 +2,11 @@
 #
 # setup-macos.sh — run the plans dashboard at login, served at https://<domain>.
 #
-#   scripts/setup-macos.sh                      asks for the domain (default plans.test)
-#   scripts/setup-macos.sh --domain plans.test  no prompt
+#   scripts/setup-macos.sh                      asks for the domain (default shipyard.test)
+#   scripts/setup-macos.sh --domain shipyard.test  no prompt
 #
 # Options
-#   --domain <name>   hostname to serve the dashboard at (default: asks, plans.test)
+#   --domain <name>   hostname to serve the dashboard at (default: asks, shipyard.test)
 #   --port <n>        port the dashboard itself listens on (default: the port of the
 #                     installed service, else 4899; above 1023 — Caddy owns 80, 443)
 #
@@ -35,8 +35,8 @@ command -v brew >/dev/null || die "Homebrew is required: https://brew.sh"
 NODE="$(command -v node)" || die "node is required."
 
 if [ -z "$DOMAIN" ]; then
-  read -r -p "Domain for the dashboard [plans.test]: " DOMAIN
-  DOMAIN="${DOMAIN:-plans.test}"
+  read -r -p "Domain for the dashboard [shipyard.test]: " DOMAIN
+  DOMAIN="${DOMAIN:-shipyard.test}"
 fi
 DOMAIN="$(printf '%s' "$DOMAIN" | tr '[:upper:]' '[:lower:]')"
 [[ "$DOMAIN" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] \

@@ -15,8 +15,8 @@ A single-file, dependency-free Node server that lists the `*.md` plan files of e
 | --- | --- |
 | Try it without installing | `node apps/dashboard/server.mjs` → http://127.0.0.1:4899 |
 | Add a project | follow [Add a project to the dashboard](add-project.md) |
-| Run it at login on https://plans.test | `scripts/setup-macos.sh` — see [Install](#install-it-to-run-at-login-macos) |
-| **Apply my code changes to plans.test** | `npm run restart` in this repo — see [After editing](#after-editing-the-dashboard-code) |
+| Run it at login on https://shipyard.test | `scripts/setup-macos.sh` — see [Install](#install-it-to-run-at-login-macos) |
+| **Apply my code changes to shipyard.test** | `npm run restart` in this repo — see [After editing](#after-editing-the-dashboard-code) |
 | Read the logs | `~/.claude/pipeline-dashboard/server.log` |
 | Run the tests | `npm test` |
 | Uninstall | see [Uninstall](#uninstall) |
@@ -36,20 +36,22 @@ Requires Node 18+ (developed on 24).
 ## Install it to run at login (macOS)
 
 ```bash
-# Install the dashboard to run at login. It asks for a domain; press Enter to keep plans.test
+# Install the dashboard to run at login. It asks for a domain; press Enter to keep shipyard.test
 scripts/setup-macos.sh
 ```
 
 `scripts/setup.sh` runs this for you when you pick the dashboard part.
 
-Then open **https://plans.test**. The script installs [Caddy](https://caddyserver.com) if missing, a launchd agent that keeps the dashboard running on `127.0.0.1:4899`, and a Caddy site that serves it over HTTPS and drops requests from other machines. It adds the domain to `/etc/hosts` and trusts Caddy's certificate (both ask for your password). HTTPS is what lets the browser use the clipboard and notifications; if Firefox still warns, set `security.enterprise_roots.enabled` in `about:config`.
+Then open **https://shipyard.test**. The script installs [Caddy](https://caddyserver.com) if missing, a launchd agent that keeps the dashboard running on `127.0.0.1:4899`, and a Caddy site that serves it over HTTPS and drops requests from other machines. It adds the domain to `/etc/hosts` and trusts Caddy's certificate (both ask for your password). HTTPS is what lets the browser use the clipboard and notifications; if Firefox still warns, set `security.enterprise_roots.enabled` in `about:config`.
 
 Re-run it to change the domain or port, after switching Node versions with nvm (the agent stores Node's full path), or when the login service does not start after a `git pull` or a move of the repo (the agent stores the server's full path; `npm run restart` refuses and says so when that path does not exist). A re-run without `--port` keeps the port of the installed service; a re-run with unchanged settings leaves the running dashboard and Caddy alone. `npm run restart` waits for the port that the service uses.
+
+An install from before the default changed keeps its old domain (for example plans.test). To move to shipyard.test, run `scripts/setup-macos.sh --domain shipyard.test`, then `npm run build-app`. The new domain starts with empty browser storage: open tabs, 🔔 and the theme are set again once.
 
 ## After editing the dashboard code
 
 > [!IMPORTANT]
-> plans.test does **not** pick up edits by itself. The agent runs `apps/dashboard/server.mjs` straight from this repo but reads it, and the page files in `apps/dashboard/page/` (`page.html`, `app.css`, `app.js`), only at startup. After every change, restart it:
+> shipyard.test does **not** pick up edits by itself. The agent runs `apps/dashboard/server.mjs` straight from this repo but reads it, and the page files in `apps/dashboard/page/` (`page.html`, `app.css`, `app.js`), only at startup. After every change, restart it:
 >
 > ```bash
 > # Restart the dashboard so it loads your changes
@@ -178,7 +180,7 @@ When the open plan's PR is merged, a card on the right says so. **🧹 Clean up 
 
 The tabs are kept in this browser (`localStorage` key `dash-tabs`). A tab goes away when its plan is gone from a project that the dashboard still shows. The closed-tab list is kept only until the page reloads.
 
-The page gives the Mac app its hooks in `window.dashboard`: `switchSession(n)`, `nextSession(d)`, `closeSession()`, `reopenSession()` and `openSearch()`.
+The page gives the Mac app (Shipyard) its hooks in `window.dashboard`: `switchSession(n)`, `nextSession(d)`, `closeSession()`, `reopenSession()`, `openSearch()`, `focusChat()`, `toggleBoard()` and `openSettings()`.
 
 Known limits:
 
@@ -187,6 +189,46 @@ Known limits:
 - Back or Forward to a closed plan opens it as a tab again.
 - macOS can take Ctrl+1 … Ctrl+9 when "Switch to Desktop N" is on (System Settings → Keyboard → Keyboard Shortcuts → Mission Control).
 - On Windows and Linux the browser keeps Ctrl+1 … Ctrl+8, Ctrl+W and Ctrl+Shift+T for itself. There, use Ctrl+K and clicks.
+
+## Mac app
+
+Shipyard (`~/Applications/Shipyard.app`) is an optional Mac app: one window that shows the dashboard page, with the ⌘ keys that a browser keeps for itself. The code is in `apps/plans-mac/` (AppKit and WebKit, no Xcode project).
+
+Run `npm run build-app` to build and install it. It needs the Swift compiler of the Command Line Tools (`xcode-select --install`). `scripts/setup.sh` asks before it builds the app. To use a new build, quit Shipyard (⌘Q) and open it again.
+
+The app opens the domain of the installed dashboard (from `~/.claude/pipeline-dashboard/caddy-site.caddy`), else https://shipyard.test. `node apps/plans-mac/build.mjs --url https://<domain>` builds it for another https domain.
+
+| Key | What it does |
+|---|---|
+| ⌘1 … ⌘8 | Open tab 1 … 8 |
+| ⌘9 | Open the last tab |
+| ⇧⌘[ / ⇧⌘] | Open the previous / next tab |
+| ⌘W | Close the open tab |
+| ⇧⌘T | Open the last closed tab again |
+| ⌘K | Open the palette |
+| ⌘L | Open the chat of the open plan and put the cursor in its message box |
+| ⌘B | Open or close the board |
+| ⌘, | Open Settings (an open Settings form with unsaved edits stays as it is) |
+| ⌘+ (or ⌘=) / ⌘− | Make the page bigger / smaller (the app keeps the size after a quit) |
+| ⌘0 | Show the page at its normal size |
+| ⌘R | Reload the page |
+| ⇧⌘W | Hide the window |
+| ⌘Q | Quit the app |
+
+The page's header row is the window's title bar: the window buttons sit at its left end. Drag an empty part of the header to move the window, and double-click it to zoom the window (as set in System Settings → Desktop & Dock). The waiting page keeps the normal title bar.
+
+Closing the window hides it. The app keeps running in the background, and it never stops a run or a chat: they run under the dashboard service. Click the Dock icon to show the window again, at the same size and place. While the window is hidden, the menu keys do nothing; a question from the page (for example "Compact this chat?") shows the window. ⌘Q quits the app; runs and chats keep going then too.
+
+Links to other sites (GitHub, QA reports, `vscode:` links) open in the default browser or app. Links to the dashboard stay in the window. When the dashboard does not answer, the window shows "Waiting for the dashboard…" and loads the page again every 5 s.
+
+The app shows no notifications of its own. The page's 🔔 sound rings, and the server's notifications come as before.
+
+Known limits:
+
+- The app and a browser tab keep separate storage (tabs, settings, 🔔). With both open, the sound can ring twice.
+- While the Files changed diff editor has the focus, it can take ⌘K, ⌘L and ⌘B before the menu.
+- On macOS 13 a hidden window can slow the page's timers, as a background browser tab does, so the 🔔 sound can be late.
+- ⇧⌘W hides the window, as the red button does.
 
 ## Alerts
 

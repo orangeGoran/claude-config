@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Restart the plans dashboard's login service so https://plans.test serves the code on disk:
+// Restart the plans dashboard's login service so its domain (https://shipyard.test by default) serves the code on disk:
 //
 //   npm run restart            (or: node apps/dashboard/restart.mjs)
 //
@@ -28,6 +28,12 @@ export const plistScript = (xml) => {
 export const plistPort = (xml) => {
   const m = /<key>DASH_PORT<\/key>\s*<string>(\d+)<\/string>/.exec(String(xml));
   return m ? +m[1] : null;
+};
+
+/** Gives the https URL of the first site in a Caddy site file (the domain setup-macos.sh chose), or null. */
+export const caddySite = (text) => {
+  const m = /^([^\s{#]+)\s*\{/m.exec(String(text || ''));
+  return m ? 'https://' + m[1] : null;
 };
 
 // true when this file runs as a command; false when a test or the server imports plistScript()
@@ -64,7 +70,12 @@ if (IS_MAIN) {
   catch { console.error('Could not restart ' + SERVICE + '. Is it installed? See docs/plans-dashboard.md.'); process.exit(1); }
   await sleep(500);
   for (let i = 0; i < 30; i++) {
-    if (await up()) { console.log('Restarted. Reload https://plans.test (Cmd+Shift+R).'); process.exit(0); }
+    if (await up()) {
+      let site = '';
+      try { site = caddySite(readFileSync(path.join(os.homedir(), '.claude', 'pipeline-dashboard', 'caddy-site.caddy'), 'utf8')); } catch {}
+      console.log('Restarted. Reload ' + (site || 'http://127.0.0.1:' + PORT) + ' (Cmd+Shift+R).');
+      process.exit(0);
+    }
     await sleep(500);
   }
   console.error('The dashboard did not come back. The reason (usually a syntax error) is at the end of ' + LOG);

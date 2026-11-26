@@ -452,8 +452,17 @@ test('the page has the tab strip, the palette and the window.dashboard hooks', a
   // each hook calls its own function, and each goes through the gate that the keyboard path uses
   const body = hooks[1].replace(/\s+/g, ' ');
   for (const [name, target] of [['switchSession', 'tabHook(switchSession)'], ['nextSession', 'tabHook(nextSession)'],
-    ['closeSession', 'tabHook(() => closeSession())'], ['reopenSession', 'tabHook(reopenSession)'], ['openSearch', 'searchHook']])
+    ['closeSession', 'tabHook(() => closeSession())'], ['reopenSession', 'tabHook(reopenSession)'], ['openSearch', 'searchHook'],
+    ['focusChat', 'tabHook(focusChat)'], ['toggleBoard', 'tabHook(toggleBoard)'], ['openSettings', 'tabHook(() => openSettings())']])
     assert.ok(body.includes(name + ': ' + target), `${name}: ${target}`);
+  // the Mac app's ⌘L uses the one focusChat() of the page (a second declaration would replace it); ⌘B works as the Board button
+  assert.equal((page.match(/function focusChat\(/g) || []).length, 1, 'one focusChat()');
+  assert.match(page, /function focusChat\(\) \{\s*syncChat\(find\(selected\)\);\s*if \(byId\('cin'\)\) byId\('cin'\)\.focus\(\);\s*\}/);
+  assert.match(page, /function toggleBoard\(\) \{ byId\('boardBtn'\)\.click\(\); \}/);
+  // ⌘, (and the ⚙ button) on an open settings form with unsaved edits keeps the form; the dirty check is the one "＋ Add project" uses
+  assert.match(page, /async function openSettings\(\) \{\s*if \(byId\('logpane'\)\.classList\.contains\('open'\) && byId\('saveReg'\) && settingsDirty\(\)\) return;/);
+  assert.match(page, /const savedRows = JSON\.stringify\(rows\);\s*settingsDirty = \(\) => JSON\.stringify\(rows\) !== savedRows;/);
+  assert.match(page, /if \(settingsDirty\(\) && !confirm\('Leave settings without saving your changes\?'\)\) return;/);
   // the gates: tab hooks do nothing under an overlay or the open palette; the palette hook only under an overlay
   assert.match(page, /const tabHook = \(f\) => \(\.\.\.a\) => \{ if \(!keysOwned\(\) && !paletteOpen\(\)\) f\(\.\.\.a\); \};/);
   assert.match(page, /const searchHook = \(\) => \{ if \(!keysOwned\(\)\) openSearch\(\); \};/);
@@ -1048,7 +1057,7 @@ test('refuses requests from other websites and from unknown host names', async (
   // the dashboard's own page, under every local name it is served on
   assert.equal(await raw('GET', '/api/state', { Host: self, 'Sec-Fetch-Site': 'same-origin' }), 200);
   assert.equal(await raw('GET', '/api/state', { Host: `localhost:${port}` }), 200);
-  assert.equal(await raw('GET', '/', { Host: `plans.localhost:${port}`, 'Sec-Fetch-Site': 'none' }), 200);
+  assert.equal(await raw('GET', '/', { Host: `shipyard.localhost:${port}`, 'Sec-Fetch-Site': 'none' }), 200);
   assert.equal(await raw('POST', '/api/meta', { Host: self, Origin: `http://${self}`, 'Content-Type': 'application/json' },
     JSON.stringify({ project: 'demo', slug: 'demo-plan', status: 'todo', tags: [] })), 200);
 });

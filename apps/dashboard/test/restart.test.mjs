@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { plistPort, plistScript } from '../restart.mjs';
+import { caddySite, plistPort, plistScript } from '../restart.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'restart.mjs');
 const plist = (script) => '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n\t<key>Label</key>\n\t<string>com.plans-dashboard</string>\n'
@@ -40,4 +40,11 @@ test('npm run restart refuses, and restarts nothing, when the service starts a s
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('caddySite gives the domain that setup chose, so npm run restart names the right page to reload', () => {
+  assert.equal(caddySite('# a comment\ndash.example.test {\n\ttls internal\n}\n'), 'https://dash.example.test');
+  assert.equal(caddySite('shipyard.test{\n}'), 'https://shipyard.test');
+  assert.equal(caddySite(''), null);
+  assert.equal(caddySite(undefined), null);
 });

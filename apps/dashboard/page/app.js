@@ -126,7 +126,7 @@ const selectionIn = (el) => {
 const selectionLive = () =>
   ['detail', 'side', 'logbody', 'runstrip', 'board'].some((id) => selectionIn(byId(id)));
 // navigator.clipboard exists only in a secure context. 127.0.0.1 and *.localhost
-// qualify; a vanity domain like http://plans.test does not — and that is the URL
+// qualify; a vanity domain like http://shipyard.test does not — and that is the URL
 // this server prefers when /etc/hosts has it. Fall back to the legacy path there.
 // the text a chat chip stands for: the selected lines that went (or go) with a message
 document.addEventListener('click', (e) => {
@@ -3387,7 +3387,11 @@ function bootstrapUpgradeChip(project, sp) {
       ' — click to start again">upgrade failed</span>';
   return '<span class="chip warn x" data-bsupgrade="' + escA(project) + '" title="upgrade in a worktree and open a draft PR">bootstrap update ▶</span>';
 }
+// true while the settings form shows edits that are not saved yet
+let settingsDirty = () => false;
+/** Opens the settings form. When the form is already open with unsaved edits, it keeps the form and does not load it again. */
 async function openSettings() {
+  if (byId('logpane').classList.contains('open') && byId('saveReg') && settingsDirty()) return;
   logKey = null;
   setBack(null);
   byId('logtitle').textContent = '⚙ settings — projects';
@@ -3397,6 +3401,7 @@ async function openSettings() {
   // _orig remembers the saved name so "Edit launchers" works even mid-rename
   const rows = reg.map((e) => ({ ...e, _orig: e.name }));
   const savedRows = JSON.stringify(rows);
+  settingsDirty = () => JSON.stringify(rows) !== savedRows;
   const render = () => {
     let h = '<div class="setup">';
     h += '<p class="hint">Stored in <code>~/.claude/pipeline-projects.json</code> · paths may start with ~ · ' +
@@ -3461,7 +3466,7 @@ async function openSettings() {
       }));
     // the same window as the top-bar "＋ Add project"; unsaved edits here would be lost, so ask first
     byId('addProj').addEventListener('click', () => {
-      if (JSON.stringify(rows) !== savedRows && !confirm('Leave settings without saving your changes?')) return;
+      if (settingsDirty() && !confirm('Leave settings without saving your changes?')) return;
       closeLog(); openGuide(1);
     });
     byId('addManual').addEventListener('click', () => {
@@ -4714,12 +4719,15 @@ document.addEventListener('keydown', (e) => {
   if (ctrlOnly && e.code === 'KeyW') { e.preventDefault(); return closeSession(); }
   if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && e.code === 'KeyT') { e.preventDefault(); return reopenSession(); }
 }, true);
-// the hooks the Mac app calls from its menu shortcuts. They obey the same gates as the keys:
+/** Opens the board, or closes it when it is open. */
+function toggleBoard() { byId('boardBtn').click(); }
+// the hooks the Mac app (apps/plans-mac) calls from its menu shortcuts. They obey the same gates as the keys:
 // nothing while an overlay owns the keys, and no tab hook while the palette is open
 const tabHook = (f) => (...a) => { if (!keysOwned() && !paletteOpen()) f(...a); };
 const searchHook = () => { if (!keysOwned()) openSearch(); };
 window.dashboard = { switchSession: tabHook(switchSession), nextSession: tabHook(nextSession),
-  closeSession: tabHook(() => closeSession()), reopenSession: tabHook(reopenSession), openSearch: searchHook };
+  closeSession: tabHook(() => closeSession()), reopenSession: tabHook(reopenSession), openSearch: searchHook,
+  focusChat: tabHook(focusChat), toggleBoard: tabHook(toggleBoard), openSettings: tabHook(() => openSettings()) };
 // --- Board: every plan of every project in one column, by where it stands. Every column fills in by itself:
 // from the run, the PR, archiving and the validation rounds. The sidebar is hidden (the board is the list), and
 // a card opens its plan in a panel beside the board (#detail), so the board stays in view. The filters, the
@@ -5301,7 +5309,7 @@ document.addEventListener('pointerdown', (e) => {
   saveNote();
   setTimeout(() => el.classList.remove('noteslide'), 260);
 }, true);
-// another plans.test tab changed the note
+// another shipyard.test tab changed the note
 window.addEventListener('storage', (e) => {
   if (e.key !== 'dash-note') return;
   try { note = { ...note, ...JSON.parse(e.newValue || '{}') }; } catch {}

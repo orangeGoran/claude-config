@@ -23,6 +23,7 @@ Instruction files are `AGENTS.md`. Each one has a one-line `CLAUDE.md` (`@AGENTS
 | `apps/dashboard/` | The dashboard server (server.mjs), the chat relay and the restart command |
 | `apps/dashboard/page/` | The dashboard page (page.html, app.js, app.css) |
 | `apps/scout/` | The scout: finds problems in the projects and writes plan proposals |
+| `apps/plans-mac/` | Shipyard, the Mac app of the dashboard (Swift shell around the page); rules in `apps/plans-mac/AGENTS.md` |
 | `test/` | node --test tests of the skills (each app has its own test/ folder) |
 | `scripts/` | Setup, service templates and helper scripts |
 | `skills/` | Global skills, symlinked into ~/.claude/skills/ |
@@ -92,6 +93,7 @@ The stack: Node.js 18+ ES-module scripts with no dependencies, Bash, and a plain
 | Run usage (one pipeline run) | `node .claude/scripts/run-usage.mjs <run .log>` |
 | Test run-usage.mjs | `node --test .claude/scripts/run-usage.selftest.mjs` |
 | Restart the dashboard service | `npm run restart` (check pgrep -fl chat-relay.mjs first) |
+| Build and install the Mac app (Shipyard) | `npm run build-app` |
 | Run a test dashboard by hand | `DASH_PORT=4911 DASH_NO_OPEN=1 DASH_WATCH_MS=0 node apps/dashboard/server.mjs` (stop it by its PID) |
 
 Skills take commands from this table and from `package.json`. A command that is "not available yet" does not exist: never invent one. Add it here (and to `.claude/settings.json` `permissions.allow`) in the same change that adds it.
