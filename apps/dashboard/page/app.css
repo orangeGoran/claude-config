@@ -8,14 +8,14 @@
           --btn:#444d56; --dot:#6a737d; --codebg:#1f2428; --codechip:#444d56; --thbg:#2f363d;
           --logfg:#d1d5da; --stfg:#e08a6a; --addbg:#28a74530; --delbg:#d73a4930;
           --gitM:#79b8ff; --gitA:#34d058; --gitD:#f97583; --merge:#b392f0; --mergefg:#1f2428;
-          color-scheme:dark; }
+          --chrome:#16191d; color-scheme:dark; }
   :root[data-theme="light"] { --bg:#f6f8fa; --panel:#ffffff; --card:#ffffff; --line:#e1e4e8;
           --fg:#24292e; --dim:#586069; --ok:#116329; --run:#0366d6; --warn:#9a6700; --bad:#cb2431;
           --accent:#b5532f; --accentfg:#fff; --link:#0366d6; --input:#fafbfc; --hover:#ebf0f4; --sel:#e2e5e9;
           --btn:#e1e4e8; --dot:#d1d5da; --codebg:#f6f8fa; --codechip:#e1e4e8; --thbg:#f6f8fa;
           --logfg:#444d56; --stfg:#b5532f; --addbg:#34d05822; --delbg:#d73a4922;
           --gitM:#005cc5; --gitA:#116329; --gitD:#cb2431; --merge:#5a32a3; --mergefg:#fff;
-          color-scheme:light; }
+          --chrome:#e4e8ec; color-scheme:light; }
   /* --fs scales text and reading widths up on wide screens, where fixed px text gets tiny */
   :root { --fs:1; }
   @media (min-width:1800px) { :root { --fs:1.08; } }
@@ -1020,3 +1020,20 @@
   .pali.on, .pali:hover { background:var(--sel); }
   .pali.none { cursor:default; color:var(--dim); } .pali.none:hover { background:none; }
   #stabs[hidden], #palette[hidden] { display:none; }
+  /* panel frame like VS Code: the header and the gaps have the darker --chrome color, and each panel (the plan list,
+     the page, the board, the chat) is a rounded card with a thin border. The dividers (.csplit) are the gaps */
+  body { background:var(--chrome); }
+  header.mainhd { border-bottom:0; }
+  .wrap { padding:0 6px 6px; }
+  section#detail, section#board { background:var(--bg); }
+  aside, section#detail, section#board, #chat { border:1px solid var(--line); border-radius:8px; }
+  aside { overflow:hidden; }
+  .csplit { width:6px; margin:0; }
+  .csplit:hover, .csplit:focus-visible, body.dragging .csplit.on { border-radius:3px; }
+  body.bpanel:not(.review) section#detail { margin-left:6px; }
+  /* Files changed: the bar (.rbar) and the Not pushed yet strip are the toolbar on --chrome, with no line edge to
+     edge; only the body (the file tree and the diff, .prfiles) is the rounded card */
+  body.review section#detail { background:none; border:0; border-radius:0; }
+  body.review .rbar { background:var(--chrome); border-bottom:0; }
+  body.review .lstrip { background:none; border-bottom:0; padding:2px 14px 8px; }
+  body.review #prview.pvfiles .prfiles { border:1px solid var(--line); border-radius:8px; background:var(--bg); overflow:hidden; }

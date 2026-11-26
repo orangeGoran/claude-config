@@ -124,7 +124,10 @@ test('the page header is the title bar: the window buttons sit in it, and its em
   // the app's own page script: it finds the header, makes room for the window buttons and drags only from empty parts
   assert.match(SWIFT, /addUserScript\(WKUserScript\(source: headerScript, injectionTime: \.atDocumentEnd, forMainFrameOnly: true\)\)/);
   assert.match(SWIFT, /const app = window\.webkit && window\.webkit\.messageHandlers && window\.webkit\.messageHandlers\.plans;/);
-  assert.match(SWIFT, /const empty = \(t\) => t === hd \|\| \(t\.matches && t\.matches\('\.hdl, #hdtabs, #stabs, \.hright'\)\);/);
+  assert.match(SWIFT, /const empty = \(t\) => t === hd \|\| \(t\.matches && t\.matches\('\.hdl, #hdtabs, #stabs, \.hright, \.rbar, \.rbar \.rleft, \.rbar \.rsw, \.rbar \.rright'\)\);/);
+  // Files changed hides the header: its bar (.rbar) gets the same room for the window buttons
+  assert.match(SWIFT, /'\.shipyard header\.mainhd, \.shipyard \.rbar \{ padding-left: var\(--macinset, 80px\); \}'/);
+  assert.match(SWIFT, /document\.addEventListener\('mousedown',/);
   assert.match(SWIFT, /if \(e\.button === 0 && e\.detail === 1 && empty\(e\.target\)\) app\.postMessage\('drag'\)/);
   assert.match(SWIFT, /if what == "header" \{ headerTitleBar\(true\); tellPageInset\(\); useNativeMenu\(\) \}/);
   // the page still has every part the script reads
@@ -132,6 +135,9 @@ test('the page header is the title bar: the window buttons sit in it, and its em
   const PAGE_CSS = readFileSync(path.join(HERE, '..', '..', 'dashboard', 'page', 'app.css'), 'utf8');
   for (const part of ['<header class="mainhd">', 'class="hdl"', 'id="hdtabs"', 'id="stabs"', 'class="hright"'])
     assert.ok(PAGE_HTML.includes(part), 'page.html has ' + part);
+  const PAGE_JS = readFileSync(path.join(HERE, '..', '..', 'dashboard', 'page', 'app.js'), 'utf8');
+  for (const part of ['<div class="rbar">', '<div class="rleft">', '<div class="rsw">', '<div class="rright">'])
+    assert.ok(PAGE_JS.includes(part), 'app.js has ' + part);
   for (const size of ['--asw:', '--hdl:']) assert.ok(PAGE_CSS.includes(size), 'app.css has ' + size);
   // full screen has no window buttons: the header gets its normal padding
   assert.match(SWIFT, /window\.styleMask\.contains\(\.fullScreen\) \? 14 :/);

@@ -51,8 +51,9 @@ let headerInset: CGFloat = 80
 /// The app's own script in each dashboard page (WKUserScript, after the page loads). It makes the page's header row
 /// the title bar: room on the left for the window buttons (--macinset), the open-plan tabs still at the sidebar's right
 /// edge, and a drag or double-click on an empty part of the header moves or zooms the window. It posts "header" when
-/// the page has the header, so a page without it (the waiting page) keeps the normal title bar.
-/// It reads only header.mainhd, its layout boxes and the --asw / --hdl sizes of apps/dashboard/page/.
+/// the page has the header, so a page without it (the waiting page) keeps the normal title bar. In Files changed the
+/// page hides the header, and the review bar (.rbar) gets the same room and the same drag and zoom.
+/// It reads only header.mainhd, .rbar, their layout boxes and the --asw / --hdl sizes of apps/dashboard/page/.
 let headerScript = """
 (() => {
   const hd = document.querySelector('header.mainhd');
@@ -60,12 +61,13 @@ let headerScript = """
   if (!hd || !app) return;
   document.documentElement.classList.add('shipyard');
   const st = document.createElement('style');
-  st.textContent = '.shipyard header.mainhd { padding-left: var(--macinset, 80px); }' +
+  st.textContent = '.shipyard header.mainhd, .shipyard .rbar { padding-left: var(--macinset, 80px); }' +
     ' .shipyard #hdtabs { min-width: calc(var(--asw) - var(--macinset, 80px) - var(--hdl) - 20px); }';
   document.head.appendChild(st);
-  const empty = (t) => t === hd || (t.matches && t.matches('.hdl, #hdtabs, #stabs, .hright'));
-  hd.addEventListener('mousedown', (e) => { if (e.button === 0 && e.detail === 1 && empty(e.target)) app.postMessage('drag'); });
-  hd.addEventListener('dblclick', (e) => { if (empty(e.target)) app.postMessage('zoom'); });
+  // Files changed hides the header: its bar (.rbar, drawn again on each open) is the title bar then
+  const empty = (t) => t === hd || (t.matches && t.matches('.hdl, #hdtabs, #stabs, .hright, .rbar, .rbar .rleft, .rbar .rsw, .rbar .rright'));
+  document.addEventListener('mousedown', (e) => { if (e.button === 0 && e.detail === 1 && empty(e.target)) app.postMessage('drag'); });
+  document.addEventListener('dblclick', (e) => { if (empty(e.target)) app.postMessage('zoom'); });
   app.postMessage('header');
 })();
 """
