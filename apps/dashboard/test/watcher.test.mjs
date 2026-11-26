@@ -84,7 +84,9 @@ const envFor = (h, p, q, extra = {}) => ({
   ...process.env, HOME: h, DASH_PORT: String(p), QA_REPORTS_PORT: String(q), QA_HOME: '',
   CLAUDE_TMP: path.join(tmp, 'claude-tmp'), DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1', SCOUT_NO_NOTIFY: '1',
   PATH: bin + ':' + process.env.PATH, FAKE_GH_DIR: ghDir, DASH_WATCH_MS: String(TICK),
-  DASH_NO_NOTIFY: '1', DASH_NOTIFIER: '', ...extra,
+  DASH_NO_NOTIFY: '1', DASH_NOTIFIER: '',
+  // each test reads the files it just wrote; the result cache has its own test
+  DASH_STATE_CACHE_MS: '0', ...extra,
 });
 // starts a server and waits until it answers; out() is what it printed
 const startServer = async (env, script = SCRIPT) => {

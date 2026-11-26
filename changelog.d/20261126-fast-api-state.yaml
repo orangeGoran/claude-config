@@ -1,0 +1,19 @@
+kind: performance
+audience: both
+scope: dashboard
+summary: |
+  The dashboard builds the plan list once for all open tabs, and keeps the result for 1 s.
+  It also reads each validations folder once, not once for each plan. The speed on real
+  data with 10 open tabs is not measured yet. After the pull, restart the dashboard
+  (check `pgrep -fl chat-relay.mjs` first).
+internal: |
+  `validationRounds()` reads a per-folder index that is read again only when the folder
+  mtime changes; `hasText()` caches its result on the file's mtime and size (the same
+  pattern as `sessionIdCache`). `GET /api/state` shares one build: requests less than
+  `DASH_STATE_CACHE_MS` (default 1000, `0` turns it off) after the start of a build get
+  its bytes, and each request that is not a GET clears it. The answer has a new header
+  `X-State-Build: <n>` (a build counter); the body is the same. New script
+  `apps/dashboard/state-load.mjs` (`load <port>` measures the times under load, `compare
+  <portA> <portB>` compares the answers of two dashboards).
+customer:
+  en: The plan list of the dashboard now builds once for all open tabs, not once for each tab. The speed with 10 open tabs is not measured yet.

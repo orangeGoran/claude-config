@@ -371,6 +371,7 @@ Only one dashboard per HOME runs the watcher (`~/.claude/pipeline-dashboard/watc
 | `QA_HOME` | where those reports live (default `~/.claude/browser-usability-test/projects`). Each project folder has `reports/` (the skill's report pages) and `artifacts/` (single-file pages written by `node scripts/artifact-copies.mjs --save <page.html>`, and Claude artifacts downloaded from claude.ai); `_other/artifacts/` holds pages of no project. Saving a page again keeps its link and moves the old page to `.versions/<page>/v<n>.html` in the same folder; a version menu on the page opens it (`?v=<n>`) |
 | `CLAUDE_TMP` | Claude Code's session temp folders (default `/private/tmp/claude-<uid>`); HTML in their scratchpads is listed as unpublished drafts |
 | `DASH_WATCH_MS` | how often the [event watcher](#waits-for-and-the-event-watcher) runs, in milliseconds (default `60000`); `0` turns it off |
+| `DASH_STATE_CACHE_MS` | how long, from the start of a build, all clients share that `/api/state` build and its answer, in milliseconds (default `1000`); `0` turns the sharing off. Each request that is not a GET (for example a POST) clears the answer |
 | `DASH_NO_NOTIFY=1` | the watcher sends no macOS notifications |
 | `DASH_NOTIFIER` | the notifier program the watcher calls with `-title`, `-message`, `-open` and `-group` (default `terminal-notifier` when it is installed, else `osascript`) |
 

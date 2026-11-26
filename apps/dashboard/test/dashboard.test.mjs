@@ -165,7 +165,9 @@ const start = async () => {
            QA_REPORTS_PORT: String(qaPort), QA_HOME: '', CLAUDE_TMP: path.join(tmp, 'claude-tmp'),
            PATH: path.join(ghDir, 'bin') + ':' + process.env.PATH, FAKE_GH_DIR: ghDir, SCOUT_NO_NOTIFY: '1',
            // the watcher has its own test (watcher.test.mjs): its gh calls would change the counts here
-           DASH_WATCH_MS: '0', DASH_NO_NOTIFY: '1' },
+           DASH_WATCH_MS: '0', DASH_NO_NOTIFY: '1',
+           // each test reads the files it just wrote; the result cache has its own test
+           DASH_STATE_CACHE_MS: '0' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let err = '';
@@ -246,6 +248,13 @@ test('lists the registered project and parses the plan title', async () => {
   assert.equal(s[0].plans.length, 1);
   assert.equal(s[0].plans[0].slug, 'demo-plan');
   assert.equal(s[0].plans[0].title, 'Demo the dashboard');
+  // DASH_STATE_CACHE_MS=0 keeps no answer: each request is its own build
+  const buildNo = async () => { const r = await get('/api/state'); await r.text(); return r.headers.get('x-state-build'); };
+  const n1 = await buildNo();
+  const n2 = await buildNo();
+  assert.match(n1, /^\d+$/);
+  assert.match(n2, /^\d+$/);
+  assert.notEqual(n1, n2);
 });
 
 test('a repo without bootstrap.json shows "needs bootstrap"; a broken one shows the render error', async () => {
@@ -500,9 +509,88 @@ test('the validated count is the number of rounds, with old and new report names
     writeFileSync(path.join(vdir, reports.at(-1)), '# report\n');
     assert.equal((await bySlug('demo-plan')).validations, 5);
     assert.equal((await bySlug('demo-plan-validation')).validations, 1);
+    // the text check keys on each file's mtime and size, not on the folder: the folder mtime does not change here
+    writeFileSync(path.join(vdir, 'demo-plan-validation-claude-6.md'), '');
+    assert.equal((await bySlug('demo-plan')).validations, 4, 'a report that loses its text stops counting');
+    writeFileSync(path.join(vdir, empties[0]), '# report\n');
+    assert.equal((await bySlug('demo-plan')).validations, 5, 'a report that gets text counts again');
+    // the folder index follows a deleted file
+    rmSync(path.join(vdir, 'demo-plan-validation-8.md'));
+    assert.equal((await bySlug('demo-plan')).validations, 4, 'a deleted report stops counting');
   } finally {
     for (const f of [...reports, ...empties]) rmSync(path.join(vdir, f), { force: true });
     rmSync(secondPlan, { force: true });
+  }
+});
+
+test('an archived plan counts its validation rounds from the same index', async () => {
+  const vdir = path.join(plansDir, '.validations'), doneDir = path.join(plansDir, 'done');
+  const files = [path.join(doneDir, 'arch-plan.md'),
+    path.join(vdir, 'arch-plan-validation-claude-1.md'), path.join(vdir, 'arch-plan-validation-codex-2.md')];
+  mkdirSync(vdir, { recursive: true });
+  mkdirSync(doneDir, { recursive: true });
+  try {
+    writeFileSync(files[0], '# Plan: Archived plan\n');
+    writeFileSync(files[1], '# report\n');
+    writeFileSync(files[2], '# report\n');
+    const row = (await state())[0].plans.find((p) => p.slug === 'arch-plan');
+    assert.equal(row.archived, true);
+    assert.equal(row.validations, 2);
+  } finally {
+    for (const f of files) rmSync(f, { force: true });
+  }
+});
+
+test('two changes with the same mtime both show: a cache keeps only an mtime that is 2 s old or more', async () => {
+  const vdir = path.join(plansDir, '.validations');
+  mkdirSync(vdir, { recursive: true });
+  const one = path.join(vdir, 'demo-plan-validation-claude-1.md'), two = path.join(vdir, 'demo-plan-validation-codex-2.md');
+  const count = async () => (await state())[0].plans.find((p) => p.slug === 'demo-plan').validations;
+  // a file system with a coarse clock gives the same mtime to two changes close in time: utimesSync makes that here
+  const tick = new Date();
+  try {
+    writeFileSync(one, '# report\n');
+    utimesSync(vdir, tick, tick);
+    assert.equal(await count(), 1);
+    writeFileSync(two, '# report\n');
+    utimesSync(vdir, tick, tick);
+    assert.equal(await count(), 2, 'a new report in the same folder mtime counts');
+    // the same size and the same mtime: only a new read of the file sees the change
+    writeFileSync(two, '#\n');
+    utimesSync(two, tick, tick);
+    assert.equal(await count(), 2);
+    writeFileSync(two, '\n\n');
+    utimesSync(two, tick, tick);
+    assert.equal(await count(), 1, 'a report that loses its text in the same mtime and size stops counting');
+  } finally {
+    for (const f of [one, two]) rmSync(f, { force: true });
+  }
+});
+
+test('a settled cache follows a change: a new size of a report, a new folder mtime for a new report', async () => {
+  const vdir = path.join(plansDir, '.validations');
+  mkdirSync(vdir, { recursive: true });
+  const one = path.join(vdir, 'demo-plan-validation-claude-1.md'), two = path.join(vdir, 'demo-plan-validation-codex-2.md');
+  const count = async () => (await state())[0].plans.find((p) => p.slug === 'demo-plan').validations;
+  // mtimes 10 s and 5 s in the past: the caches keep these entries (they are settled)
+  const old = new Date(Date.now() - 10000), later = new Date(Date.now() - 5000);
+  try {
+    writeFileSync(one, '# report\n');
+    utimesSync(one, old, old);
+    utimesSync(vdir, old, old);
+    assert.equal(await count(), 1);
+    assert.equal(await count(), 1, 'the second read comes from the caches');
+    // the same mtime, a new size: the text cache reads the file again
+    writeFileSync(one, '\n');
+    utimesSync(one, old, old);
+    assert.equal(await count(), 0, 'a report that loses its text stops counting, though its mtime is the same');
+    // a new report changes the folder mtime: the folder index reads the folder again
+    writeFileSync(two, '# report\n');
+    utimesSync(two, old, old);
+    utimesSync(vdir, later, later);
+    assert.equal(await count(), 1, 'a new report counts when the folder mtime changes');
+  } finally {
+    for (const f of [one, two]) rmSync(f, { force: true });
   }
 });
 
@@ -1695,6 +1783,149 @@ test('docs-media copies a dashboard that starts and serves the page, without the
     rmSync(box, { recursive: true, force: true });
     if (madeNodeModules) rmSync(nodeModules, { recursive: true, force: true });
   }
+});
+
+test('/api/state: one build for requests that come together, a result cache, and a POST clears it', async () => {
+  const box = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'plans-dash-cache-')));
+  let child;
+  try {
+    const cacheHome = path.join(box, 'home'), cacheRepo = path.join(box, 'repo'), cachePlans = path.join(cacheRepo, '.plans');
+    mkdirSync(path.join(cacheHome, '.claude'), { recursive: true });
+    mkdirSync(cachePlans, { recursive: true });
+    // a pipeline project: each build awaits pipelineLive(), a pgrep child process
+    mkdirSync(path.join(cacheRepo, '.claude', 'scripts'), { recursive: true });
+    writeFileSync(path.join(cacheRepo, '.claude', 'scripts', 'auto-pipeline.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    writeFileSync(path.join(cachePlans, 'cache-plan.md'), '# Plan: Cache plan\n');
+    writeFileSync(path.join(cacheHome, '.claude', 'pipeline-projects.json'), JSON.stringify({
+      projects: [{ name: 'cache', client: 'Test', root: cacheRepo, plansDir: cachePlans, launchers: [] }],
+    }));
+    // a slow pgrep: each build waits 0.5 s, so the parallel requests always come while the first build runs
+    mkdirSync(path.join(box, 'bin'));
+    writeFileSync(path.join(box, 'bin', 'pgrep'), '#!/bin/sh\nsleep 0.5\nexit 1\n', { mode: 0o755 });
+    mkdirSync(path.join(box, 'gh'));
+    const cachePort = await freePort(), cacheQaPort = await freePort();
+    child = spawn(process.execPath, [SCRIPT], {
+      env: { ...process.env, HOME: cacheHome, DASH_PORT: String(cachePort), QA_REPORTS_PORT: String(cacheQaPort),
+             DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1', CLAUDE_TMP: path.join(box, 'claude-tmp'), QA_HOME: '',
+             DASH_WATCH_MS: '0', DASH_NO_NOTIFY: '1', DASH_STATE_CACHE_MS: '60000',
+             PATH: path.join(box, 'bin') + ':' + path.join(ghDir, 'bin') + ':' + process.env.PATH,
+             FAKE_GH_DIR: path.join(box, 'gh') },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let err = '';
+    child.stderr.on('data', (c) => (err += c));
+    const at = (p, init) => fetch(`http://127.0.0.1:${cachePort}${p}`, init);
+    // the start probe is /api/usage, so no state build runs before the first request below
+    let up = false;
+    for (const deadline = Date.now() + 15000; Date.now() < deadline && child.exitCode == null; await sleep(100)) {
+      try { if ((await at('/api/usage')).ok) { up = true; break; } } catch {}
+    }
+    assert.ok(up, 'the cache server answers: ' + err);
+    const read = async () => {
+      const r = await at('/api/state');
+      assert.equal(r.status, 200);
+      return { n: r.headers.get('x-state-build'), body: await r.text() };
+    };
+    const five = await Promise.all([read(), read(), read(), read(), read()]);
+    for (const r of five) assert.match(r.n, /^\d+$/);
+    assert.equal(new Set(five.map((r) => r.n)).size, 1, 'requests that come together share one build');
+    assert.equal(new Set(five.map((r) => r.body)).size, 1, 'and get the same bytes');
+    const slugs = (r) => JSON.parse(r.body)[0].plans.map((p) => p.slug);
+
+    // the result cache: a new plan file does not show while the build is less than 60 s old
+    writeFileSync(path.join(cachePlans, 'cache-two.md'), '# Plan: Cache two\n');
+    const cached = await read();
+    assert.equal(cached.n, five[0].n);
+    assert.ok(!slugs(cached).includes('cache-two'));
+
+    // a POST clears the cache: the next GET is a new build with the new file and the new status
+    const meta = await at('/api/meta', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: 'cache', slug: 'cache-plan', status: 'in review' }) });
+    assert.deepEqual(await meta.json(), { ok: true });
+    const fresh = await read();
+    assert.equal(+fresh.n, +five[0].n + 1);
+    assert.ok(slugs(fresh).includes('cache-two'));
+    assert.equal(JSON.parse(fresh.body)[0].plans.find((p) => p.slug === 'cache-plan').status, 'in review');
+  } finally {
+    await stop(child);
+    rmSync(box, { recursive: true, force: true });
+  }
+});
+
+test('DASH_STATE_CACHE_MS that is not a number gives 1000 ms, and compare fails on other project names without naming them', async () => {
+  const box = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'plans-dash-env-')));
+  let child;
+  try {
+    const envHome = path.join(box, 'home');
+    mkdirSync(path.join(envHome, '.claude'), { recursive: true });
+    writeFileSync(path.join(envHome, '.claude', 'pipeline-projects.json'), JSON.stringify({ projects: [] }));
+    const envPort = await freePort(), envQaPort = await freePort();
+    child = spawn(process.execPath, [SCRIPT], {
+      env: { ...process.env, HOME: envHome, DASH_PORT: String(envPort), QA_REPORTS_PORT: String(envQaPort),
+             DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1', CLAUDE_TMP: path.join(box, 'claude-tmp'), QA_HOME: '',
+             DASH_WATCH_MS: '0', DASH_NO_NOTIFY: '1', DASH_STATE_CACHE_MS: 'abc' },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let err = '';
+    child.stderr.on('data', (c) => (err += c));
+    const at = (p) => fetch(`http://127.0.0.1:${envPort}${p}`);
+    let up = false;
+    for (const deadline = Date.now() + 15000; Date.now() < deadline && child.exitCode == null; await sleep(100)) {
+      try { if ((await at('/api/usage')).ok) { up = true; break; } } catch {}
+    }
+    assert.ok(up, 'the env server answers: ' + err);
+    const r1 = await at('/api/state'); await r1.text();
+    const r2 = await at('/api/state'); await r2.text();
+    assert.equal(r1.headers.get('content-type'), 'application/json');
+    assert.equal(r1.headers.get('x-state-build'), r2.headers.get('x-state-build'), "'abc' is the 1000 ms default, not 0");
+
+    // compare: the main test server has the project "demo", this one has no project
+    let code = 0, out = '';
+    try {
+      out = execFileSync(process.execPath, [path.join(path.dirname(SCRIPT), 'state-load.mjs'), 'compare', String(port), String(envPort)],
+        { encoding: 'utf8', timeout: 60000, stdio: 'pipe' });
+    } catch (e) { code = e.status; out = String(e.stdout || '') + String(e.stderr || ''); }
+    assert.equal(code, 1, out);
+    assert.match(out, /FAIL: project names differ/);
+    assert.doesNotMatch(out, /\bdemo\b/, 'the output does not name the project');
+  } finally {
+    await stop(child);
+    rmSync(box, { recursive: true, force: true });
+  }
+});
+
+test('state-load.mjs compares two answers and checks the limits', async () => {
+  const script = path.join(path.dirname(SCRIPT), 'state-load.mjs');
+  // the exit code and the output; a time limit, so a hang cannot stop npm test
+  const run = (...args) => {
+    try {
+      return { code: 0, out: execFileSync(process.execPath, [script, ...args], { encoding: 'utf8', timeout: 60000, stdio: 'pipe' }) };
+    } catch (e) {
+      return { code: e.status, out: String(e.stdout || '') + String(e.stderr || '') };
+    }
+  };
+  const p = String(port);
+  const cmp = run('compare', p, p);
+  assert.equal(cmp.code, 0, cmp.out);
+  // no slug, no project name and no path of the fixture in the output
+  assert.doesNotMatch(cmp.out, /demo-plan/);
+  assert.doesNotMatch(cmp.out, /\bdemo\b/);
+  assert.ok(!cmp.out.includes(tmp), 'the output has no temp folder path');
+
+  const ok = run('load', p, '2', '3', '--max-state-ms=60000', '--max-usage-ms=60000');
+  assert.equal(ok.code, 0, ok.out);
+  assert.match(ok.out, /\/api\/state: count [1-9]\d*/);
+  assert.match(ok.out, /\/api\/usage: count [1-9]\d*/);
+
+  const slow = run('load', p, '1', '1', '--max-state-ms=0', '--max-usage-ms=60000');
+  assert.equal(slow.code, 1, slow.out);
+  assert.match(slow.out, /FAIL: \/api\/state max \d+ ms is at or over the limit 0 ms/);
+
+  assert.equal(run('load', p, '0', '3').code, 2, 'clients must be 1 or more');
+  assert.equal(run('load', p, '1', '1', '--max-state-ms').code, 2, 'a limit flag with no value is not the default');
+  assert.equal(run('load').code, 2, 'a port is necessary');
+  const noServer = run('load', String(await freePort()), '1', '1');
+  assert.equal(noServer.code, 1, 'a failed request is not a fast answer: ' + noServer.out);
 });
 
 // ---------- the unattended bootstrap upgrade (skills/bootstrap-project/scripts/upgrade-run.mjs) ----------
