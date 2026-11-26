@@ -2045,6 +2045,33 @@ test('the page: the sticky note stays inside the window, and the page has its me
   assert.deepEqual(noteClamp(1400, 880, 240, 180, 1440, 900), { x: 1200, y: 720 }, 'past the right and bottom edges');
   assert.deepEqual(noteClamp(-30, -10, 240, 180, 1440, 900), { x: 0, y: 0 }, 'past the left and top edges');
   assert.deepEqual(noteClamp(10, 10, 240, 180, 200, 100), { x: 0, y: 0 }, 'a window smaller than the note keeps its top bar visible');
+  // the resize grip: a minimum size, and never past the window edge
+  const ns = src.match(/^function noteSize\([\s\S]*?\n\}$/m);
+  assert.ok(ns, 'app.js has noteSize');
+  const noteSize = new Function(ns[0] + '\nreturn noteSize;')();
+  assert.deepEqual(noteSize(320, 260, 100, 50, 1440, 900), { w: 320, h: 260 }, 'inside: the new size');
+  assert.deepEqual(noteSize(40, 20, 100, 50, 1440, 900), { w: 160, h: 110 }, 'too small: the minimum size');
+  assert.deepEqual(noteSize(900, 900, 1000, 500, 1440, 900), { w: 440, h: 400 }, 'too big: it stops at the right and bottom edges');
+  assert.match(src, /byId\('notegrip'\)\.addEventListener\('pointerdown'/, 'the grip resizes the note');
+  // the alert lock: a request that the browser always rejects must not loop (it froze the Mac app's page)
+  const cl = src.match(/^function claimAlertLead\([\s\S]*?\n\}$/m);
+  assert.ok(cl, 'app.js has claimAlertLead');
+  const lockRun = (err) => new Function('navigator', 'setTimeout', 'let alertLead = false, alertLeadWait = null;\n' + cl[0] +
+    '\nreturn { claim: claimAlertLead, lead: () => alertLead };');
+  let calls = 0, timers = [];
+  const rejecting = (name) => ({ locks: { request: () => { calls++; return Promise.reject(Object.assign(new Error('no'), { name })); } } });
+  const broken = lockRun()(rejecting('InvalidStateError'), (f) => timers.push(f));
+  broken.claim(false);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(calls, 1, 'a broken lock is asked once, not in a loop');
+  assert.equal(broken.lead(), true, 'with broken locks the tab rings itself');
+  calls = 0; timers = [];
+  const stolen = lockRun()(rejecting('AbortError'), (f) => timers.push(f));
+  stolen.claim(false);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(calls, 1, 'a stolen lock does not ask again in the same microtask');
+  assert.equal(timers.length, 1, 'a stolen lock waits in line again on a timer');
+  assert.equal(stolen.lead(), false, 'another tab has the lock');
   // the note runs away from the clicked part of the page
   const d = src.match(/^function noteDodge\([\s\S]*?\n\}$/m);
   assert.ok(d, 'app.js has noteDodge');

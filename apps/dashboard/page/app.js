@@ -4101,6 +4101,9 @@ function chime() {
 }
 // With several tabs open, one tab rings: the tab with the plan's chat open, else the tab used last.
 // The last used tab holds this lock; the other tabs wait in line, so closing it passes the lock on.
+// Only a steal by another tab (AbortError) puts this tab back in line. Any other error means the locks do not work here
+// (WebKit can reject every request after a reload): this tab then rings itself, as in a browser without locks,
+// and it never asks again in a loop (a loop of rejected requests froze the Mac app's page).
 let alertLead = false, alertLeadWait = null;
 function claimAlertLead(steal) {
   if (!navigator.locks || alertLead) return;
@@ -4108,10 +4111,11 @@ function claimAlertLead(steal) {
   const wait = alertLeadWait = steal ? null : new AbortController();
   navigator.locks.request('dash-alert-lead', steal ? { steal: true } : { signal: wait.signal },
     () => { alertLead = true; return new Promise(() => {}); })
-    .catch(() => {
+    .catch((e) => {
       if (wait && wait.signal.aborted) return;
-      alertLead = false;   // another tab took it
-      claimAlertLead(false);
+      if (!e || e.name !== 'AbortError') { alertLead = true; return; }
+      alertLead = false;   // another tab took it: wait in line again, not in the same microtask
+      setTimeout(() => claimAlertLead(false), 0);
     });
 }
 claimAlertLead(document.hasFocus());
@@ -5106,7 +5110,7 @@ setInterval(scoutPeek, 60000);
 // (localStorage dash-note): { text, color, x, y, w, h, open, min }. 📝 Note in the ⋯ menu shows or hides it;
 // A line that starts with ☐ or ☑ is a checkbox (see noteEdit); the mirror under the textarea strikes ☑ lines through.
 // × hides it and keeps the text; – minimizes it to a small yellow button at its top-left corner: drag the button to move it, click it to open the note again.
-// Drag it by its top bar; the browser corner resizes it. A click on the page under the note moves the note off that part (noteDodge).
+// Drag it by its top bar; drag the grip at its bottom-right corner to resize it (noteSize). A click on the page under the note moves the note off that part (noteDodge).
 /** Keeps a note (or the merged card) of size w × h fully inside a vw × vh window. Returns the new top-left corner. */
 function noteClamp(x, y, w, h, vw, vh) {
   return { x: Math.max(0, Math.min(x, vw - w)), y: Math.max(0, Math.min(y, vh - h)) };
@@ -5167,6 +5171,10 @@ function noteDistrict(x, y, w, h, ds, clicked) {
   const rel = (v, lo, span) => (span > 0 ? Math.min(1, Math.max(0, (v - lo) / span)) : 0.5);
   const fx = rel(x, home.l, home.r - home.l - w), fy = rel(y, home.t, home.b - home.t - h);
   return { x: Math.round(to.l + fx * Math.max(0, to.r - to.l - w)), y: Math.round(to.t + fy * Math.max(0, to.b - to.t - h)) };
+}
+/** Returns the new size of a note at (x, y) after a resize to w × h: at least 160 × 110 px, and never past the right or bottom edge of a vw × vh window. */
+function noteSize(w, h, x, y, vw, vh) {
+  return { w: Math.round(Math.max(160, Math.min(w, vw - x))), h: Math.round(Math.max(110, Math.min(h, vh - y))) };
 }
 // --- end sticky note math ---
 let note = { text: '', color: 'yellow', x: null, y: null, w: 240, h: 180, open: false, min: false, tilt: -1.5 };
@@ -5265,13 +5273,23 @@ byId('notebar').addEventListener('pointerdown', (e) => {
     noteRetilt(); placeNote(); saveNote();
   }, { once: true });
 });
-// the browser's resize corner: keep the new size
-new ResizeObserver(() => {
-  const el = byId('note');
-  if (el.hidden || !el.offsetWidth) return;
-  if (el.offsetWidth === note.w && el.offsetHeight === note.h) return;
-  note.w = el.offsetWidth; note.h = el.offsetHeight; saveNote();
-}).observe(byId('note'));
+// the resize grip at the bottom-right corner: drag it to change the size, the new size is kept
+byId('notegrip').addEventListener('pointerdown', (e) => {
+  e.preventDefault(); e.stopPropagation();
+  const el = byId('note'), sx = e.clientX, sy = e.clientY, sw = el.offsetWidth, sh = el.offsetHeight;
+  const move = (ev) => {
+    const z = noteSize(sw + ev.clientX - sx, sh + ev.clientY - sy, note.x, note.y, window.innerWidth, window.innerHeight);
+    note.w = z.w; note.h = z.h;
+    el.style.width = z.w + 'px'; el.style.height = z.h + 'px';
+  };
+  document.body.classList.add('noteresize');
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', () => {
+    document.removeEventListener('pointermove', move);
+    document.body.classList.remove('noteresize');
+    saveNote();
+  }, { once: true });
+});
 window.addEventListener('resize', () => { if (note.open) paintNote(); });
 // the note runs away from your focus: a click in the district the note is in (plan list, middle page, chat) sends the note
 // (or its round button) to another district (noteDistrict). A click outside the districts (the header) moves it off
