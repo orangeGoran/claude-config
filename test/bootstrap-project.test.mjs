@@ -489,6 +489,11 @@ test('the validation skills write the report names of their author', () => {
       assert.match(read(r, '.claude/skills/skill-auto-validate-plan/SKILL.md'), rule, r);
       // the agent still sees the old reports when it takes the next round number
       assert.match(read(r, '.claude/agents/plan-validator.md'), rule, r);
+      // a file of a longer plan name (ana-plan-validation) is not a round of ana-plan, and no writer takes a name that exists
+      for (const f of ['.claude/skills/skill-auto-validate-plan/SKILL.md', '.claude/agents/plan-validator.md']) {
+        assert.ok(read(r, f).includes('or 1 when there is none. A file of a longer plan name does not count'), `${r} ${f}`);
+        assert.ok(read(r, f).includes('Never write over a file that exists: when the name is taken, take the next free number.'), `${r} ${f}`);
+      }
     }
     // the skill gives the agent its round number in the briefing
     assert.match(auto, /^- \*\*Claude\*\*: dispatch the `plan-validator` agent .*, plus the round number `<n>`\./m);
