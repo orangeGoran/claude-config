@@ -112,14 +112,20 @@ func sendNotification(_ opts: [String: String]) -> Int32 {
     status = s.authorizationStatus
     wait.signal()
   }
-  if wait.wait(timeout: .now() + 5) == .timedOut { return 1 }
+  if wait.wait(timeout: .now() + 5) == .timedOut { return notifyFail("no answer from the notification center") }
   if status == .notDetermined {
     // the first notification asks the owner; this one goes to the next notifier, the later ones come from Shipyard
-    center.requestAuthorization(options: [.alert, .sound]) { _, _ in wait.signal() }
+    var why = ""
+    center.requestAuthorization(options: [.alert, .sound]) { _, err in
+      why = err.map { $0.localizedDescription } ?? ""
+      wait.signal()
+    }
     _ = wait.wait(timeout: .now() + 2)
-    return 1
+    return notifyFail("notifications not allowed yet, asked the owner" + (why.isEmpty ? "" : ": " + why))
   }
-  if status != .authorized && status != .provisional { return 1 }
+  if status != .authorized && status != .provisional {
+    return notifyFail("notifications are off in System Settings → Notifications → Shipyard (status \(status.rawValue))")
+  }
   let content = UNMutableNotificationContent()
   content.title = opts["title"] ?? "Shipyard"
   if let sub = opts["subtitle"], !sub.isEmpty { content.subtitle = sub }
@@ -127,12 +133,20 @@ func sendNotification(_ opts: [String: String]) -> Int32 {
   if let open = opts["open"] { content.userInfo = ["open": open] }
   let id = opts["group"].flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
   var sent = false
+  var why = ""
   center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { err in
     sent = err == nil
+    why = err.map { $0.localizedDescription } ?? ""
     wait.signal()
   }
-  if wait.wait(timeout: .now() + 5) == .timedOut { return 1 }
-  return sent ? 0 : 1
+  if wait.wait(timeout: .now() + 5) == .timedOut { return notifyFail("the notification center did not answer") }
+  return sent ? 0 : notifyFail("the system refused the notification: " + why)
+}
+
+/// Writes why Shipyard did not send the notification to stderr, and gives 1 (the caller uses its next notifier).
+func notifyFail(_ why: String) -> Int32 {
+  FileHandle.standardError.write(("Shipyard: " + why + "\n").data(using: .utf8)!)
+  return 1
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, UNUserNotificationCenterDelegate {

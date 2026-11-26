@@ -266,7 +266,8 @@ test('with -message the program is a notifier: it sends one notification from th
   assert.match(SWIFT, /exit\(sendNotification\(notifierArgs\(/);
   // the terminal-notifier flags that apps/scout/scout.mjs and apps/dashboard/server.mjs pass
   for (const flag of ['title', 'subtitle', 'message', 'open', 'group']) assert.ok(SWIFT.includes('opts["' + flag + '"]'), flag);
-  assert.match(SWIFT, /status != \.authorized && status != \.provisional \{ return 1 \}/, 'not allowed → exit 1, so the caller falls back');
+  assert.match(SWIFT, /status != \.authorized && status != \.provisional \{\s*return notifyFail\(/, 'not allowed → exit 1, so the caller falls back');
+  assert.match(SWIFT, /func notifyFail\(_ why: String\) -> Int32 \{\s*FileHandle\.standardError\.write\([^\n]*\n\s*return 1\s*\}/, 'a failure says why on stderr and gives 1');
   assert.match(SWIFT, /UNUserNotificationCenter\.current\(\)\.delegate = self/, 'the app gets the clicks');
   assert.match(SWIFT, /if !sameOrigin\(url\) \{ NSWorkspace\.shared\.open\(url\); return \}/, 'a click on another origin opens the browser');
 });
