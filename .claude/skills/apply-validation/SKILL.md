@@ -92,7 +92,7 @@ Every reconciliation writes a **new numbered round file**. Never overwrite an ea
 <the full copyable "## Validation response" block>
 ```
 
-When `/skill-auto-validate-plan` runs this step, it writes its own `-round-<n>.md` decision log instead.
+When `/skill-auto-validate-plan` runs this step, it writes its own `-validation-round-<n>.md` decision log instead.
 
 State the file path on its own line in your reply.
 

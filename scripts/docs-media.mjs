@@ -159,9 +159,9 @@ function busyWorld() {
     '.plans/auto-runs/plan-summaries.json': JSON.stringify({
       'checkout-idempotency-keys': 'Right now, if a shopper’s connection drops while they are paying and their phone quietly sends the order a second time, they get charged twice. This work gives every checkout attempt a unique ticket number so a repeat attempt returns the original order instead of creating a new one. It matters because duplicate orders cost us refunds, support time and customer trust.',
     }),
-    '.plans/.validations/checkout-idempotency-keys-validation-1.md': '',
-    '.plans/.validations/split-inventory-reads-validation-1.md': '',
-    '.plans/.validations/split-inventory-reads-codex-1.md': '',
+    '.plans/.validations/checkout-idempotency-keys-validation-claude-1.md': '',
+    '.plans/.validations/split-inventory-reads-validation-claude-1.md': '',
+    '.plans/.validations/split-inventory-reads-validation-codex-1.md': '',
     '.plans/done/archive-old-coupons.md': '# Plan: Archive old coupons\n',
   });
   put(path.join(w.home, '.claude/pipeline-dashboard/state/storefront-api/plan-meta.json'), JSON.stringify({

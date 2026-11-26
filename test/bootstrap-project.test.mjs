@@ -383,6 +383,127 @@ test('codexInVerify: verify runs the Codex code review, the sheet reuses it, and
   }
 });
 
+// write plans and validation reports into a rendered repo, then run its plan-lanes.mjs
+function lanesWith({ dir, repo }, plans, reports, json = true) {
+  const vdir = path.join(repo, '.plans/.validations');
+  mkdirSync(vdir, { recursive: true });
+  for (const [slug, title] of Object.entries(plans)) writeFileSync(path.join(repo, '.plans', slug + '.md'), `# Plan: ${title}\n\n## Steps\n\n1. Change \`src/${slug}.ts\`.\n`);
+  for (const f of reports) writeFileSync(path.join(vdir, f), '# report\n');
+  const r = spawnSync(process.execPath, ['.claude/scripts/plan-lanes.mjs', ...(json ? ['--json'] : [])],
+    { cwd: repo, encoding: 'utf8', env: { ...process.env, HOME: dir } });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout;
+}
+
+test('plan-lanes counts Claude and Codex rounds with old and new names', () => {
+  const a = bootstrapRepo();
+  const b = bootstrapRepo();
+  try {
+    const reports = ['ana-plan-validation-claude-1.md', 'ana-plan-validation-codex-1.md', 'ana-plan-validation-round-1.md',
+      'ana-plan-validation-2.md', 'ana-plan-codex-raw-2.md', 'ana-plan-validation-codex-2.md', 'ana-plan-round-2.md',
+      'ana-plan-external-1.md', 'ana-plan-validation-claude-4.md', 'ana-plan-codex-raw-5.md'];
+    const out = JSON.parse(lanesWith(a, { 'ana-plan': 'Ana plan', 'bea-plan': 'Bea plan' }, reports));
+    const ana = out.plans.find((p) => p.slug === 'ana-plan');
+    // -codex-raw-2 and -validation-codex-2 are one round; the rounds are 1, 2, 4 and 5
+    assert.deepEqual(ana.validation, { claude: 3, codex: 3, rounds: 4 });
+    // a plan with no reports has all three counts, at 0
+    assert.deepEqual(out.plans.find((p) => p.slug === 'bea-plan').validation, { claude: 0, codex: 0, rounds: 0 });
+    const text = lanesWith(a, {}, [], false);
+    assert.ok(out.recommendedBatch.some((p) => p.slug === 'ana-plan'), JSON.stringify(out.excluded));
+    assert.match(text, /validation=3c\/3x\/4r/);
+    // an empty report (a Codex run that stopped early) and a report of blank lines count for no validator and no round
+    const bdir = path.join(b.repo, '.plans/.validations');
+    mkdirSync(bdir, { recursive: true });
+    writeFileSync(path.join(bdir, 'ana-plan-validation-claude-1.md'), '');
+    writeFileSync(path.join(bdir, 'ana-plan-validation-codex-3.md'), '');
+    writeFileSync(path.join(bdir, 'ana-plan-validation-claude-4.md'), '\n  \n');
+    // one owner per name: -validation-codex-1 is ana-plan's new Codex report, -validation-codex-raw-1 is ana-plan-validation's old one
+    const two =JSON.parse(lanesWith(b, { 'ana-plan': 'Ana plan', 'ana-plan-validation': 'Ana validation' },
+      // a report name that is also an Object.prototype key must not crash the script
+      ['ana-plan-validation-codex-1.md', 'ana-plan-validation-codex-raw-1.md', 'constructor-validation-1.md']));
+    const by = (slug) => two.plans.find((p) => p.slug === slug).validation;
+    assert.deepEqual(by('ana-plan'), { claude: 0, codex: 1, rounds: 1 });
+    assert.deepEqual(by('ana-plan-validation'), { claude: 0, codex: 1, rounds: 1 });
+  } finally {
+    rmSync(a.dir, { recursive: true, force: true });
+    rmSync(b.dir, { recursive: true, force: true });
+  }
+});
+
+test('plan-lanes ranks a lane by validation rounds, not by report files', () => {
+  const c = bootstrapRepo();
+  try {
+    // both plans change the same three files (a hard overlap: more than 2), so they share one lane
+    // and the batch takes one of them.
+    // ana-plan: 3 rounds, Claude only (3 files). bea-plan: 2 rounds, both validators (4 files).
+    const vdir = path.join(c.repo, '.plans/.validations');
+    mkdirSync(vdir, { recursive: true });
+    for (const slug of ['ana-plan', 'bea-plan'])
+      writeFileSync(path.join(c.repo, '.plans', slug + '.md'),
+        `# Plan: ${slug}\n\n## Steps\n\n1. Change \`src/shared-a.ts\`, \`src/shared-b.ts\` and \`src/shared-c.ts\`.\n`);
+    for (const f of ['ana-plan-validation-claude-1.md', 'ana-plan-validation-claude-2.md', 'ana-plan-validation-claude-3.md',
+      'bea-plan-validation-claude-1.md', 'bea-plan-validation-codex-1.md', 'bea-plan-validation-claude-2.md', 'bea-plan-validation-codex-2.md'])
+      writeFileSync(path.join(vdir, f), '# report\n');
+    const r = spawnSync(process.execPath, ['.claude/scripts/plan-lanes.mjs', '--json'],
+      { cwd: c.repo, encoding: 'utf8', env: { ...process.env, HOME: c.dir } });
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    const picked = out.recommendedBatch.map((p) => p.slug).filter((s) => s === 'ana-plan' || s === 'bea-plan');
+    assert.deepEqual(picked, ['ana-plan'], 'more rounds wins, though bea-plan has more report files');
+  } finally {
+    rmSync(c.dir, { recursive: true, force: true });
+  }
+});
+
+test('the validation skills write the report names of their author', () => {
+  const read = (r, f) => readFileSync(path.join(r, f), 'utf8');
+  const on = bootstrapRepo();
+  const off = bootstrapRepo((p) => { p.modules.codex = false; return p; });
+  try {
+    const auto = read(on.repo, '.claude/skills/skill-auto-validate-plan/SKILL.md');
+    const outArg = auto.match(/-o "([^"]+)"/)?.[1];
+    assert.equal(outArg, '.plans/.validations/<plan-base>-validation-codex-<n>.md');
+    assert.match(auto, /^- \*\*Claude\*\*:.*<plan-base>-validation-claude-<n>\.md/m);
+    const logLines = (s) => s.split('\n').filter((l) => /^Write one decision log/.test(l));
+    assert.ok(logLines(auto).length > 0);
+    for (const l of logLines(auto)) {
+      assert.match(l, /<plan-base>-validation-round-<n>\.md/);
+      assert.doesNotMatch(l, /<plan-base>-round-<n>\.md/);
+    }
+    assert.doesNotMatch(outArg, /codex-raw/);
+    const stopRule = (s) => s.split('\n').find((l) => l.includes('**Continue.**'));
+    assert.match(stopRule(auto), /`k` < 4 → run round `k\+1`/);
+    assert.match(read(on.repo, '.claude/agents/plan-validator.md'), /-validation-claude-<n>\.md/);
+    assert.match(read(on.repo, '.claude/skills/skill-validate-plan/SKILL.md'), /-validation-claude-<n>\.md/);
+    assert.match(read(on.repo, '.claude/skills/apply-validation/SKILL.md'), /-validation-round-<n>\.md/);
+    assert.match(read(on.repo, '.claude/skills/plans-parallel/SKILL.md'), /<r>r/);
+    assert.match(read(on.repo, 'AGENTS.md'), /-validation-round-<n>\.md/);
+    const autoOff = read(off.repo, '.claude/skills/skill-auto-validate-plan/SKILL.md');
+    assert.match(autoOff, /-validation-claude-<n>\.md/);
+    assert.match(autoOff, /-validation-round-<n>\.md/);
+    assert.match(stopRule(autoOff), /`k` < 4 → run round `k\+1`/);
+    assert.match(read(off.repo, 'AGENTS.md'), /<plan-basename>-validation-claude-<n>\.md/);
+    // one round number rule in the skill and the agent, so a new run never overwrites an earlier round
+    const rule = /`<n>` is 1 plus the highest number at the end of any validator report or decision log of this plan in `\.plans\/\.validations\/` \(.*-codex-raw-<n>\.md`.*\), or 1 when there is none\./;
+    for (const r of [on.repo, off.repo]) {
+      assert.match(read(r, '.claude/skills/skill-auto-validate-plan/SKILL.md'), rule, r);
+      // the agent still sees the old reports when it takes the next round number
+      assert.match(read(r, '.claude/agents/plan-validator.md'), rule, r);
+      // a file of a longer plan name (ana-plan-validation) is not a round of ana-plan, and no writer takes a name that exists
+      for (const f of ['.claude/skills/skill-auto-validate-plan/SKILL.md', '.claude/agents/plan-validator.md']) {
+        assert.ok(read(r, f).includes('or 1 when there is none. A file of a longer plan name does not count'), `${r} ${f}`);
+        assert.ok(read(r, f).includes('Never write over a file that exists: when the name is taken, take the next free number.'), `${r} ${f}`);
+      }
+    }
+    // the skill gives the agent its round number in the briefing
+    assert.match(auto, /^- \*\*Claude\*\*: dispatch the `plan-validator` agent .*, plus the round number `<n>`\./m);
+    assert.match(autoOff, /^Dispatch the `plan-validator` agent .*, plus the round number `<n>`\./m);
+  } finally {
+    rmSync(on.dir, { recursive: true, force: true });
+    rmSync(off.dir, { recursive: true, force: true });
+  }
+});
+
 test('the install prewarm: pnpm gets `pnpm --version` and a hint, npm gets none, and a failed prewarm stops the launch with the hint', () => {
   const pnpm = bootstrapRepo();
   const npm = bootstrapRepo((p) => ({ ...p, stack: { ...p.stack, packageManager: 'npm', installCmd: 'npm ci' } }));
@@ -910,7 +1031,7 @@ test('plan validation runs max 4 rounds with an early stop, with and without Cod
     for (const r of [def.repo, noCodex.repo]) {
       const v = skillOf(r, 'skill-auto-validate-plan');
       assert.match(v, /^## Rounds \(max 4\)$/m);
-      for (const want of ['Never run a fifth round', 'RAISED BEFORE (round <k>, F<n>)', '### e. Final edits check', 'READY (round 4 edits self-checked)',
+      for (const want of ['Never run a fifth round', 'RAISED BEFORE (round <m>, F<id>)', '### e. Final edits check', 'READY (round 4 edits self-checked)',
         '**Accepted fix.**', '**Continue.**', 'Do not set a status', 'Raised before:', 'The first rule that matches wins', 'must not break what was correct',
         'step e does not end the loop', 'do not try a third time', 'one the owner deferred or answered with no plan change',
         // a blocking finding counts as an accepted fix only when its fix reached the plan
@@ -923,14 +1044,14 @@ test('plan validation runs max 4 rounds with an early stop, with and without Cod
       }
       // the stop rules live in step d itself, not only in the final report
       const stepD = between(v, '### d. Continue or stop', '### e. Final edits check');
-      for (const want of ['`n` = 4, round 4 had an accepted fix, and step e ran → `READY (round 4 edits self-checked)`',
-        '`n` < 4 → run round `n+1`. Do not set a status']) {
+      for (const want of ['`k` = 4, round 4 had an accepted fix, and step e ran → `READY (round 4 edits self-checked)`',
+        '`k` < 4 → run round `k+1`. Do not set a status']) {
         assert.ok(stepD.includes(want), `${r}: step d: ${want}`);
       }
       assert.doesNotMatch(v, /@@/);
       assert.doesNotMatch(v, /max 2 round/i);
       assert.doesNotMatch(v, /third round/);
-      assert.ok(!v.includes('`n` < 2'));
+      assert.ok(!v.includes('`k` < 2'));
       assert.ok(skillOf(r, 'skill-1-plan').includes('all rounds (max 4; most plans stop earlier)'));
       const agents = readF(r, 'AGENTS.md');
       assert.ok(agents.includes('(max 4 rounds; it stops after a round with no accepted fix and no open regression)'));

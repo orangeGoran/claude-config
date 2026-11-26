@@ -29,7 +29,7 @@ If the agent type is not found (it was created in this session and the session w
 ## Step 2: Present the verdict
 
 - Relay the verdict, the blocking issues, the concerns, the edge cases, the checklist and the copy-paste block **as the agent wrote them**. Do not soften findings.
-- Show the artifact path `.plans/.validations/<plan-basename>-validation-<n>.md` on its own line. If the agent's reply has no path, say that the agent did not complete, and run Step 1 again. Never write an inline review in its place.
+- Show the artifact path `.plans/.validations/<plan-basename>-validation-claude-<n>.md` on its own line. If the agent's reply has no path, say that the agent did not complete, and run Step 1 again. Never write an inline review in its place.
 
 ## Step 3: Next action
 

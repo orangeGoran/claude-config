@@ -49,7 +49,9 @@ Either validator can be unavailable: Codex (CLI missing, not logged in, network,
 
 ## Rounds (max 4)
 
-For round `n` = 1, then each next round only when step d says so:
+Count the rounds of this run with `k` = 1 … 4: round `k` = 1, then each next round only when step d says so.
+
+At the start of each round, list `.plans/.validations/` and take the round number `<n>`: `<n>` is 1 plus the highest number at the end of any validator report or decision log of this plan in `.plans/.validations/` (`<plan-base>-validation-claude-<n>.md`, `-validation-codex-<n>.md`, `-validation-round-<n>.md`, and the older `-validation-<n>.md`, `-codex-raw-<n>.md`, `-round-<n>.md`), or 1 when there is none. A file of a longer plan name does not count: when `.plans/` or `.plans/done/` has a plan whose base starts with `<plan-base>-` (for example `<plan-base>-validation`) and the file name starts with that longer base plus `-`, the file belongs to that plan. Never write over a file that exists: when the name is taken, take the next free number. Use this `<n>` for the snapshot, the reports and the decision log of the round. A new run never overwrites an earlier round. The snapshot `-pre-round-<n>.md` does not count. Inside one run the rounds take consecutive numbers, so the previous round of this run has the number `<n-1>`.
 
 ### a. Snapshot the plan, then check the previous round's edits
 
@@ -59,7 +61,7 @@ Copy the plan before the validators run. Nothing in this loop is committed, so t
 cp <plan-file> .plans/.validations/<plan-base>-pre-round-<n>.md
 ```
 
-Rounds 2+ only: read the edits of the previous round.
+From the second round of this run on (`k` ≥ 2): read the edits of the previous round of this run. The first round of a run (`k` = 1) has no diff.
 
 ```bash
 diff -u .plans/.validations/<plan-base>-pre-round-<n-1>.md .plans/.validations/<plan-base>-pre-round-<n>.md
@@ -81,17 +83,17 @@ Both validators only read the plan, so run them at the same time. Skip a validat
 - **Codex** (background Bash, 10-minute timeout). Do not write a new prompt. Use the repo's Codex skill as it is:
 
   ```bash
-  <codex> exec --sandbox read-only -o ".plans/.validations/<plan-base>-codex-raw-<n>.md" "Use the validate-plan skill from this repository (.codex/skills/validate-plan/SKILL.md) and follow it exactly. Validate plan: .plans/<plan-file>. Read the skill file first, then execute its full process. Your final message must be only the report + copy-paste block." </dev/null
+  <codex> exec --sandbox read-only -o ".plans/.validations/<plan-base>-validation-codex-<n>.md" "Use the validate-plan skill from this repository (.codex/skills/validate-plan/SKILL.md) and follow it exactly. Validate plan: .plans/<plan-file>. Read the skill file first, then execute its full process. Your final message must be only the report + copy-paste block." </dev/null
   ```
 
   Keep `</dev/null`. Without it, `codex exec` waits for input forever in a background shell. Do not pipe the output. The `-o` file is the raw Codex report. Never edit it.
 
-- **Claude**: dispatch the `plan-validator` agent with the same briefing as `/skill-validate-plan` Step 1. It writes `.plans/.validations/<plan-base>-validation-<n>.md` and states the path in its reply as proof that it ran. Never edit that report.
+- **Claude**: dispatch the `plan-validator` agent with the same briefing as `/skill-validate-plan` Step 1, plus the round number `<n>`. It writes `.plans/.validations/<plan-base>-validation-claude-<n>.md` and states the path in its reply as proof that it ran. Never edit that report.
 
 Wait for both. When one fails, apply "Validator availability" and continue with the report you have.
 @@END@@
 @@IFNOT MOD_CODEX@@
-Dispatch the `plan-validator` agent with the same briefing as `/skill-validate-plan` Step 1. It writes `.plans/.validations/<plan-base>-validation-<n>.md` and states the path in its reply as proof that it ran. Never edit that report.
+Dispatch the `plan-validator` agent with the same briefing as `/skill-validate-plan` Step 1, plus the round number `<n>`. It writes `.plans/.validations/<plan-base>-validation-claude-<n>.md` and states the path in its reply as proof that it ran. Never edit that report.
 
 The agent fails or gives no path → run it again once. A second failure → stop with status `BLOCKED` and the reason. Never write a substitute review yourself.
 @@END@@
@@ -99,20 +101,20 @@ The agent fails or gives no path → run it again once. A second failure → sto
 ### c. Reconcile the findings
 
 @@IF MOD_CODEX@@
-Read the raw reports you have (`-codex-raw-<n>.md` and `-validation-<n>.md`). Process each finding from each report as `/apply-validation` says: number it, check it against the repo, `AGENTS.md` and `@@PARENT_PLAN@@`, classify it VALID / PARTIALLY VALID / INVALID with evidence, and apply the valid fixes **to the plan file**. A Claude `APPROVE` with zero findings needs no work: only the Codex findings are left.
+Read the raw reports you have (`-validation-codex-<n>.md` and `-validation-claude-<n>.md`). Process each finding from each report as `/apply-validation` says: number it, check it against the repo, `AGENTS.md` and `@@PARENT_PLAN@@`, classify it VALID / PARTIALLY VALID / INVALID with evidence, and apply the valid fixes **to the plan file**. A Claude `APPROVE` with zero findings needs no work: only the Codex findings are left.
 
-**Raised before.** Rounds 2+ only: before you check a finding, compare it with the decision logs of the earlier rounds (`.plans/.validations/<plan-base>-round-<k>.md`). A finding that matches a finding an earlier round classified INVALID, or one the owner deferred or answered with no plan change, and that brings no new evidence (no new `file:line`, no new fact) is `RAISED BEFORE (round <k>, F<n>)`. Do not edit the plan for it. It is not an accepted finding. Write it in the findings table with that verdict. Every other finding gets the normal check: a new finding that needs a scope or design decision still goes to the owner (see **Owner decisions** below), and a finding that an earlier round accepted and that comes back means the earlier fix did not land, so check it again.
+**Raised before.** From the second round of this run on (`k` ≥ 2): before you check a finding, compare it with the decision logs of the earlier rounds (`.plans/.validations/<plan-base>-validation-round-<m>.md`, and the older `-round-<m>.md`). A finding that matches a finding an earlier round classified INVALID, or one the owner deferred or answered with no plan change, and that brings no new evidence (no new `file:line`, no new fact) is `RAISED BEFORE (round <m>, F<id>)`. Do not edit the plan for it. It is not an accepted finding. Write it in the findings table with that verdict. Every other finding gets the normal check: a new finding that needs a scope or design decision still goes to the owner (see **Owner decisions** below), and a finding that an earlier round accepted and that comes back means the earlier fix did not land, so check it again.
 
-Write one decision log with the Write tool at `.plans/.validations/<plan-base>-round-<n>.md`: the round header (each validator `ON` or `OFF (<reason>)`), the findings table with the validator that raised each finding, the regressions from step a, and the "## Validation response" block of `/apply-validation`. Record the findings that only one validator found: that difference is the reason to run two.
+Write one decision log with the Write tool at `.plans/.validations/<plan-base>-validation-round-<n>.md`: the round header (each validator `ON` or `OFF (<reason>)`), the findings table with the validator that raised each finding, the regressions from step a, and the "## Validation response" block of `/apply-validation`. Record the findings that only one validator found: that difference is the reason to run two.
 
-Never put one validator's findings into a file named after the other validator (for example Codex findings in `-validation-<n>.md`). The raw reports stay as they were written: without them, nobody can check that the decision log is faithful.
+Never put one validator's findings into a file named after the other validator (for example Codex findings in `-validation-claude-<n>.md`). The raw reports stay as they were written: without them, nobody can check that the decision log is faithful.
 @@END@@
 @@IFNOT MOD_CODEX@@
 Process each finding as `/apply-validation` says: number it, check it against the repo, `AGENTS.md` and `@@PARENT_PLAN@@`, classify it VALID / PARTIALLY VALID / INVALID with evidence, and apply the valid fixes **to the plan file**. A Claude `APPROVE` with zero findings needs no work.
 
-**Raised before.** Rounds 2+ only: before you check a finding, compare it with the decision logs of the earlier rounds (`.plans/.validations/<plan-base>-round-<k>.md`). A finding that matches a finding an earlier round classified INVALID, or one the owner deferred or answered with no plan change, and that brings no new evidence (no new `file:line`, no new fact) is `RAISED BEFORE (round <k>, F<n>)`. Do not edit the plan for it. It is not an accepted finding. Write it in the findings table with that verdict. Every other finding gets the normal check: a new finding that needs a scope or design decision still goes to the owner (see **Owner decisions** below), and a finding that an earlier round accepted and that comes back means the earlier fix did not land, so check it again.
+**Raised before.** From the second round of this run on (`k` ≥ 2): before you check a finding, compare it with the decision logs of the earlier rounds (`.plans/.validations/<plan-base>-validation-round-<m>.md`, and the older `-round-<m>.md`). A finding that matches a finding an earlier round classified INVALID, or one the owner deferred or answered with no plan change, and that brings no new evidence (no new `file:line`, no new fact) is `RAISED BEFORE (round <m>, F<id>)`. Do not edit the plan for it. It is not an accepted finding. Write it in the findings table with that verdict. Every other finding gets the normal check: a new finding that needs a scope or design decision still goes to the owner (see **Owner decisions** below), and a finding that an earlier round accepted and that comes back means the earlier fix did not land, so check it again.
 
-Write one decision log with the Write tool at `.plans/.validations/<plan-base>-round-<n>.md`: the round header, the findings table, the regressions from step a, and the "## Validation response" block of `/apply-validation`.
+Write one decision log with the Write tool at `.plans/.validations/<plan-base>-validation-round-<n>.md`: the round header, the findings table, the regressions from step a, and the "## Validation response" block of `/apply-validation`.
 @@END@@
 
 **Owner decisions:** never apply a finding that needs a scope or design decision, or that takes an open decision of `@@PARENT_PLAN@@`. Collect them, then ask the owner in chat with the "Question queue" and "Decision question format" from `/skill-1-plan`: show the numbered list of questions first, then one question per message with the heading `## Question N of M: <title>`. Never use AskUserQuestion for these questions. Accept a plain-text reply. List a decision under Open items if the owner defers it.
@@ -127,12 +129,12 @@ Do the parts in this order. Each part runs only when the part before it did not 
 @@IFNOT MOD_CODEX@@
 1. **Accepted fix.** This round has an accepted fix when any of these is true: a finding from the "Blocking issues" section of the report is VALID or PARTIALLY VALID and you applied its fix to the plan (a finding that went to the owner counts only through the owner answer below); step a of this round found a `REGRESSION`; an owner answer to a blocking finding changed the plan this round.
 @@END@@
-2. **Continue.** An accepted fix, or a `REGRESSION` that is still open, and `n` < 4 → run round `n+1`. Do not set a status.
+2. **Continue.** An accepted fix, or a `REGRESSION` that is still open, and `k` < 4 → run round `k+1`. Do not set a status.
 3. **Final edits check.** You did not continue and this round edited the plan → do step e.
 4. **Status.** The first rule that matches wins:
-   1. An open `REGRESSION` or an unresolved problem from step e: `n` < 4 → run round `n+1` (step e does not end the loop); `n` = 4 → `OPEN ITEMS`.
+   1. An open `REGRESSION` or an unresolved problem from step e: `k` < 4 → run round `k+1` (step e does not end the loop); `k` = 4 → `OPEN ITEMS`.
    2. The owner deferred a decision in any round (also when it came back as `RAISED BEFORE`) → `OPEN ITEMS`.
-   3. `n` = 4, round 4 had an accepted fix, and step e ran → `READY (round 4 edits self-checked)`.
+   3. `k` = 4, round 4 had an accepted fix, and step e ran → `READY (round 4 edits self-checked)`.
    4. Else → `READY`.
 @@IF MOD_CODEX@@
 - A validator was OFF in the last round → a READY status names it: `READY (<Codex|Claude> OFF)` or `READY (round 4 edits self-checked; <Codex|Claude> OFF)`. Never a plain `READY` then. Do not run one more round only to retry the OFF validator.
@@ -149,11 +151,11 @@ Run `diff -u .plans/.validations/<plan-base>-pre-round-<n>.md <plan-file>`. Read
 @@IF MOD_CODEX@@
 - **Status:** `READY`, `READY (<Codex|Claude> OFF)`, `READY (round 4 edits self-checked)`, `READY (round 4 edits self-checked; <Codex|Claude> OFF)`, `OPEN ITEMS` (each with its evidence and the validator that raised it), or `BLOCKED`.
 - **Validators:** per round, `Claude ON|OFF` and `Codex ON|OFF`, with the reason for each OFF. When one was OFF in the last round, say that one validator only checked the plan, and suggest a new run when it is back.
-- **Files**, one path per line, per round: the raw reports (`-codex-raw-<n>.md`, `-validation-<n>.md`), the decision log and the snapshot.
+- **Files**, one path per line, per round: the raw reports (`-validation-codex-<n>.md`, `-validation-claude-<n>.md`), the decision log (`-validation-round-<n>.md`) and the snapshot.
 @@END@@
 @@IFNOT MOD_CODEX@@
 - **Status:** `READY`, `READY (round 4 edits self-checked)`, `OPEN ITEMS` (each with its evidence), or `BLOCKED`.
-- **Files**, one path per line, per round: the raw report, the decision log and the snapshot.
+- **Files**, one path per line, per round: the raw report (`-validation-claude-<n>.md`), the decision log (`-validation-round-<n>.md`) and the snapshot.
 @@END@@
 - **What changed in the plan:** short bullets per round, or "no changes".
 - **Regressions:** the count per round, even when it is zero.
