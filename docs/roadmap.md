@@ -33,6 +33,8 @@ This is the roadmap: the goals and the architecture of the repo, and the list of
 
 - **Pipeline diet** — [.plans/20261124-225819-pipeline-diet-parent.md](../.plans/20261124-225819-pipeline-diet-parent.md): fewer tokens per unattended run in every bootstrapped project, and Codex findings that are fixed before the commit; a defect whose cause is in another repo becomes a ticket there by itself (owner decisions 2026-11-24). Three plans; plan 1 (`.plans/done/20261124-161043-pipeline-diet-templates.md`) is done, plan 2 is not written yet, plan 3 (`.plans/done/20261125-210049-review-loop-caps.md`: plan validation max 4 rounds with an early stop, Codex in verify by default) is done.
 
+- **Plans Insights** — [.plans/20261126-113131-plans-insights-parent.md](../.plans/20261126-113131-plans-insights-parent.md): an Insights page on the plans dashboard with the spend per week and per project, the cost per phase and the plan counts, read from a ledger of finished runs that the dashboard writes (owner decisions 2026-11-26). Three plans; plan 1 (`.plans/20261126-113132-insights-ledger.md`: the insights ledger) is planned, plans 2 and 3 are not written yet.
+
 ## Open decisions
 
 - None at the repo level. Each parent plan lists its own open decisions.
