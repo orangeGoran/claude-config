@@ -143,10 +143,12 @@ const pushes = (t) => read(path.join(t.dir, 'pushes.log')).split('\n').filter(Bo
 const hasBranch = (t, b) => t.g(t.repo, 'branch', '--list', b) !== '';
 const onOrigin = (t, b) => t.g(t.repo, 'ls-remote', '--heads', 'origin', 'refs/heads/' + b) !== '';
 const touch = (t, f, text = '') => writeFileSync(path.join(t.dir, f), text);
-// a failed run keeps its run folder in the temp dir for a look: remove it with the test folder
+// a failed run keeps its run folder in the temp dir for a look: remove it with the test folder.
+// maxRetries: a git process of the run can still write a file while the folder is removed (ENOTEMPTY).
+const RM = { recursive: true, force: true, maxRetries: 10, retryDelay: 100 };
 const done = (t) => {
-  try { const d = status(t).runDir; if (d) rmSync(d, { recursive: true, force: true }); } catch {}
-  rmSync(t.dir, { recursive: true, force: true });
+  try { const d = status(t).runDir; if (d) rmSync(d, RM); } catch {}
+  rmSync(t.dir, RM);
 };
 const noLeftover = (t, n) => {
   assert.ok(!existsSync(n.wt), 'no worktree folder is left');
