@@ -92,6 +92,8 @@ The stack: Node.js 18+ ES-module scripts with no dependencies, Bash, and a plain
 | Build | not available yet |
 | Run usage (one pipeline run) | `node .claude/scripts/run-usage.mjs <run .log>` |
 | Test run-usage.mjs | `node --test .claude/scripts/run-usage.selftest.mjs` |
+| Measure /api/state under load | `node apps/dashboard/state-load.mjs load <port>` |
+| Compare /api/state of two dashboards | `node apps/dashboard/state-load.mjs compare <portA> <portB>` |
 | Restart the dashboard service | `npm run restart` (check pgrep -fl chat-relay.mjs first) |
 | Build and install the Mac app (Shipyard) | `npm run build-app` |
 | Run a test dashboard by hand | `DASH_PORT=4911 DASH_NO_OPEN=1 DASH_WATCH_MS=0 node apps/dashboard/server.mjs` (stop it by its PID) |

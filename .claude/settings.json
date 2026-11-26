@@ -21,6 +21,7 @@
       "Bash(gh issue view*)",
       "Bash(gh run view*)",
       "Bash(node .claude/scripts/run-usage.mjs *)",
+      "Bash(node apps/dashboard/state-load.mjs *)",
       "Bash(npm test*)",
       "Bash(npm run build-app*)",
       "Bash(node --test*)",
