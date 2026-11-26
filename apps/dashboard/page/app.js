@@ -3387,7 +3387,11 @@ function bootstrapUpgradeChip(project, sp) {
       ' — click to start again">upgrade failed</span>';
   return '<span class="chip warn x" data-bsupgrade="' + escA(project) + '" title="upgrade in a worktree and open a draft PR">bootstrap update ▶</span>';
 }
+// true while the settings form shows edits that are not saved yet
+let settingsDirty = () => false;
+/** Opens the settings form. When the form is already open with unsaved edits, it keeps the form and does not load it again. */
 async function openSettings() {
+  if (byId('logpane').classList.contains('open') && byId('saveReg') && settingsDirty()) return;
   logKey = null;
   setBack(null);
   byId('logtitle').textContent = '⚙ settings — projects';
@@ -3397,6 +3401,7 @@ async function openSettings() {
   // _orig remembers the saved name so "Edit launchers" works even mid-rename
   const rows = reg.map((e) => ({ ...e, _orig: e.name }));
   const savedRows = JSON.stringify(rows);
+  settingsDirty = () => JSON.stringify(rows) !== savedRows;
   const render = () => {
     let h = '<div class="setup">';
     h += '<p class="hint">Stored in <code>~/.claude/pipeline-projects.json</code> · paths may start with ~ · ' +
@@ -3461,7 +3466,7 @@ async function openSettings() {
       }));
     // the same window as the top-bar "＋ Add project"; unsaved edits here would be lost, so ask first
     byId('addProj').addEventListener('click', () => {
-      if (JSON.stringify(rows) !== savedRows && !confirm('Leave settings without saving your changes?')) return;
+      if (settingsDirty() && !confirm('Leave settings without saving your changes?')) return;
       closeLog(); openGuide(1);
     });
     byId('addManual').addEventListener('click', () => {
@@ -4714,8 +4719,6 @@ document.addEventListener('keydown', (e) => {
   if (ctrlOnly && e.code === 'KeyW') { e.preventDefault(); return closeSession(); }
   if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && e.code === 'KeyT') { e.preventDefault(); return reopenSession(); }
 }, true);
-/** Opens the chat of the open plan and puts the cursor in its message box. Does nothing when the plan has no chat. */
-function focusChat() { if (hasChat(find(selected))) toggleChat(true); }
 /** Opens the board, or closes it when it is open. */
 function toggleBoard() { byId('boardBtn').click(); }
 // the hooks the Mac app (apps/plans-mac) calls from its menu shortcuts. They obey the same gates as the keys:

@@ -22,6 +22,7 @@
       "Bash(gh run view*)",
       "Bash(node .claude/scripts/run-usage.mjs *)",
       "Bash(npm test*)",
+      "Bash(npm run build-app*)",
       "Bash(node --test*)",
       "Bash(command -v codex)",
       "Bash(test -x ~/.local/bin/codex)",

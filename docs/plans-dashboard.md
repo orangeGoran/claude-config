@@ -206,7 +206,7 @@ The app opens the domain of the installed dashboard (from `~/.claude/pipeline-da
 | ⌘K | Open the palette |
 | ⌘L | Open the chat of the open plan and put the cursor in its message box |
 | ⌘B | Open or close the board |
-| ⌘, | Open Settings |
+| ⌘, | Open Settings (an open Settings form with unsaved edits stays as it is) |
 | ⌘R | Reload the page |
 | ⇧⌘W | Hide the window |
 | ⌘Q | Quit the app |
