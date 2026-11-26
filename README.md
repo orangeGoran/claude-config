@@ -51,7 +51,7 @@ To change your choices later, run `scripts/setup.sh` again. Every question it as
 ## What's inside
 
 - **Plans dashboard**: lists the plan files of your projects and runs them with Claude Code, several at once. [Guide](docs/plans-dashboard.md) · [Add a project](docs/add-project.md)
-- **Shipyard** (optional Mac app): the dashboard in its own window, with the ⌘ keys that a browser keeps for itself (⌘1–9, ⌘W, ⌘K, ⌘L, ⌘B, ⌘,). Closing the window only hides it, so runs and chats keep going. Setup asks to build it; `npm run build-app` builds it again. [Guide](docs/plans-dashboard.md#mac-app)
+- **Shipyard** (optional Mac app): the dashboard in its own window, with the ⌘ keys that a browser keeps for itself (⌘1–9, ⌘W, ⌘K, ⌘L, ⌘B, ⌘,, and ⌘+ / ⌘− for the page size). The page's header row is the window's title bar. Closing the window only hides it, so runs and chats keep going. Setup asks to build it; `npm run build-app` builds it again. [Guide](docs/plans-dashboard.md#mac-app)
 - **Scout**: looks for work every morning (red CI, flaky tests, stuck PRs, security alerts, production errors, slow endpoints) and proposes it on the dashboard. You confirm before anything is planned. [Guide](docs/scout.md)
 - **`CLAUDE.md`**: global rules, loaded in every project.
 - **Skills**: each one is optional. A project skill with the same name wins over the global one.
@@ -82,7 +82,7 @@ This repo uses its own plan pipeline. The rules for each change are in [AGENTS.m
 | Test (full) | `npm test` |
 | Test (one file) | `node --test <file>` |
 | Restart the dashboard service | `npm run restart` (check `pgrep -fl chat-relay.mjs` first) |
-| Build and install the Mac app | `npm run build-app` |
+| Build and install the Mac app (Shipyard) | `npm run build-app` |
 | Run usage (one pipeline run) | `node .claude/scripts/run-usage.mjs <run .log>` |
 | Run a test dashboard by hand | `DASH_PORT=4911 DASH_NO_OPEN=1 DASH_WATCH_MS=0 node apps/dashboard/server.mjs` (stop it by its PID) |
 

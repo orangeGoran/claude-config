@@ -178,7 +178,7 @@ When the open plan's PR is merged, a card on the right says so. **🧹 Clean up 
 
 The tabs are kept in this browser (`localStorage` key `dash-tabs`). A tab goes away when its plan is gone from a project that the dashboard still shows. The closed-tab list is kept only until the page reloads.
 
-The page gives the Mac app its hooks in `window.dashboard`: `switchSession(n)`, `nextSession(d)`, `closeSession()`, `reopenSession()`, `openSearch()`, `focusChat()`, `toggleBoard()` and `openSettings()`.
+The page gives the Mac app (Shipyard) its hooks in `window.dashboard`: `switchSession(n)`, `nextSession(d)`, `closeSession()`, `reopenSession()`, `openSearch()`, `focusChat()`, `toggleBoard()` and `openSettings()`.
 
 Known limits:
 
