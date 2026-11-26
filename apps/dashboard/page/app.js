@@ -2738,9 +2738,10 @@ function drawFilesView(p) {
     }
     return root;
   };
-  // with local changes the list has two parts: not pushed yet, then the rest of the PR
+  // with local changes the list has two parts: the files the PR does not have yet, then the PR's files.
+  // A PR file changed again here stays in its place in the PR part, with its PR+local tag.
   const groups = localShow === 'all' && files.some((f) => f.where) ? [
-    ['Not pushed yet', files.filter((f) => f.where !== 'pr'), 'local'], ['In PR #' + p.pr.number, files.filter((f) => f.where === 'pr'), 'pr'],
+    ['Not in the PR yet', files.filter((f) => f.where === 'local'), 'local'], ['In PR #' + p.pr.number, files.filter((f) => f.where !== 'local'), 'pr'],
   ].filter((g) => g[1].length) : [[null, files]];
   const fresh = (f) => f.where && f.where !== 'pr' && Date.now() - (L.fresh[f.path] || 0) < FRESH_MS;
   const LTAG = { local: '<span class="ltag local" title="Changed only in the worktree, not pushed">local</span>',
