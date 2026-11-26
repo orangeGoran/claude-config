@@ -64,12 +64,21 @@ const pageHooks = () => {
   return [...m[1].matchAll(/(?:^|,)\s*(\w+)/g)].map((x) => x[1]);
 };
 
-test('every hook the Swift menu calls exists in the page, and the menu calls all eight', () => {
+test('every hook the Swift menu calls exists in the page, and the menu calls all fourteen', () => {
   const called = [...new Set([...SWIFT.matchAll(/call\("(\w+)\(/g)].map((m) => m[1]))];
   const page = pageHooks();
   for (const name of called) assert.ok(page.includes(name), `the page has window.dashboard.${name}`);
-  assert.deepEqual(called.sort(), ['closeSession', 'focusChat', 'nextSession', 'openSearch', 'openSettings',
-    'reopenSession', 'switchSession', 'toggleBoard']);
+  assert.deepEqual(called.sort(), ['addProject', 'closeSession', 'focusChat', 'nextSession', 'openQaReports', 'openSearch',
+    'openSettings', 'reopenSession', 'switchSession', 'toggleAlerts', 'toggleBoard', 'toggleNote', 'toggleScout', 'toggleTheme']);
+});
+
+test('the ⋯ menu items are in the menu bar, and the app tells the page to hide its ⋯ button', () => {
+  for (const [title, action] of [['Scout', 'scout'], ['Sticky Note', 'note'], ['QA Reports', 'qaReports'],
+    ['Add Project…', 'addProject'], ['Light or Dark Theme', 'theme'], ['Alerts On or Off', 'alerts']])
+    assert.ok(SWIFT.includes(`NSMenuItem(title: "${title}", action: #selector(${action}(_:))`), title);
+  assert.ok(pageHooks().includes('useNativeMenu'), 'the page has window.dashboard.useNativeMenu');
+  assert.match(SWIFT, /window\.dashboard && window\.dashboard\.useNativeMenu\(\)/);
+  assert.match(SWIFT, /if what == "header" \{[^}]*useNativeMenu\(\) \}/, 'once the page header is the title bar');
 });
 
 test('each menu key calls its hook', () => {
@@ -117,7 +126,7 @@ test('the page header is the title bar: the window buttons sit in it, and its em
   assert.match(SWIFT, /const app = window\.webkit && window\.webkit\.messageHandlers && window\.webkit\.messageHandlers\.plans;/);
   assert.match(SWIFT, /const empty = \(t\) => t === hd \|\| \(t\.matches && t\.matches\('\.hdl, #hdtabs, #stabs, \.hright'\)\);/);
   assert.match(SWIFT, /if \(e\.button === 0 && e\.detail === 1 && empty\(e\.target\)\) app\.postMessage\('drag'\)/);
-  assert.match(SWIFT, /if what == "header" \{ headerTitleBar\(true\); tellPageInset\(\) \}/);
+  assert.match(SWIFT, /if what == "header" \{ headerTitleBar\(true\); tellPageInset\(\); useNativeMenu\(\) \}/);
   // the page still has every part the script reads
   const PAGE_HTML = readFileSync(path.join(HERE, '..', '..', 'dashboard', 'page', 'page.html'), 'utf8');
   const PAGE_CSS = readFileSync(path.join(HERE, '..', '..', 'dashboard', 'page', 'app.css'), 'utf8');
@@ -243,6 +252,17 @@ test('installApp: makes the folder, swaps an old app, keeps the old app on a fai
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test('with -message the program is a notifier: it sends one notification from the bundle and exits, before any window', () => {
+  const mode = SWIFT.indexOf('if CommandLine.arguments.contains("-message")');
+  assert.ok(mode > 0 && mode < SWIFT.indexOf('let app = NSApplication.shared'), 'the notifier mode exits before the app starts');
+  assert.match(SWIFT, /exit\(sendNotification\(notifierArgs\(/);
+  // the terminal-notifier flags that apps/scout/scout.mjs and apps/dashboard/server.mjs pass
+  for (const flag of ['title', 'subtitle', 'message', 'open', 'group']) assert.ok(SWIFT.includes('opts["' + flag + '"]'), flag);
+  assert.match(SWIFT, /status != \.authorized && status != \.provisional \{ return 1 \}/, 'not allowed → exit 1, so the caller falls back');
+  assert.match(SWIFT, /UNUserNotificationCenter\.current\(\)\.delegate = self/, 'the app gets the clicks');
+  assert.match(SWIFT, /if !sameOrigin\(url\) \{ NSWorkspace\.shared\.open\(url\); return \}/, 'a click on another origin opens the browser');
 });
 
 test('build.mjs compiles, signs and does not install with --no-install', { skip: !canCompile }, () => {

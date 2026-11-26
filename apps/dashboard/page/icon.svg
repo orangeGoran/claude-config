@@ -1,17 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Shipyard: a paper boat (the plan) leaving a pier at dusk. The square sits on the macOS icon grid (824 px with 100 px margin). -->
+  <!-- Shipyard: a paper boat (the plan) on the water at dusk. The square sits on the macOS icon grid (824 px with 100 px margin). -->
   <defs>
     <clipPath id="sq"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd9a8"/><stop offset=".55" stop-color="#f6a776"/><stop offset=".56" stop-color="#2f6f9a"/><stop offset="1" stop-color="#1d4a6e"/></linearGradient>
   </defs>
   <g clip-path="url(#sq)">
     <rect x="100" y="100" width="824" height="824" fill="url(#bg)"/>
-    <rect x="100" y="545" width="330" height="40" fill="#6b4a33"/>
-    <rect x="150" y="585" width="34" height="260" fill="#4e3423"/><rect x="330" y="585" width="34" height="260" fill="#4e3423"/>
-    <path d="M470 600 L870 600 L800 720 L540 720Z" fill="#ffffff"/>
-    <path d="M590 600 L670 420 L750 600Z" fill="#eef2f6"/>
-    <path d="M670 420 L750 600 L670 600Z" fill="#c9d4df"/>
-    <path d="M470 600 L530 540 L560 600Z M870 600 L810 540 L780 600Z" fill="#dfe6ee"/>
-    <path d="M470 770 q40 -18 80 0 t80 0 t80 0 t80 0 t80 0" fill="none" stroke="#7fb6d8" stroke-width="16" stroke-linecap="round"/>
+    <g transform="translate(512 735) scale(1.45) translate(-670 -720)">
+      <path d="M470 600 L870 600 L800 720 L540 720Z" fill="#ffffff"/>
+      <path d="M590 600 L670 420 L750 600Z" fill="#eef2f6"/>
+      <path d="M670 420 L750 600 L670 600Z" fill="#c9d4df"/>
+      <path d="M470 600 L530 540 L560 600Z M870 600 L810 540 L780 600Z" fill="#dfe6ee"/>
+    </g>
+    <path d="M272 815 q40 -18 80 0 t80 0 t80 0 t80 0 t80 0 t80 0" fill="none" stroke="#7fb6d8" stroke-width="16" stroke-linecap="round"/>
   </g>
 </svg>

@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import {
   normalizeRoute, redact, errorKey, mergeRoutes, slowRoutes, errorSpikes,
   ciRedFindings, flakyFindings, stuckPrFindings, securityFindings, decide, proposalText, learn, outcomeOf,
-  plistTemplate, renderPlist,
+  plistTemplate, renderPlist, NOTIFIERS, SHIPYARD_NOTIFIER, notifyFirst,
 } from '../scout.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scout.mjs');
@@ -352,4 +352,22 @@ test('a muted check still runs, but proposes nothing', async () => {
   const saved = JSON.parse(readFileSync(stateFile, 'utf8'));
   assert.ok(saved.learn.mutedChecks['ci-red']);
   assert.equal(saved.checkRuns['ci-red'].runs >= 1, true);
+});
+
+test('notifiers: Shipyard first (its icon), then terminal-notifier', () => {
+  assert.equal(NOTIFIERS[0], SHIPYARD_NOTIFIER);
+  assert.equal(SHIPYARD_NOTIFIER, path.join(os.homedir(), 'Applications', 'Shipyard.app', 'Contents', 'MacOS', 'Shipyard'));
+  assert.deepEqual(NOTIFIERS.slice(1), ['/opt/homebrew/bin/terminal-notifier', '/usr/local/bin/terminal-notifier']);
+});
+
+test('notifyFirst skips a missing notifier, falls back when one fails, and stops at the first that sends', async () => {
+  const calls = [];
+  const run = async (file, args) => { calls.push(file); if (file === '/fail') throw new Error('exit 1'); };
+  const exists = (f) => f !== '/missing';
+  const args = ['-title', 'Scout', '-message', 'hi'];
+  assert.equal(await notifyFirst(['/missing', '/fail', '/ok', '/never'], args, { exists, run }), true);
+  assert.deepEqual(calls, ['/fail', '/ok'], 'Shipyard not allowed (exit 1) → terminal-notifier sends it');
+  calls.length = 0;
+  assert.equal(await notifyFirst(['/missing', '/fail'], args, { exists, run }), false, 'none sent: the caller uses osascript');
+  assert.deepEqual(calls, ['/fail']);
 });

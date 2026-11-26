@@ -323,16 +323,33 @@ const dashUrl = () => {
   try { host = (readFileSync(path.join(CENTRAL, 'caddy-site.caddy'), 'utf8').match(/^([^\s{]+)\s*\{/m) || [])[1] || ''; } catch {}
   return host ? 'https://' + host : 'http://127.0.0.1:' + (process.env.DASH_PORT || 4899);
 };
-// A click opens `query` on the dashboard. That needs terminal-notifier (brew install
-// terminal-notifier): an osascript notification belongs to Script Editor, and a click opens that.
-export const NOTIFIERS = ['/opt/homebrew/bin/terminal-notifier', '/usr/local/bin/terminal-notifier'];
-const notify = (text, query = '?scout=1') => {
+// The notifier programs, in order. Shipyard (the Mac app; apps/plans-mac/build.mjs installs it in ~/Applications)
+// shows its own icon, and a click opens the page in its window. terminal-notifier (brew install terminal-notifier)
+// opens a click in the browser. With neither, osascript: its notification belongs to Script Editor, and a click opens that.
+export const SHIPYARD_NOTIFIER = path.join(os.homedir(), 'Applications', 'Shipyard.app', 'Contents', 'MacOS', 'Shipyard');
+export const NOTIFIERS = [SHIPYARD_NOTIFIER, '/opt/homebrew/bin/terminal-notifier', '/usr/local/bin/terminal-notifier'];
+
+const runFile = (file, args) => new Promise((ok, fail) => execFile(file, args, { timeout: 15000 }, (e) => (e ? fail(e) : ok())));
+
+/**
+ * Sends one notification with the first program in `list` that exists and succeeds, with the terminal-notifier
+ * flags in `args`. Shipyard exits 1 while the owner has not allowed its notifications; then the next program sends it.
+ * Gives true when a program sent it, false when none did.
+ */
+export const notifyFirst = async (list, args, { exists = existsSync, run = runFile } = {}) => {
+  for (const file of list) {
+    if (!exists(file)) continue;
+    try { await run(file, args); return true; } catch {}
+  }
+  return false;
+};
+
+// A click opens `query` on the dashboard.
+const notify = async (text, query = '?scout=1') => {
   if (process.platform !== 'darwin' || process.env.SCOUT_NO_NOTIFY) return;
-  const tn = NOTIFIERS.find((f) => existsSync(f));
-  try {
-    if (tn) execFileSync(tn, ['-title', 'Scout', '-message', text, '-open', dashUrl() + '/' + query, '-group', 'scout-' + query]);
-    else execFileSync('osascript', ['-e', `display notification ${JSON.stringify(text)} with title "Scout"`]);
-  } catch {}
+  const args = ['-title', 'Scout', '-message', text, '-open', dashUrl() + '/' + query, '-group', 'scout-' + query];
+  if (await notifyFirst(NOTIFIERS, args)) return;
+  try { execFileSync('osascript', ['-e', `display notification ${JSON.stringify(text)} with title "Scout"`]); } catch {}
 };
 
 // ---------- learning from your answers ----------
@@ -624,9 +641,9 @@ const main = async () => {
   }
   console.log(`done in ${secs(t0)}`);
   if (dryRun) return;
-  if (total) notify(`${total} new proposal(s): ${lines.join(', ')}. Click to open the Board.`, '?view=board&scout=1');
-  if (problems.length) notify(`Some checks failed for ${problems.join(', ')}. Click to see why.`);
+  if (total) await notify(`${total} new proposal(s): ${lines.join(', ')}. Click to open the Board.`, '?view=board&scout=1');
+  if (problems.length) await notify(`Some checks failed for ${problems.join(', ')}. Click to see why.`);
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href)
-  main().catch((e) => { console.error('scout: ' + e.message); notify('The scout failed: ' + e.message); process.exit(1); });
+  main().catch(async (e) => { console.error('scout: ' + e.message); await notify('The scout failed: ' + e.message); process.exit(1); });

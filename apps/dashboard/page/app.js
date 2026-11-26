@@ -4003,9 +4003,13 @@ const TOUR = [
       'A launched plan runs in the background; you can close the tab.' },
   { el: () => document.querySelector('.launchbar'), title: 'Run several at once',
     body: 'Tick plans in the list (or double-click them) and they queue down here. One press starts them all.' },
-  { el: () => byId('hdmenuBtn'), title: 'The ⋯ menu',
-    body: 'Board, Scout, QA reports, alerts and the theme are here. Add project brings back the walkthrough and the list of repos found on this machine. ' +
-      'Settings is where you rename projects, change folders and edit launchers.' },
+  { el: () => byId(nativeMenu ? 'home' : 'hdmenuBtn'), get title() { return nativeMenu ? 'The menu bar' : 'The ⋯ menu'; },
+    get body() {
+      return (nativeMenu ? 'Board, Scout, Sticky Note, QA Reports, alerts and the theme are in the View menu; Settings and Add Project are in the Shipyard menu. '
+        : 'Board, Scout, QA reports, alerts and the theme are here. ') +
+        'Add project brings back the walkthrough and the list of repos found on this machine. ' +
+        'Settings is where you rename projects, change folders and edit launchers.';
+    } },
 ];
 let tourStep = -1;
 function startTour() {
@@ -4731,9 +4735,18 @@ function toggleBoard() { byId('boardBtn').click(); }
 // nothing while an overlay owns the keys, and no tab hook while the palette is open
 const tabHook = (f) => (...a) => { if (!keysOwned() && !paletteOpen()) f(...a); };
 const searchHook = () => { if (!keysOwned()) openSearch(); };
+// Shipyard shows the ⋯ menu items in the macOS menu bar: useNativeMenu hides the ⋯ button, and each item has its hook
+// (openQaReports loads the other origin in the main frame: Shipyard opens that in the default browser, and a script
+// click on a target=_blank link is a pop-up that WebKit can block)
+let nativeMenu = false;
+function openQaReports() { location.href = byId('qaLink').href; }
+function useNativeMenu() { nativeMenu = true; document.documentElement.classList.add('nativemenu'); }
+const menuHook = (id) => tabHook(() => byId(id).click());
 window.dashboard = { switchSession: tabHook(switchSession), nextSession: tabHook(nextSession),
   closeSession: tabHook(() => closeSession()), reopenSession: tabHook(reopenSession), openSearch: searchHook,
-  focusChat: tabHook(focusChat), toggleBoard: tabHook(toggleBoard), openSettings: tabHook(() => openSettings()) };
+  focusChat: tabHook(focusChat), toggleBoard: tabHook(toggleBoard), openSettings: tabHook(() => openSettings()),
+  toggleScout: menuHook('scoutBtn'), toggleNote: menuHook('noteBtn'), openQaReports: tabHook(openQaReports),
+  addProject: menuHook('guidebtn'), toggleAlerts: menuHook('alertBtn'), toggleTheme: menuHook('themeBtn'), useNativeMenu };
 // --- Board: every plan of every project in one column, by where it stands. Every column fills in by itself:
 // from the run, the PR, archiving and the validation rounds. The sidebar is hidden (the board is the list), and
 // a card opens its plan in a panel beside the board (#detail), so the board stays in view. The filters, the
@@ -5059,7 +5072,7 @@ async function renderScout() {
       'Paste the access key of the read-only scout user (guide → Read-only AWS access). Never a root or admin profile.');
   }
   if (s.mac) step(s.installed, 'Daily job at 07:00 (launchd)', 'node ' + s.script + ' --install');
-  if (s.mac) step(s.notifier, 'Notifications open this page when clicked (optional)', 'brew install terminal-notifier', 'Without it, a click on a scout notification opens Script Editor.');
+  if (s.mac) step(s.notifier, 'Notifications open this page when clicked (optional)', 'npm run build-app (Shipyard, with its icon) or brew install terminal-notifier', 'Without one of them, a click on a scout notification opens Script Editor.');
   const missing = steps.filter((x) => !x.ok).length;
   h += '<details class="sc-card sc-fold"' + (missing ? ' open' : '') + '><summary>' + (missing ? '○ Setup: ' + missing + ' step(s) left' : '✓ Setup on this Mac: all ' + steps.length + ' steps done') + '</summary>' +
     steps.map((x) => x.html).join('') + '<p class="hint">Guide: <code>' + esc(s.docs) + '</code></p></details>';

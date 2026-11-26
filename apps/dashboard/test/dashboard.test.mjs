@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sameNameIn, writeVersioned } from '../../../scripts/page-versions.mjs';
+import { QA_ICON, QA_ICON_URI } from '../../../skills/browser-usability-test/scripts/qa-icon.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'server.mjs');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -298,14 +299,14 @@ test('serves plan markdown and rejects slugs that are not plain names', async ()
   assert.equal((await get('/api/plan?project=nope&slug=demo-plan')).status, 400);
 });
 
-test('the tab icon and the header logo are the Shipyard icon, cut to its square', async () => {
+test('the tab icon is the Shipyard icon, cut to its square, and the header has no logo', async () => {
   const page = await (await get('/')).text();
   assert.doesNotMatch(page, /\{\{ICON\}\}/, 'every icon mark is filled');
   const fav = /<link rel="icon" id="favicon" href="([^"]+)">/.exec(page);
   assert.ok(fav, 'the page has the favicon link');
   assert.ok(fav[1].startsWith('data:image/svg+xml,'));
   assert.match(decodeURIComponent(fav[1].slice('data:image/svg+xml,'.length)), /viewBox="100 100 824 824"/);
-  assert.ok(page.includes('<img class="logo" src="' + fav[1] + '"'), 'the header logo uses the same icon');
+  assert.match(page, /title="close the open plan">Plans<\/a>/, 'no icon before Plans: Mac apps show none there, and the tab has it');
 });
 
 test('an answer still arriving shows as Markdown, with no raw marks', async () => {
@@ -1374,8 +1375,12 @@ test('serves browser-usability-test reports read-only on their own port, with a 
   assert.match(list, /href="\/solver\/2026-11-01-cases-report\.html"[^>]*>D4 &quot;Confirmed by&quot; works</, 'the list links each report by its title');
   assert.match(list, /href="\/solver\/2026-11-01-cases-report\.html\?download" download="2026-11-01-cases-report\.html"/, 'each report has a Download button');
   assert.ok(list.includes(`data-path="${path.join(dir, 'reports', '2026-11-01-cases-report.html')}"`), 'each report has Copy path with its full path');
+  assert.ok(list.includes(`<link rel="icon" href="${QA_ICON_URI}">`), 'the list has the QA reports icon (the skill\'s qa-icon.svg)');
   const icon = await qa('/favicon.ico');
   assert.equal(icon.headers.get('content-type'), 'image/svg+xml', 'older reports without an icon of their own get one');
+  const iconSvg = await icon.text();
+  assert.equal(iconSvg, QA_ICON, '/favicon.ico gives the QA reports icon');
+  assert.match(iconSvg, /viewBox="100 100 824 824"/, 'cut to its square, as the Shipyard tab icon');
   const page = await qa('/solver/2026-11-01-cases-report.html');
   assert.equal(page.status, 200);
   assert.equal(page.headers.get('cache-control'), 'no-store', 'an updated report shows at once');

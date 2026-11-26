@@ -62,6 +62,7 @@ import { BEFORE_AFTER_FILE, PROJECT } from "./lib.mjs";
 import { summaryWarnings, titleWarnings } from "./plain-text.mjs";
 import { STORE } from "./profile.mjs";
 import { publish } from "./publish.mjs";
+import { QA_ICON_URI } from "./qa-icon.mjs";
 import { diffShots } from "./shot-diff.mjs";
 
 const input = process.argv[2];
@@ -275,8 +276,6 @@ ${items
 
 // Questions for the reader. Answers are collected into one text block they copy
 // and send back; the "Short" line is the "1A, 2B" form Claude can act on.
-// 📊 as the tab icon, inline so a downloaded or shared copy has it too
-const QA_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="32" y="50" font-size="52" text-anchor="middle">📊</text></svg>`;
 const LETTERS = "ABCDEFGHIJ";
 // A string literal safe inside <script> (a title may contain "</script>").
 const jsString = (v) => JSON.stringify(v).replace(/</g, "\\u003c");
@@ -452,7 +451,7 @@ const html = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
-${issues.length ? `<meta name="qa:issues" content="${esc(issues.join(" "))}">\n` : ""}<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(QA_ICON)}">
+${issues.length ? `<meta name="qa:issues" content="${esc(issues.join(" "))}">\n` : ""}<link rel="icon" href="${QA_ICON_URI}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">

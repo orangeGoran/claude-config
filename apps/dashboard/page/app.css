@@ -27,7 +27,6 @@
            align-items:center; gap:14px; flex-shrink:0; }
   h1 { font-size:calc(15px * var(--fs)); margin:0; }
   #home { color:inherit; text-decoration:none; }
-  #home .logo { width:1.15em; height:1.15em; vertical-align:-0.2em; border-radius:22%; }
   /* one header row: Plans, the ⋯ menu, Code, the Plan · PR switch, the open-plan tabs, then the status on the right.
      The buttons used less often are in the ⋯ menu (#hdmenu), so the row also holds the open-plan tabs */
   header.mainhd { padding:5px 14px; gap:10px; min-height:calc(40px * var(--fs)); }
@@ -44,6 +43,7 @@
   .mainhd .hdnote { display:none; }
   body.busy .mainhd .hdnote { display:inline; }
   #hdmenuBtn { font-weight:700; letter-spacing:1px; padding:2px 9px; }
+  .nativemenu #hdmenuBtn { display:none; }   /* Shipyard: the items are in the macOS menu bar */
   #hdmenuBtn.flag::after { content:''; display:inline-block; width:6px; height:6px; margin-left:4px; border-radius:50%;
                            background:var(--warn); vertical-align:2px; }
   /* the ⋯ menu: a popover under its button (app.js places it); a click outside or Esc closes it */

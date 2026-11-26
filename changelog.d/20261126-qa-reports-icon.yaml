@@ -1,0 +1,9 @@
+kind: changed
+audience: both
+scope: qa-reports
+summary: |
+  The QA reports have their own icon: a clipboard with a check mark, in the colours of the Shipyard icon. It replaces the 📊 emoji in the browser tab of the report list and of each new report. Reports written before this change keep the 📊 that is inside them until they are written again; reports with no icon of their own get the new icon from /favicon.ico. After the pull, restart the dashboard (check pgrep -fl chat-relay.mjs first).
+internal: |
+  One source: skills/browser-usability-test/qa-icon.svg (1024 grid, 824 square at 100, rx 185). scripts/qa-icon.mjs reads it next to itself and exports QA_ICON_SVG, QA_ICON (viewBox cut to 100 100 824 824, as ICON_URI for Shipyard) and QA_ICON_URI. compare.mjs and apps/dashboard/server.mjs import it; the two inline 📊 copies are gone. The skill keeps working from other repos because its scripts resolve to the repo (compare.mjs already imports scripts/page-versions.mjs). New test test/browser-usability-qa-icon.test.mjs (the compare.mjs report test skips when the skill's ajv and playwright-core are not installed); the QA report server test checks the list icon and /favicon.ico.
+customer:
+  en: The QA reports list and each report now show their own icon in the browser tab, a clipboard with a check mark, instead of the 📊 emoji.

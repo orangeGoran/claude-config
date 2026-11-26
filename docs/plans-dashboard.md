@@ -180,7 +180,7 @@ When the open plan's PR is merged, a card on the right says so. **🧹 Clean up 
 
 The tabs are kept in this browser (`localStorage` key `dash-tabs`). A tab goes away when its plan is gone from a project that the dashboard still shows. The closed-tab list is kept only until the page reloads.
 
-The page gives the Mac app (Shipyard) its hooks in `window.dashboard`: `switchSession(n)`, `nextSession(d)`, `closeSession()`, `reopenSession()`, `openSearch()`, `focusChat()`, `toggleBoard()` and `openSettings()`.
+The page gives the Mac app (Shipyard) its hooks in `window.dashboard`: `switchSession(n)`, `nextSession(d)`, `closeSession()`, `reopenSession()`, `openSearch()`, `focusChat()`, `toggleBoard()`, `openSettings()`, `toggleScout()`, `toggleNote()`, `openQaReports()`, `addProject()`, `toggleTheme()`, `toggleAlerts()` and `useNativeMenu()`.
 
 Known limits:
 
@@ -196,7 +196,11 @@ Shipyard (`~/Applications/Shipyard.app`) is an optional Mac app: one window that
 
 Run `npm run build-app` to build and install it. It needs the Swift compiler of the Command Line Tools (`xcode-select --install`). `scripts/setup.sh` asks before it builds the app. To use a new build, quit Shipyard (⌘Q) and open it again.
 
-The icon is `apps/dashboard/page/icon.svg`: the build makes the app icon from it (with `qlmanage`, `sips` and `iconutil`), and the dashboard uses it as the tab icon and the header logo. While plans run or wait, the tab icon shows the status emoji instead. When the build cannot make the icon, it warns and the app gets the default icon.
+The icon is `apps/dashboard/page/icon.svg`: the build makes the app icon from it (with `qlmanage`, `sips` and `iconutil`), and the dashboard uses it as the tab icon. While plans run or wait, the tab icon shows the status emoji instead. When the build cannot make the icon, it warns and the app gets the default icon.
+
+In Shipyard, the items of the ⋯ menu are in the macOS menu bar, and the page has no ⋯ button. The View menu has Board, Scout, Sticky Note, QA Reports, Light or Dark Theme and Alerts On or Off. The Shipyard menu has Settings… (⌘,) and Add Project…. QA Reports opens in the default browser.
+
+Shipyard also sends the notifications of the dashboard server and the scout, with the Shipyard icon. The first notification makes macOS ask "Allow notifications from Shipyard?"; until you allow it (System Settings → Notifications → Shipyard), `terminal-notifier` sends them. A click on a notification opens its page in the Shipyard window. The server runs `~/Applications/Shipyard.app/Contents/MacOS/Shipyard` with the `terminal-notifier` flags (`-title`, `-subtitle`, `-message`, `-open`, `-group`).
 
 The app opens the domain of the installed dashboard (from `~/.claude/pipeline-dashboard/caddy-site.caddy`), else https://shipyard.test. `node apps/plans-mac/build.mjs --url https://<domain>` builds it for another https domain.
 
@@ -236,7 +240,7 @@ Known limits:
 
 **🔕 Alerts off** in the header's **⋯** menu turns on a short sound when a run stops (needs you, failed or finished) the chat agent finishes an answer, or the chat agent asks for permission. When the dashboard tab is not in front, a desktop notification comes too; clicking it opens that plan. The browser asks once for permission to show notifications. The setting is remembered in this browser, and alerts need the dashboard open in a tab (a background tab can be up to a minute late).
 
-The dashboard server also sends macOS notifications, with no page open: when it starts a plan by itself, when such a start fails, when a `Waits for:` line has an error that you must fix, and when a run of a pipeline project (with `.claude/scripts/auto-pipeline.sh`) needs you or failed. A notification reads like a tab: the title has the project label, what happened and the PR number (`acme-web · your turn · PR #903`), the line under it has the plan title, and the text has the detail without links. A click opens that plan; this needs `terminal-notifier` (`brew install terminal-notifier`), because an `osascript` notification opens Script Editor. With 🔔 on and the page open, a run that stops gives two notifications: one from the page and one from the server. `DASH_NO_NOTIFY=1` turns the server's notifications off.
+The dashboard server also sends macOS notifications, with no page open: when it starts a plan by itself, when such a start fails, when a `Waits for:` line has an error that you must fix, and when a run of a pipeline project (with `.claude/scripts/auto-pipeline.sh`) needs you or failed. A notification reads like a tab: the title has the project label, what happened and the PR number (`acme-web · your turn · PR #903`), the line under it has the plan title, and the text has the detail without links. When Shipyard is installed and its notifications are allowed, Shipyard sends the notification: it shows the Shipyard icon, and a click opens that plan in the Shipyard window. Else `terminal-notifier` (`brew install terminal-notifier`) sends it, and a click opens that plan in the browser. With neither, `osascript` sends it, and a click opens Script Editor. With 🔔 on and the page open, a run that stops gives two notifications: one from the page and one from the server. `DASH_NO_NOTIFY=1` turns the server's notifications off.
 
 ## Sticky note
 
@@ -374,7 +378,7 @@ Only one dashboard per HOME runs the watcher (`~/.claude/pipeline-dashboard/watc
 | `CLAUDE_TMP` | Claude Code's session temp folders (default `/private/tmp/claude-<uid>`); HTML in their scratchpads is listed as unpublished drafts |
 | `DASH_WATCH_MS` | how often the [event watcher](#waits-for-and-the-event-watcher) runs, in milliseconds (default `60000`); `0` turns it off |
 | `DASH_NO_NOTIFY=1` | the watcher sends no macOS notifications |
-| `DASH_NOTIFIER` | the notifier program the watcher calls with `-title`, `-message`, `-open` and `-group` (default `terminal-notifier` when it is installed, else `osascript`) |
+| `DASH_NOTIFIER` | the notifier program the watcher calls with `-title`, `-subtitle`, `-message`, `-open` and `-group` (default: Shipyard, then `terminal-notifier`, else `osascript`) |
 
 > [!WARNING]
 > Summaries are produced by calling the `claude` CLI, which **sends plan text to the Anthropic API**. Set `DASH_NO_SUMMARY=1` for repos whose contents must not leave the machine.

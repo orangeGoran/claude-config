@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- QA reports: a harbour inspector's clipboard with a paper boat on the sheet and a check mark, in the colours of the Shipyard icon (apps/dashboard/page/icon.svg). The square sits on the macOS icon grid (824 px with 100 px margin). -->
+  <defs>
+    <clipPath id="sq"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd9a8"/><stop offset="1" stop-color="#f6a776"/></linearGradient>
+  </defs>
+  <g clip-path="url(#sq)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#bg)"/>
+    <rect x="100" y="760" width="824" height="164" fill="#2f6f9a"/>
+    <rect x="262" y="220" width="500" height="640" rx="44" fill="#6b4a33"/>
+    <rect x="310" y="290" width="404" height="520" rx="14" fill="#ffffff"/>
+    <rect x="402" y="190" width="220" height="86" rx="30" fill="#c9d4df"/>
+    <rect x="452" y="214" width="120" height="30" rx="15" fill="#4e3423"/>
+    <path d="M360 386 L540 386 L512 432 L388 432Z" fill="#c9d4df"/>
+    <path d="M420 386 L450 330 L480 386Z" fill="#eef2f6"/>
+    <rect x="560" y="390" width="110" height="26" rx="13" fill="#c9d4df"/>
+    <path d="M380 610 L480 710 L670 500" fill="none" stroke="#2f6f9a" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

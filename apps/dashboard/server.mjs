@@ -37,7 +37,8 @@ import { OTHER, inlineHtml, findIssues, readMeta } from '../../scripts/artifact-
 import { olderVersions } from '../../scripts/page-versions.mjs';
 import { plistScript } from './restart.mjs';
 import { parseWaitsFor, prMap, prEvents, outcomeEvents, runningCount, canAutoLaunch, capLines, redact } from './watch.mjs';
-import { NOTIFIERS } from '../scout/scout.mjs';
+import { NOTIFIERS, notifyFirst } from '../scout/scout.mjs';
+import { QA_ICON, QA_ICON_URI } from '../../skills/browser-usability-test/scripts/qa-icon.mjs';
 
 const VERSION = '1.0.0';
 const HOME = os.homedir();
@@ -83,7 +84,7 @@ Environment
                       0 turns it off — set it for a test dashboard with the real HOME)
   DASH_NO_NOTIFY=1    the watcher sends no macOS notifications
   DASH_NOTIFIER=<f>   the notifier program the watcher calls (default
-                      terminal-notifier when installed, else osascript)
+                      Shipyard, then terminal-notifier, else osascript)
   QA_REPORTS_PORT=<n> port for the browser-usability-test report pages
                       (default 4898, http://localhost:<n>/<project>/<file>.html)
   QA_HOME=<dir>       where those reports live (default
@@ -1338,7 +1339,7 @@ const scoutStatus = () => {
     config: !!cfg, configPath: tilde(SCOUT_CFG), example: tilde(path.join(DASH_REPO, 'scripts', 'scout.example.json')),
     script: tilde(SCOUT_SCRIPT), docs: tilde(path.join(DASH_REPO, 'docs', 'scout.md')),
     installed: scoutInstalled(), mac: process.platform === 'darwin',
-    notifier: ['/opt/homebrew/bin/terminal-notifier', '/usr/local/bin/terminal-notifier'].some((f) => existsSync(f)),
+    notifier: NOTIFIERS.some((f) => existsSync(f)),
     running: !!running, startedAt: (running || {}).startedAt || null,
     current: running ? loadJson(path.join(CENTRAL, 'scout-current.json'), null) : null,
     projects, logPath: tilde(SCOUT_LOG), log: logTail(SCOUT_LOG, 200),
@@ -1838,16 +1839,20 @@ const notifyParts = (proj, slug, plan, what, detail) => {
   const msg = String(detail || '').replace(/\s*[—–-]?\s*https?:\/\/\S+/g, '').trim();
   return { title: [proj.short || proj.name, what, pr ? 'PR #' + pr : ''].filter(Boolean).join(' · '), subtitle: name, message: msg || what };
 };
-/** Shows a macOS notification of notifyParts(). A click opens `query` on the dashboard (needs terminal-notifier). */
+/**
+ * Shows a macOS notification of notifyParts() with the first notifier that works (NOTIFIERS: Shipyard with its icon,
+ * then terminal-notifier), else osascript. A click opens `query` on the dashboard (not with osascript).
+ */
 const notifyMac = ({ title, subtitle, message }, query) => {
   if (process.env.DASH_NO_NOTIFY) return;
   const custom = process.env.DASH_NOTIFIER;
   if (!custom && process.platform !== 'darwin') return;
   fence();
-  const tn = custom || NOTIFIERS.find((f) => existsSync(f));
   const msg = redact(message);
-  if (tn) execFile(tn, ['-title', title, '-subtitle', subtitle, '-message', msg, '-open', dashUrl() + '/' + query, '-group', 'plans-' + query], () => {});
-  else execFile('osascript', ['-e', `display notification ${JSON.stringify(msg)} with title ${JSON.stringify(title)} subtitle ${JSON.stringify(subtitle)}`], () => {});
+  const args = ['-title', title, '-subtitle', subtitle, '-message', msg, '-open', dashUrl() + '/' + query, '-group', 'plans-' + query];
+  notifyFirst(custom ? [custom] : NOTIFIERS, args).then((sent) => {
+    if (!sent) execFile('osascript', ['-e', `display notification ${JSON.stringify(msg)} with title ${JSON.stringify(title)} subtitle ${JSON.stringify(subtitle)}`], () => {});
+  });
 };
 const selQuery = (proj, slug) => '?sel=' + encodeURIComponent(proj.name + '/' + slug);
 
@@ -3515,8 +3520,8 @@ const PAGE = fill(fill(fill(fill(fill(uiFile('page.html'),
 // its calls, while localStorage and the clipboard (localhost is secure) still work.
 const htmlText = (s) => s.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
   .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
-// 📊 as the tab icon of the list and the reports (reports written before they had one ask /favicon.ico)
-const QA_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="32" y="50" font-size="52" text-anchor="middle">📊</text></svg>`;
+// QA_ICON (the skill's qa-icon.svg, a clipboard with a check mark) is the tab icon of the list, and /favicon.ico
+// gives it to reports written before they had an icon of their own.
 const escH = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // every report page, grouped by project, the project with the newest report first
 // every project's report pages and artifacts (single-file pages, see scripts/artifact-copies.mjs),
@@ -3614,7 +3619,7 @@ ${rows.map(row).join('\n')}
 ${drafts.length ? fold('drafts', 'Unpublished drafts', drafts.length, section('Drafts', drafts, `<p class="dim">HTML that Claude wrote to a session scratchpad in ${escH(CLAUDE_TMP)}. macOS empties that folder now and then. Download gives one file with the images inside; Copy path gives the raw file.</p>`)) : ''}
 <p class="dim" id="none" hidden>Nothing matches.</p>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>QA reports</title><link rel="icon" href="data:image/svg+xml,${encodeURIComponent(QA_ICON)}"><style>
+<title>QA reports</title><link rel="icon" href="${QA_ICON_URI}"><style>
 :root { --bg:#f4f5f8; --panel:#fff; --line:#d9dde6; --fg:#1d2433; --dim:#5f6b81; --link:#1d4ed8; color-scheme:light; }
 @media (prefers-color-scheme: dark) { :root { --bg:#292e39; --panel:#2e3440; --line:#434c5e; --fg:#eceff4; --dim:#a3abbd; --link:#88c0d0; color-scheme:dark; } }
 body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; }

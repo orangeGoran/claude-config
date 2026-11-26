@@ -2,7 +2,9 @@
 // Plain AppKit + WebKit. Build it with `npm run build-app` (apps/plans-mac/build.mjs).
 // The menu calls the page only through its window.dashboard hooks (apps/dashboard/page/app.js).
 // Closing the window hides it: the page stays loaded, and runs and chats never stop (they run under the server).
+// Run with -message, the program only sends one notification with the Shipyard icon and exits (see sendNotification).
 import AppKit
+import UserNotifications
 import WebKit
 
 /// The dashboard URL that build.mjs wrote into Info.plist, else https://shipyard.test.
@@ -77,15 +79,78 @@ final class PageView: WKWebView {
   }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+// --- notifications: the program as a notifier with the flags of terminal-notifier
+
+/// Gives the -flag value pairs of a terminal-notifier command line (-title, -subtitle, -message, -open, -group).
+/// A flag without a value is left out.
+func notifierArgs(_ args: [String]) -> [String: String] {
+  var out: [String: String] = [:]
+  var i = 0
+  while i < args.count {
+    let a = args[i]
+    if a.hasPrefix("-") && a.count > 1 && i + 1 < args.count {
+      out[String(a.dropFirst())] = args[i + 1]
+      i += 2
+    } else {
+      i += 1
+    }
+  }
+  return out
+}
+
+/// Sends one notification from the Shipyard bundle, so it shows the Shipyard icon. A click opens the -open URL
+/// in the app (AppDelegate.userNotificationCenter). A notification with the same -group replaces the older one.
+/// Gives 0 when the notification was sent, and 1 when the owner has not allowed Shipyard notifications or the
+/// system refused it: the caller then uses its next notifier (terminal-notifier).
+func sendNotification(_ opts: [String: String]) -> Int32 {
+  let center = UNUserNotificationCenter.current()
+  let wait = DispatchSemaphore(value: 0)
+  var status = UNAuthorizationStatus.notDetermined
+  center.getNotificationSettings { s in
+    status = s.authorizationStatus
+    wait.signal()
+  }
+  if wait.wait(timeout: .now() + 5) == .timedOut { return 1 }
+  if status == .notDetermined {
+    // the first notification asks the owner; this one goes to the next notifier, the later ones come from Shipyard
+    center.requestAuthorization(options: [.alert, .sound]) { _, _ in wait.signal() }
+    _ = wait.wait(timeout: .now() + 2)
+    return 1
+  }
+  if status != .authorized && status != .provisional { return 1 }
+  let content = UNMutableNotificationContent()
+  content.title = opts["title"] ?? "Shipyard"
+  if let sub = opts["subtitle"], !sub.isEmpty { content.subtitle = sub }
+  content.body = opts["message"] ?? ""
+  if let open = opts["open"] { content.userInfo = ["open": open] }
+  let id = opts["group"].flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
+  var sent = false
+  center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { err in
+    sent = err == nil
+    wait.signal()
+  }
+  if wait.wait(timeout: .now() + 5) == .timedOut { return 1 }
+  return sent ? 0 : 1
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, UNUserNotificationCenterDelegate {
   var window: NSWindow!
   var web: PageView!
   /// The one retry timer of the waiting page.
   var retry: Timer?
   /// The URL that the waiting page loads again: the failed URL when it has the app's origin, else appURL.
   var retryURL: URL?
+  /// The URL of a notification click that arrived before the window existed.
+  var pendingOpen: URL?
+
+  // before launching ends, so a click on a notification that started the app reaches userNotificationCenter
+  func applicationWillFinishLaunching(_ notification: Notification) {
+    UNUserNotificationCenter.current().delegate = self
+  }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    // asks once; the answer is in System Settings → Notifications → Shipyard. Without it the server uses terminal-notifier.
+    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     buildMenu()
     window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
                       styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -115,7 +180,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     window.contentView = web
     // the keys go to the page from the start, so ⌘K and ⌘L can put the cursor in a box before the first click
     window.initialFirstResponder = web
-    web.load(URLRequest(url: appURL))
+    web.load(URLRequest(url: pendingOpen ?? appURL))
+    pendingOpen = nil
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
@@ -180,6 +246,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
   }
 
+  /// Tells the page that its ⋯ menu items are in the menu bar (View and Shipyard menus), so it hides the ⋯ button.
+  func useNativeMenu() {
+    guard sameOrigin(web.url) else { return }
+    web.evaluateJavaScript("window.dashboard && window.dashboard.useNativeMenu()", completionHandler: nil)
+  }
+
   /// Tells the page how much room its header leaves on the left for the window buttons, in page pixels (none in full screen).
   func tellPageInset() {
     guard sameOrigin(web.url) else { return }
@@ -190,7 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
   /// Takes the "header", "drag" and "zoom" messages of headerScript, only from the main frame of the app's origin.
   func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
     guard message.frameInfo.isMainFrame, sameOrigin(message.frameInfo.request.url), let what = message.body as? String else { return }
-    if what == "header" { headerTitleBar(true); tellPageInset() }
+    if what == "header" { headerTitleBar(true); tellPageInset(); useNativeMenu() }
     if what == "drag", let down = web.lastMouseDown { window.performDrag(with: down) }
     if what == "zoom" {
       // a double-click on the title bar does what System Settings → Desktop & Dock says
@@ -223,6 +295,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
   @objc func settings(_ sender: Any?) { call("openSettings()") }
   @objc func board(_ sender: Any?) { call("toggleBoard()") }
+  @objc func scout(_ sender: Any?) { call("toggleScout()") }
+  @objc func note(_ sender: Any?) { call("toggleNote()") }
+  @objc func qaReports(_ sender: Any?) { call("openQaReports()") }
+  @objc func addProject(_ sender: Any?) { call("addProject()") }
+  @objc func theme(_ sender: Any?) { call("toggleTheme()") }
+  @objc func alerts(_ sender: Any?) { call("toggleAlerts()") }
   @objc func palette(_ sender: Any?) { call("openSearch()") }
   @objc func chatBox(_ sender: Any?) { call("focusChat()") }
   @objc func tab1(_ sender: Any?) { call("switchSession(1)") }
@@ -257,6 +335,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     item(appMenu, NSMenuItem(title: "About Shipyard", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
     appMenu.addItem(.separator())
     item(appMenu, NSMenuItem(title: "Settings…", action: #selector(settings(_:)), keyEquivalent: ","))
+    item(appMenu, NSMenuItem(title: "Add Project…", action: #selector(addProject(_:)), keyEquivalent: ""))
     appMenu.addItem(.separator())
     item(appMenu, NSMenuItem(title: "Hide Shipyard", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
     let others = NSMenuItem(title: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
@@ -277,6 +356,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
     let view = NSMenu(title: "View")
     item(view, NSMenuItem(title: "Board", action: #selector(board(_:)), keyEquivalent: "b"))
+    item(view, NSMenuItem(title: "Scout", action: #selector(scout(_:)), keyEquivalent: ""))
+    item(view, NSMenuItem(title: "Sticky Note", action: #selector(note(_:)), keyEquivalent: ""))
+    item(view, NSMenuItem(title: "QA Reports", action: #selector(qaReports(_:)), keyEquivalent: ""))
+    view.addItem(.separator())
     item(view, NSMenuItem(title: "Command Palette", action: #selector(palette(_:)), keyEquivalent: "k"))
     item(view, NSMenuItem(title: "Chat Box", action: #selector(chatBox(_:)), keyEquivalent: "l"))
     view.addItem(.separator())
@@ -290,6 +373,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     item(view, NSMenuItem(title: "Zoom Out", action: #selector(zoomOut(_:)), keyEquivalent: "-"))
     view.addItem(.separator())
     item(view, NSMenuItem(title: "Reload", action: #selector(reload(_:)), keyEquivalent: "r"))
+    view.addItem(.separator())
+    item(view, NSMenuItem(title: "Light or Dark Theme", action: #selector(theme(_:)), keyEquivalent: ""))
+    item(view, NSMenuItem(title: "Alerts On or Off", action: #selector(alerts(_:)), keyEquivalent: ""))
 
     // ⇧⌘[ and ⇧⌘] are the key equivalents "{" and "}": Shift is implied
     let tabs = NSMenu(title: "Tabs")
@@ -416,6 +502,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
   }
 
+  // --- notification clicks
+
+  // a notification also shows while the Shipyard window is in front
+  func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                              withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+    completionHandler([.banner, .list])
+  }
+
+  // a click opens its -open URL: a page of the app's origin in the window, any other URL in the default browser
+  func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                              withCompletionHandler completionHandler: @escaping () -> Void) {
+    defer { completionHandler() }
+    guard let s = response.notification.request.content.userInfo["open"] as? String, let url = URL(string: s) else { return }
+    if !sameOrigin(url) { NSWorkspace.shared.open(url); return }
+    guard let web = web else { pendingOpen = url; return }
+    web.load(URLRequest(url: url))
+    showForPanel()
+    NSApp.activate(ignoringOtherApps: true)
+  }
+
   // --- the page's alert() and confirm() as native panels
 
   /// Shows the hidden window before a panel: a sheet on a hidden window waits unseen, and the page's script waits with it.
@@ -442,6 +548,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     a.addButton(withTitle: "Cancel")
     a.beginSheetModal(for: window) { r in completionHandler(r == .alertFirstButtonReturn) }
   }
+}
+
+// the notifier mode (-message): no window, no Dock icon; it sends the notification and exits
+if CommandLine.arguments.contains("-message") {
+  exit(sendNotification(notifierArgs(Array(CommandLine.arguments.dropFirst()))))
 }
 
 let app = NSApplication.shared
