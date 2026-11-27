@@ -959,10 +959,16 @@
   .grpadd:hover { background:var(--hover); }
   .grpbox { margin:0 6px 12px; padding:0 0 1px; border:2px solid var(--fg); border-radius:14px; }
   .grpbox > .pgrp { margin:0 4px 6px; }
-  .grpbar { display:flex; align-items:center; gap:8px; width:calc(100% - 8px); margin:4px; padding:8px 10px; border:0; border-radius:10px;
-            background:none; color:var(--fg); font:inherit; text-align:left; cursor:pointer; }
-  .grpbar:hover { background:var(--hover); }
+  .grpbox.folded { padding:0; }
+  .grpbar { display:flex; align-items:center; margin:4px; border-radius:10px; }
+  .grpbox.folded .grpbar { margin:2px; }
   .grpbar.on { background:var(--card); box-shadow:0 0 0 1px var(--line); }
+  .grpfold { flex:none; width:28px; height:28px; margin-left:4px; border:0; border-radius:7px; background:none; color:var(--dim);
+             font:inherit; font-size:calc(14px * var(--fs)); cursor:pointer; }
+  .grpfold:hover { background:var(--hover); color:var(--fg); }
+  .grpopen { flex:1; min-width:0; display:flex; align-items:center; gap:8px; padding:8px 10px 8px 4px; border:0; border-radius:10px;
+             background:none; color:var(--fg); font:inherit; text-align:left; cursor:pointer; }
+  .grpopen:hover { background:var(--hover); }
   .grpname { font-weight:700; overflow-wrap:anywhere; }
   .grpcnt { color:var(--dim); font-size:calc(12px * var(--fs)); white-space:nowrap; }
   .grpyou { margin-left:auto; white-space:nowrap; font-size:calc(11.5px * var(--fs)); font-weight:600; color:var(--warn);

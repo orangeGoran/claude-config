@@ -552,8 +552,11 @@ function renderList() {
       if (done.has(g)) return '';
       done.add(g);
       const sp = state.find((s) => s.name === pr) || {};
-      return '<div class="grpbox">' + groupBarHtml(g, sp.groupInfo, ckOn === g) +
-        projNames.filter((n) => groupOf(n) === g).map(card).join('') + '</div>';
+      const all = state.filter((s) => s.group === g).map((s) => s.name);
+      const fold = groupFold(g, all, collapsedProjects);
+      // a search shows its matches in a hidden group too
+      const cards = fold === 'hide' && !filtering ? '' : projNames.filter((n) => groupOf(n) === g).map(card).join('');
+      return '<div class="grpbox' + (cards ? '' : ' folded') + '">' + groupBarHtml(g, sp.groupInfo, ckOn === g, fold, all.length) + cards + '</div>';
     }).join('');
     function card(pr) {
       const items = vis.filter((p) => p.project === pr);
@@ -621,6 +624,13 @@ function renderList() {
     el.addEventListener('click', (e) => e.stopPropagation()));
   byId('side').querySelectorAll('[data-ckgroup]').forEach((el) =>
     el.addEventListener('click', () => showChecklist(el.dataset.ckgroup)));
+  byId('side').querySelectorAll('[data-grpfold]').forEach((el) =>
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const g = el.dataset.grpfold;
+      groupFoldNext(g, state.filter((s) => s.group === g).map((s) => s.name), collapsedProjects);
+      saveCollapsed(); renderList();
+    }));
   byId('side').querySelectorAll('[data-grpadd]').forEach((el) =>
     el.addEventListener('click', (e) => { e.stopPropagation(); openGroupForm(el.dataset.grpadd); }));
   byId('side').querySelectorAll('[data-suggest]').forEach((el) =>
@@ -4253,6 +4263,8 @@ function revealInSide(key) {
   const p = find(key);
   if (!p) return;
   const folds = p.kind === 'wt' ? [p.project, 'wt:' + p.project] : [p.project];
+  const g = (state.find((s) => s.name === p.project) || {}).group;
+  if (g) folds.push('grp:' + g);   // a hidden group shows its projects again
   if (folds.some((f) => collapsedProjects.has(f))) { folds.forEach((f) => collapsedProjects.delete(f)); saveCollapsed(); }
   const q = byId('q').value.toLowerCase();
   if (q && !(p.kind === 'wt' ? visibleWts().includes(p) : matchesQ(p, q))) byId('q').value = '';
@@ -5260,13 +5272,40 @@ function ledgerBody(text) {
   }
   return out.join('\n\n');
 }
-/** Gives the HTML of the group bar of `group` in the sidebar, with the counts `info` (state groupInfo); `on` marks the group shown now. */
-function groupBarHtml(group, info, on) {
+/**
+ * Gives the fold of group `g` whose projects are `names`, from the fold set `closed` (collapsedProjects):
+ * 'hide' (only the group bar), 'min' (only the project headers) or 'open' (projects and plans).
+ * A hidden group is the key 'grp:<g>' in the set; a project header alone is the project name in the set.
+ */
+const groupFold = (g, names, closed) =>
+  closed.has('grp:' + g) ? 'hide' : names.length && names.every((n) => closed.has(n)) ? 'min' : 'open';
+/** Moves group `g` one fold on: open → min → hide → open. It changes `closed` and gives the new fold. */
+function groupFoldNext(g, names, closed) {
+  const was = groupFold(g, names, closed);
+  if (was === 'open') names.forEach((n) => closed.add(n));
+  else if (was === 'min') closed.add('grp:' + g);
+  else { closed.delete('grp:' + g); names.forEach((n) => closed.delete(n)); }
+  return groupFold(g, names, closed);
+}
+const GROUP_FOLD = {
+  open: ['▾', 'Projects and plans shown. Click to show only the projects'],
+  min: ['▸', 'Only the projects shown. Click to hide them'],
+  hide: ['▹', 'Projects hidden. Click to show the projects and their plans'],
+};
+/**
+ * Gives the HTML of the group bar of `group` in the sidebar: the fold button (fold `fold`, `repos` projects) and the
+ * button that opens the checklist, with the counts `info` (state groupInfo); `on` marks the group shown now.
+ */
+function groupBarHtml(group, info, on, fold = 'open', repos = 0) {
   const n = (info && info.tickets) || 0, you = (info && info.needsYou) || 0;
-  return '<button class="grpbar' + (on ? ' on' : '') + '" data-ckgroup="' + escA(group) + '" aria-pressed="' + !!on +
+  const [icon, tip] = GROUP_FOLD[fold] || GROUP_FOLD.open;
+  return '<div class="grpbar' + (on ? ' on' : '') + '"><button class="grpfold" data-grpfold="' + escA(group) + '" title="' + tip +
+    '" aria-label="' + escA(group) + ': ' + tip + '">' + icon + '</button>' +
+    '<button class="grpopen" data-ckgroup="' + escA(group) + '" aria-pressed="' + !!on +
     '" title="Open the checklist of ' + escA(group) + ': what needs you, each ticket across its repos, and the goals">' +
-    '<span class="grpname">☑ ' + esc(group) + '</span><span class="grpcnt">' + n + ' ticket' + (n === 1 ? '' : 's') + '</span>' +
-    (you ? '<span class="grpyou">' + you + ' needs you</span>' : '') + '</button>';
+    '<span class="grpname">☑ ' + esc(group) + '</span><span class="grpcnt">' + n + ' ticket' + (n === 1 ? '' : 's') +
+    (fold === 'hide' ? ' · ' + repos + ' repo' + (repos === 1 ? '' : 's') + ' hidden' : '') + '</span>' +
+    (you ? '<span class="grpyou">' + you + ' needs you</span>' : '') + '</button></div>';
 }
 /**
  * Gives the HTML of the checklist for the GET /api/ledger answer `d`.

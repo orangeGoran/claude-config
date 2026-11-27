@@ -2224,12 +2224,12 @@ test('the page: revealInSide opens the folds and clears a search that hide a pla
   assert.ok(m, 'app.js has revealInSide');
   const plan = { key: 'acme/20260101-000000-demo', project: 'acme', title: 'Demo' };
   const wt = { key: 'acme/wt.fix', kind: 'wt', project: 'acme', name: 'fix' };
-  const make = (q) => {
-    const env = { collapsedProjects: new Set(['acme', 'wt:acme', 'other']), saved: 0, box: { value: q } };
-    const reveal = new Function('find', 'collapsedProjects', 'saveCollapsed', 'byId', 'matchesQ', 'visibleWts',
+  const make = (q, folds = ['acme', 'wt:acme', 'other'], group = '') => {
+    const env = { collapsedProjects: new Set(folds), saved: 0, box: { value: q } };
+    const reveal = new Function('find', 'collapsedProjects', 'saveCollapsed', 'byId', 'matchesQ', 'visibleWts', 'state',
       m[0] + '\nreturn revealInSide;')(
       (k) => [plan, wt].find((x) => x.key === k), env.collapsedProjects, () => env.saved++, () => env.box,
-      (p, s) => p.title.toLowerCase().includes(s), () => (env.box.value ? [] : [wt]));
+      (p, s) => p.title.toLowerCase().includes(s), () => (env.box.value ? [] : [wt]), [{ name: 'acme', group }]);
     return { env, reveal };
   };
   let { env, reveal } = make('');
@@ -2245,6 +2245,10 @@ test('the page: revealInSide opens the folds and clears a search that hide a pla
   assert.equal(env.box.value, 'demo', 'a search that shows the plan stays');
   reveal('acme/unknown');
   assert.equal(env.saved, 1, 'an unknown key changes nothing');
+  // a plan in a hidden group: the group shows its projects again, and the project opens
+  ({ env, reveal } = make('', ['acme', 'grp:acme-product', 'grp:other'], 'acme-product'));
+  reveal(plan.key);
+  assert.deepEqual([...env.collapsedProjects], ['grp:other'], 'the hidden group and its folded project open');
 });
 
 test('the page: a tab shows a readable title and a status word', () => {
@@ -2717,8 +2721,10 @@ test('the page: ledgerBody, groupNameFor and the group bar', () => {
   const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
   const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
   const t = new Function([pick(/^const esc = .*$/m), pick(/^const escA = .*$/m), pick(/^const groupNameFor = [\s\S]*?;$/m),
-    pick(/^function ledgerBody\(text\) \{[\s\S]*?\n\}$/m), pick(/^function groupBarHtml\(group, info, on\) \{[\s\S]*?\n\}$/m),
-    'return { ledgerBody, groupNameFor, groupBarHtml };'].join('\n'))();
+    pick(/^function ledgerBody\(text\) \{[\s\S]*?\n\}$/m), pick(/^const groupFold = [\s\S]*?;$/m),
+    pick(/^function groupFoldNext\(g, names, closed\) \{[\s\S]*?\n\}$/m), pick(/^const GROUP_FOLD = \{[\s\S]*?\n\};$/m),
+    pick(/^function groupBarHtml\(group, info, on, fold = 'open', repos = 0\) \{[\s\S]*?\n\}$/m),
+    'return { ledgerBody, groupNameFor, groupBarHtml, groupFold, groupFoldNext };'].join('\n'))();
   assert.equal(t.ledgerBody(''), '');
   assert.equal(t.ledgerBody('# Ledger: g\n\nGoals, holds and notes of this group. The dashboard computes the tickets, plans and PRs by itself.\n\n## Goals\n\n## Holds\n\n## Notes\n'), '');
   assert.equal(t.ledgerBody('# Ledger: g\r\n\r\n## Goals\r\n\r\n- Ship\r\n\r\n## Holds\r\n\r\n## Notes\r\n\r\nA note\r\n'), '## Goals\n\n- Ship\n\n## Notes\n\nA note');
@@ -2736,6 +2742,27 @@ test('the page: ledgerBody, groupNameFor and the group bar', () => {
   const off = t.groupBarHtml('a"b', { tickets: 1, needsYou: 0 }, false);
   assert.ok(off.includes('1 ticket<') && !off.includes('needs you</span>') && off.includes('data-ckgroup="a&quot;b"') && off.includes('aria-pressed="false"'));
   assert.ok(t.groupBarHtml('g', undefined, false).includes('0 tickets'), 'a state from an older server has no groupInfo');
+  // the fold button is its own button beside the checklist button (a button in a button is not valid HTML)
+  assert.ok(on.includes('<button class="grpfold" data-grpfold="acme-product"') && on.includes('>▾</button><button class="grpopen"'));
+  assert.ok(!/<button[^>]*>[^<]*<button/.test(on));
+  const hidden = t.groupBarHtml('acme-product', { tickets: 2, needsYou: 0 }, false, 'hide', 3);
+  assert.ok(hidden.includes('>▹</button>') && hidden.includes('2 tickets · 3 repos hidden'));
+  assert.ok(t.groupBarHtml('g', null, false, 'min', 1).includes('>▸</button>'));
+  assert.ok(!on.includes('hidden'), 'an open group says nothing about hidden repos');
+
+  // one click folds the plans, the next hides the projects, the next shows all again
+  const names = ['acme-api', 'acme-web'];
+  const closed = new Set(['other']);
+  assert.equal(t.groupFold('acme-product', names, closed), 'open');
+  assert.equal(t.groupFoldNext('acme-product', names, closed), 'min');
+  assert.deepEqual([...closed].sort(), ['acme-api', 'acme-web', 'other']);
+  assert.equal(t.groupFoldNext('acme-product', names, closed), 'hide');
+  assert.ok(closed.has('grp:acme-product'));
+  assert.equal(t.groupFoldNext('acme-product', names, closed), 'open');
+  assert.deepEqual([...closed], ['other'], 'the folds of other projects stay');
+  // a project folded by hand: the group is still open until all of its projects are folded
+  assert.equal(t.groupFold('acme-product', names, new Set(['acme-api'])), 'open');
+  assert.equal(t.groupFold('acme-product', [], new Set()), 'open');
 });
 
 test('the page: the group form, the group bar and the ⋯ Checklist all show the checklist in the right area', () => {
@@ -2745,6 +2772,11 @@ test('the page: the group form, the group bar and the ⋯ Checklist all show the
   assert.match(src, /querySelectorAll\('\[data-ckgroup\]'\)\.forEach\(\(el\) =>\s*el\.addEventListener\('click', \(\) => showChecklist\(el\.dataset\.ckgroup\)\)\);/);
   assert.match(src, /querySelectorAll\('\[data-grpadd\]'\)\.forEach\(\(el\) =>\s*el\.addEventListener\('click', \(e\) => \{ e\.stopPropagation\(\); openGroupForm\(el\.dataset\.grpadd\); \}\)\);/);
   assert.match(src, /byId\('checkBtn'\)\.addEventListener\('click', \(\) => showChecklist\(\)\);/);
+  // the fold button moves the group one fold on and keeps it in the folds the page remembers
+  assert.match(src, /groupFoldNext\(g, state\.filter\(\(s\) => s\.group === g\)\.map\(\(s\) => s\.name\), collapsedProjects\);\s*saveCollapsed\(\); renderList\(\);/);
+  // a hidden group shows its cards for a search, and a plan opened from a tab or the palette shows the group again
+  assert.match(src, /const cards = fold === 'hide' && !filtering \? '' :/);
+  assert.match(src, /if \(g\) folds\.push\('grp:' \+ g\);/);
   // the form saves through the Settings save, and a shortcut does nothing while it is open
   assert.match(src, /for \(const entry of reg\) if \(picked\.includes\(entry\.name\)\) entry\.group = name;/);
   assert.match(src, /byId\('seldlg'\)\.open \|\| byId\('grpdlg'\)\.open;/);
