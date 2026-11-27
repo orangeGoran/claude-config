@@ -29,14 +29,15 @@ The script does all the mechanical work. It reads every top-level `.plans/*.md`,
 | --- | --- |
 | `IN FLIGHT / AWAITING REVIEW` | A run that is still going, or that waits for the owner's review. **Never launch these again.** Its lane is **occupied**: a plan that touches the same files must wait. |
 | `DONE — NEEDS CLEANUP` | Shipped on the base branch, but the worktree is still on disk. The lane is **free**. The plan needs `--cleanup`, not a review. |
-| `RECOMMENDED PARALLEL BATCH` | One plan per lane, ranked by `ready` status, then validation rounds, then the smallest footprint. This is the answer to "what can run together". A `~` line names another plan in the batch that shares 1–2 code files (expect a small merge conflict). A `!!` line means the plan also touches files that a running or waiting run holds: finish or review that run first. |
+| `WAITING` | The plan has a `Waits for:` line that the dashboard has not seen met. The plans dashboard can start it by itself when the condition is met (see its `⏳ waits` chip for the reason when it does not). **Do not launch it by hand**, unless its note says so. It stays in its lane. A `note` says when the dashboard's last check is old or missing, when the plan is parked or proposed, or when it has a run report (the dashboard then never checks or starts it: launch it by hand when the condition is met). |
+| `RECOMMENDED PARALLEL BATCH` | One plan per lane, ranked by `ready` status, then validation rounds, then the smallest footprint. This is the answer to "what can run together". A `~` line names another plan in the batch that shares 1–2 code files (expect a small merge conflict). A `!!` line means the plan also touches files that a run holds that is still going or that waits for the owner's review: finish or review that run first. A `!! … waiting plan` line means the plan shares files with a plan that waits for a condition (see `WAITING`) and that the dashboard can start by itself while this plan runs: launch it, or park that plan first. |
 | `LANES` | Groups of plans that are joined by file overlap. Plans in one lane run one after the other. |
 | `NOT SCHEDULABLE` | Parent or roadmap plans (split them into subplans first), trackers, manual runbooks, and plans that name no code files. |
 | `MINOR OVERLAPS` | Two plans share 1–2 code files. They can run at the same time. The second one to merge fixes a small conflict by hand. |
 | `SOFT OVERLAPS` | Both plans append to a shared file (a registration list, a lock file). They can run at the same time: flag the expected merge conflict, do not serialize on it. |
 | `CONFIG CHECK` | A path in the analyzer's `CONFIG` block matches no tracked file. Fine for a folder that a future plan creates; otherwise say that the `CONFIG` block or `layout.*` in `.claude/bootstrap.json` needs a fix. |
 
-The JSON has the same data: `inFlight`, `awaitingReview`, `needsCleanup`, `staleReports`, `recommendedBatch`, `lanes`, `overlaps`, `excluded`, `plans`.
+The JSON has the same data: `inFlight`, `awaitingReview`, `needsCleanup`, `staleReports`, `waiting`, `waitingCount`, `recommendedBatch`, `lanes`, `overlaps`, `excluded`, `plans`.
 
 ## Step 2 — Check the classification
 
@@ -54,7 +55,7 @@ Also run `git status` and look for uncommitted edits to a plan that you want to 
 
 ## Step 3 — Pick the plan for now
 
-Apart from the parallel batch, name **one plan to do now in the foreground**, with the evidence, in this order:
+Apart from the parallel batch, name **one plan to do now in the foreground**, with the evidence, in this order. Never pick a plan that waits for a condition (`WAITING`).
 
 1. `status: ready` (the `status` field in the `--json` output; the dashboard keeps it in `~/.claude/pipeline-dashboard/state/<repo>/plan-meta.json`).
 2. Validation rounds in `.plans/.validations/` (`Nc/Mx/Rr` in the digest: Claude rounds / Codex rounds / rounds of both). A validated plan comes before a plan with no validation.
@@ -99,7 +100,7 @@ Rules for the table:
 - **Lane cell** — only on the first row of the lane, in bold, as `A — <short label>`. Use letters, not numbers. Put the lane of your Step 3 pick first. Make the label from the lane's main `areas`, in words a person knows.
 - **Plan cell** — a relative Markdown link, with the date prefix removed from the link text.
 - **Rows in a lane** — the readiest plan first, then the plans that it blocks.
-- **Status cell** — plain words: `✅ ready, validated ×2`, `ready, not validated`, `no status, large`, `in-refinement`. Use ✅ only for a plan that is `ready` **and** has validation rounds. Take `×N` from the `r` number of the digest line (`validation=<c>c/<x>x/<r>r`). The digest prints that line only for the plans of the recommended batch: for the other rows, run the script with `--json` and take `×N` from `plans[].validation.rounds`. Never guess it.
+- **Status cell** — plain words: `✅ ready, validated ×2`, `ready, not validated`, `no status, large`, `in-refinement`. Add `⏳ waits` to a plan in `WAITING` (the `⏳WAITING` mark in `LANES`), because it is not launchable now. Use ✅ only for a plan that is `ready` **and** has validation rounds. Take `×N` from the `r` number of the digest line (`validation=<c>c/<x>x/<r>r`). The digest prints that line only for the plans of the recommended batch: for the other rows, run the script with `--json` and take `×N` from `plans[].validation.rounds`. Never guess it.
 - **Touches cell** — area paths in backticks, cut to the part a person knows. Then, by row:
   - **blocked** — the overlap count in bold and the plan it overlaps: `**8 files overlap** with <slug>`. Take the count from `overlaps[].count` in `--json`, never from the length of `overlaps[].files`: the analyzer cuts `files` to at most 8 paths for a hard overlap. Always name the plan.
   - **free of conflict with an earlier row of its lane** — keep the areas and add `— ✅ **runs alongside <plan>**`.
@@ -109,6 +110,7 @@ Rules for the table:
 
 After the table, in this order, each one a **bold lead-in with bullets**, no subheadings:
 
+- **Waiting for a condition:** one bullet per waiting plan: the link, the condition text, and the note when there is one. Then one bullet per batch plan with a `!! … waiting plan` line (`recommendedBatch[].sharesWithWaiting`): the batch plan, the waiting plan, the shared files, and that the dashboard can start the waiting plan by itself while the batch plan runs. Leave this out when there is none.
 - **Cannot run in parallel with anything:** plans whose footprint touches every lane. One bullet each: the link, the area count, and `Run it alone.`
 - **Not machine-runnable:** one bullet per manual runbook, with the one detail that makes it manual.
 - **Roadmap only, nothing to implement:** one line, with the links separated by commas.
@@ -125,7 +127,7 @@ Two or three sentences after the lists: the Step 3 choice and its evidence. If n
 
 ### Style
 
-Short. Inline code for paths, areas and flags. Bold only for what changes a decision. No emoji other than the ✅ in the table.
+Short. Inline code for paths, areas and flags. Bold only for what changes a decision. No emoji other than the ✅ and the ⏳ in the table.
 
 ## Step 5 — Give the commands
 

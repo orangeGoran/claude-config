@@ -337,6 +337,8 @@ Write one or more `- **Waits for**:` lines in the plan header (the lines before 
 
 A `Waits for:` line is the owner's "go": when all its conditions are true, the dashboard starts the plan by itself in the project's "to PR" mode (`pr`), or in the project's default mode when the project has no such mode. Only pipeline projects (with `.claude/scripts/auto-pipeline.sh`) can start a plan by itself. While the plan waits, its row and its board card show `⏳ waits`; hover the chip to see each condition with ✓ or ✗ and the reason when a condition cannot be checked.
 
+`plan-lanes.mjs` and `/plans-parallel` show such a plan as waiting and never put it in the suggested launch batch, until the watcher has seen all its conditions met. They read the watcher's result (`watch.json`) and do not check the conditions themselves. A plan that runs or shipped is not shown as waiting.
+
 The dashboard does not start a plan by itself when:
 
 - 4 plans of the project run already. A plan runs when its run is live, when it is starting, or when its report says it is running and changed in the last 30 minutes. A manual ▶ Launch counts toward the 4, but the dashboard never refuses it.

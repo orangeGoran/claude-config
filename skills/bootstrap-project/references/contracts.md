@@ -15,6 +15,8 @@ TLDR: the plans dashboard (`apps/dashboard/server.mjs` in claude-config) and the
 | worktree `<parent>/worktrees/<repo>/<slug>` | `apps/dashboard/server.mjs` `worktreeOf` | The dashboard does not find the run |
 | `.plans/`, `.plans/done/`, `.plans/auto-runs/`, `.plans/.validations/<base>-validation-claude-<n>.md`, `<base>-validation-codex-<n>.md` (older names that still count: `<base>-validation-<n>.md`, `<base>-codex-raw-<n>.md`; the decision log `<base>-validation-round-<n>.md` does not count). `<n>` is 1 plus the highest number at the end of any validator report or decision log of the plan, so a new run never overwrites an earlier round; a file of a longer plan name (`<base>-validation-…`) belongs to that plan, and a writer never takes a name that exists | registry `plansDir` default; `validationRounds` (counts distinct `<n>`; an empty report does not count) | `auto-pipeline.sh` and `plan-lanes.mjs` use `.plans` as fixed text: keep `plansDir` at `<root>/.plans` |
 | `/merge-parent <base>` | dashboard conflict button | Global skill; nothing to write |
+| `~/.claude/pipeline-dashboard/state/<registry name>/watch.json` fields `met` (slug → true, set once) and `checkedAt` (last PR read that worked) | `plan-lanes.mjs` `waitStateOf()` | Every plan with a `Waits for:` line shows as waiting, also after its condition is met |
+| `~/.claude/pipeline-projects.json` `projects[].name` and `projects[].root` | `plan-lanes.mjs` `projectName()`: the state folder name (the entry whose root is the repo or, in a linked worktree, its main checkout) | plan-lanes reads `plan-meta.json`, `runs.json` and `watch.json` of the folder name, which is wrong when the registry name differs |
 
 Rule: the templates follow these names. Do not rename a skill in a template. To change a name, change the dashboard first and then this table.
 
@@ -55,6 +57,7 @@ Rule: the templates follow these names. Do not rename a skill in a template. To 
 - `lanes`: `[{ lane, label, members: [slug] }]`
 - `inFlight`: `[{ slug, autoRunStatus }]`
 - also `awaitingReview`, `needsCleanup`, `staleReports` (read by `auto-pipeline.sh --status`), `excluded` (`[{ slug, reason, unresolvedNames }]`, read by the launch preflight) and `configWarnings` (CONFIG roots and files with no tracked file)
+- `waitingCount` and `waiting` (`[{ slug, file, conditions, checkedAt, stale, note }]`), `plans[].waits` (`null` or `{ conditions, met, checkedAt, stale, note }`) and `recommendedBatch[].sharesWithWaiting` (`[{ slug, conditions, files }]`): a plan whose `Waits for:` line the watcher has not seen met is never in `recommendedBatch`
 
 The dashboard's "⚡ All" refuses until every registered project has this script.
 
