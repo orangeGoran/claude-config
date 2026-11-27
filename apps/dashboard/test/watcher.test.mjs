@@ -1166,3 +1166,48 @@ test('group ledger: an archived plan shows under a ticket that still has an acti
     assert.deepEqual((await plan('gl-arch', '20261120-140000-done-41')).tickets, [{ repo: null, number: 41 }]);
   } finally { unregister(['gl-arch']); }
 });
+
+test('insights ledger: the watcher adds one line for a finished run, no second line on later ticks, and none for a generic project', async () => {
+  const finishedRun = (root) => {
+    const runs = path.join(root, '.plans', 'auto-runs');
+    writeFileSync(path.join(runs, 'demo-run.log'), [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-ledger-1' }),
+      JSON.stringify({ type: 'result', session_id: 'sess-ledger-1', model_usage_since_last_result: { 'model-demo': { costUSD: 1.5 } } }),
+    ].join('\n') + '\n');
+    writeFileSync(path.join(runs, 'demo-run.md'), '# Auto-pipeline run: demo-run\n\n- **Outcome**: needs-you\n\n## Status: PR OPEN\n');
+  };
+  const root = makeRepo('ledger-demo');
+  const generic = makeRepo('ledger-generic', { pipeline: false });   // no auto-pipeline.sh: not in the ledger
+  finishedRun(root);
+  finishedRun(generic);
+  const ledger = path.join(home, '.claude', 'pipeline-dashboard', 'insights.jsonl');
+  const all = () => (existsSync(ledger) ? readFileSync(ledger, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+  const ours = () => all().filter((l) => l.project === 'ledger-demo' && l.slug === 'demo-run');
+  try {
+    register([{ name: 'ledger-generic', root: generic }, { name: 'ledger-demo', root }]);
+    const found = await until(() => ours().length && ours(), 'the ledger line of ledger-demo/demo-run');
+    assert.equal(found.length, 1);
+    assert.equal(found[0].cost, 1.5);
+    assert.equal(found[0].outcome, 'needs-you');
+    await sleep(TICK * 3);
+    assert.equal(ours().length, 1, 'later ticks add no second line');
+    assert.equal(all().filter((l) => l.project === 'ledger-generic').length, 0, 'a generic-flavor project is not in the ledger');
+  } finally { unregister(['ledger-demo', 'ledger-generic']); }
+});
+
+test('insights ledger: the watcher logs a run it cannot read once, also when the run fails again', async () => {
+  const root = makeRepo('ledger-broken');
+  const runs = path.join(root, '.plans', 'auto-runs');
+  const bad = path.join(runs, 'broken-run.log');
+  mkdirSync(bad);   // a folder: the read fails with EISDIR
+  writeFileSync(path.join(runs, 'broken-run.md'), '# Auto-pipeline run: broken-run\n\n- **Outcome**: needs-you\n\n## Status: PR OPEN\n');
+  const said = () => server.out().split('\n').filter((l) => l.includes('watcher: insights: cannot read') && l.includes(bad)).length;
+  try {
+    register([{ name: 'ledger-broken', root }]);
+    await until(() => said() >= 1, 'the cannot-read line');
+    // a new file in the folder changes its time, so the run is tried (and fails) again
+    writeFileSync(path.join(bad, 'more.txt'), 'x');
+    await ticks(3);
+    assert.equal(said(), 1, 'the same error path is logged once');
+  } finally { unregister(['ledger-broken']); }
+});
