@@ -40,6 +40,7 @@ import { plistScript } from './restart.mjs';
 import { parseWaitsFor, prMap, prEvents, outcomeEvents, runningCount, canAutoLaunch, capLines, redact } from './watch.mjs';
 import { safeGroup, parseTickets, buildChain, groupSummary, ledgerTemplate } from './groups.mjs';
 import { NOTIFIERS, notifyFirst } from '../scout/scout.mjs';
+import { syncLedger, LEDGER } from './insights.mjs';
 import { QA_ICON, QA_ICON_URI } from '../../skills/browser-usability-test/scripts/qa-icon.mjs';
 
 const VERSION = '1.0.0';
@@ -100,7 +101,9 @@ Files
   ${REG_FILE}
       the project registry — see scripts/pipeline-projects.example.json
   ${CENTRAL}
-      logs, run records and per-project state for projects with no plan-meta.json`);
+      logs, run records and per-project state for projects with no plan-meta.json
+  ${LEDGER}
+      the insights ledger: one line per finished pipeline run (docs/plans-dashboard.md)`);
   process.exit(0);
 }
 // macOS lets unprivileged processes bind low ports (e.g. 80) only on 0.0.0.0,
@@ -1943,6 +1946,8 @@ const OWN_REPO_NOTE = "Not pulled: this is the dashboard's own repo. Pull and re
 const waitStatus = new Map();     // plan key -> [{ text, met, error }] of the last tick
 const launchedNow = new Map();    // plan key -> its `launched` record in watch.json
 const buttonMerged = new Map();   // "<root>#<number>" -> when the merge button merged it
+const ledgerFailed = new Map();   // "project/slug" -> { src, at, log } of a run the insights ledger could not read
+const ledgerLogged = new Set();   // the log paths whose ledger error is logged already
 
 const watchFile = (proj) => path.join(proj.stateDir, 'watch.json');
 const eventsFile = (proj) => path.join(proj.stateDir, 'events.jsonl');
@@ -2312,6 +2317,25 @@ const watchTick = async () => {
       try { await watchProject(p, projects, cache); }
       catch (e) { if (e === LOST_LOCK) throw e; console.log(`watcher: ${p.name}: ${redact(e.message || e)}`); }
     }
+    // the insights ledger: one line per finished run (docs/plans-dashboard.md, "Insights ledger")
+    try {
+      const r = await syncLedger({
+        projects: projects.filter((p) => p.hasPipeline), limit: 20, maxBytes: 40e6, staleMs: STALE_RUN_MS,
+        isLive: (p, slug) => pipelineLive(projects.find((x) => x.name === p) || p, slug),
+        beforeWrite: fence, failed: ledgerFailed,
+      });
+      if (!r.busy) {   // busy: a --migrate holds the ledger lock; the next tick tries again
+        if (r.added > 0) console.log(`watcher: insights: ${r.added} new runs`);
+        for (const f of r.errors) {
+          if (ledgerLogged.has(f)) continue;
+          ledgerLogged.add(f);
+          console.log(`watcher: insights: cannot read ${redact(f)}`);
+        }
+        // a run that is read now leaves `failed`: when it fails again later, the log says so again
+        const stillFailing = new Set([...ledgerFailed.values()].map((f) => f.log));
+        for (const f of ledgerLogged) if (!stillFailing.has(f)) ledgerLogged.delete(f);
+      }
+    } catch (e) { if (e === LOST_LOCK) throw e; console.log(`watcher: insights: ${redact(e.message || e)}`); }
   } catch (e) {
     console.log(e === LOST_LOCK ? 'watcher: lost the lock, tick stopped' : `watcher: ${redact(e.message || e)}`);
   } finally { watching = false; }

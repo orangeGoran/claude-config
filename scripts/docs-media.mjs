@@ -44,7 +44,8 @@ const repoDir = (p, files) => {
   for (const [f, s] of Object.entries(files)) put(path.join(p, f), s);
 };
 /**
- * Copies the files the dashboard needs to run (apps/, scripts/, skills/ and docs/) from this
+ * Copies the files the dashboard needs to run (apps/, scripts/, skills/, docs/ and
+ * .claude/scripts/run-usage.mjs, which the insights ledger of the server imports) from this
  * checkout into dest. It skips the test folders of the apps (apps/<app>/test/) and every
  * node_modules/ folder. Gives the path of the copied server.
  */
@@ -56,6 +57,9 @@ export function copyDashboard(dest) {
   };
   for (const dir of ['apps', 'scripts', 'skills', 'docs'])
     cpSync(path.join(REPO, dir), path.join(dest, dir), { recursive: true, filter });
+  const usage = path.join('.claude', 'scripts', 'run-usage.mjs');
+  mkdirSync(path.join(dest, path.dirname(usage)), { recursive: true });
+  cpSync(path.join(REPO, usage), path.join(dest, usage));
   return path.join(dest, 'apps', 'dashboard', 'server.mjs');
 }
 

@@ -400,6 +400,22 @@ A report that `auto-pipeline.sh --cleanup` marked `CLEANED` counts as no run.
 
 The "Questions" part stays empty ("None yet.") until a question source exists.
 
+## Insights ledger
+
+The insights ledger is one file, `~/.claude/pipeline-dashboard/insights.jsonl`, with one JSON line per finished pipeline run of every registered project: the cost, the tokens, the cost and minutes of each phase, the mode, the outcome, the status and the PR. The file is outside the repo.
+
+Each line has `v: 1`, `project`, `slug`, `src` (the size and change time of the run log and the report), `launched`, `ended`, `mode`, `outcome` (`running`, `needs-you`, `failed` or null), `status` (first 80 characters), `pr` (`{ number, url }`), `results`, `cost`, `costSource`, `tokens`, `phases` and `minutes`. The cost and the tokens come from the result lines of the log; the split across phases is an estimate (`.claude/scripts/run-usage.mjs`).
+
+A run can have more than one line. The last line of a project + slug pair is the valid one. A re-launch or a resume of the same slug writes to the same log, so the valid line holds the cost of all sessions of that plan. When a line has no outcome, mode, PR or launch time, it keeps the value of the line before it. So a cleanup (`auto-pipeline.sh --cleanup` sets `CLEANED` and removes the Outcome line) keeps the outcome of the finished run.
+
+The event watcher adds the line of a finished run at each tick, at most 20 runs or 40 MB of logs per tick (one larger log is still read). A run is finished when no pipeline process runs for it, and its report has an Outcome line other than `running`, or its report and log did not change for 30 minutes. A run with no report or no Outcome line counts as `running`. A new line comes only when the log or the report changed. Projects without `.claude/scripts/auto-pipeline.sh` (the generic flavor) are not in the ledger.
+
+One writer at a time: the watcher and the migration command hold `insights.jsonl.lock` while they read and write the ledger.
+
+To add the runs that finished before the ledger existed, run `node apps/dashboard/insights.mjs --migrate` once (add `--dry-run` to only count). It exits 0, or 1 when a run could not be read (the output names the log), when the registry or the ledger cannot be read, or when the dashboard holds the lock for more than 60 seconds. Run it again at any time: it adds only the runs that changed.
+
+The ledger stays when you delete run logs or session transcripts. A report edit after the transcripts are gone keeps the phase split of the earlier line.
+
 ## Environment
 
 | Variable | Effect |

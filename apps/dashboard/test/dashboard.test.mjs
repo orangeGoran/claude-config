@@ -1791,7 +1791,8 @@ test('docs-media copies a dashboard that starts and serves the page, without the
     assert.equal(existsSync(path.join(dash, 'scripts', 'node_modules')), false, 'scripts/node_modules is not copied');
     assert.equal(script, path.join(dash, 'apps', 'dashboard', 'server.mjs'));
     for (const f of ['apps/dashboard/server.mjs', 'apps/dashboard/page/app.js', 'apps/dashboard/chat-relay.mjs',
-      'scripts/artifact-copies.mjs', 'scripts/page-versions.mjs', 'skills/bootstrap-project/scripts/render.mjs'])
+      'scripts/artifact-copies.mjs', 'scripts/page-versions.mjs', 'skills/bootstrap-project/scripts/render.mjs',
+      '.claude/scripts/run-usage.mjs'])
       assert.ok(existsSync(path.join(dash, f)), `${f} is copied`);
     for (const app of readdirSync(path.join(dash, 'apps')))
       assert.equal(existsSync(path.join(dash, 'apps', app, 'test')), false, `apps/${app}/test is not copied`);
