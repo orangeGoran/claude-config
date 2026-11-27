@@ -23,6 +23,8 @@
 //   bootstrap-upgrade.json                the run status (references/contracts.md)
 //   bootstrap-upgrade-pr-body-<hash>.md   the PR body, written right before the commit
 //   bootstrap-upgrade.log                 the output of this script and of the Claude session
+//   bootstrap-upgrade-<hash>.md           the run report, written when the run ends: the result, the PR body
+//                                         and the command that continues the Claude session
 //
 // The main checkout is never written, except these files. The script never pushes the base
 // branch and never force-pushes.
@@ -32,6 +34,7 @@ import { spawnSync, spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, openSync, writeSync, closeSync,
   copyFileSync, chmodSync, lstatSync, readdirSync, rmSync, unlinkSync, realpathSync } from 'node:fs';
 import os from 'node:os';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isExecutable, moduleOn, baseBranch } from './render.mjs';
@@ -256,11 +259,15 @@ function verifyFailed(wt) {
 }
 
 /** Runs the headless Claude session in the run folder and waits for its exit. */
-function runClaude(repo, runDir) {
+function runClaude(repo, runDir, hash) {
   return new Promise((resolve, reject) => {
+    // a known session id: the report gives the command that continues this session
+    const sessionId = randomUUID();
+    writeStatus(repo, { session: { id: sessionId, runDir, hash } });
     const fd = openSync(logFile(repo), 'a');
-    writeSync(fd, `\n=== bootstrap upgrade, Claude session, ${now()} ===\n`);
+    writeSync(fd, `\n=== bootstrap upgrade, Claude session ${sessionId}, ${now()} ===\n`);
     const child = spawn('claude', ['-p', `/bootstrap-project --upgrade --unattended ${path.join(runDir, 'task.json')}`,
+      '--session-id', sessionId,
       '--permission-mode', 'acceptEdits',
       '--disallowedTools', 'Bash', 'WebFetch', 'WebSearch',
       '--strict-mcp-config',
@@ -308,7 +315,7 @@ export function prBody({ hash, slug, files, changed, decisions, alreadyFailing, 
     }
   } else L.push('None.');
   L.push('', '## New files', '', ...(newFiles.length ? newFiles.map((f) => `- \`${f.path}\`${f.status === 'merge' ? ' (merged lines)' : ''}`) : ['None.']));
-  L.push('', '## CONFIG lines that differ', '', ...(config.length ? config.map((c) => `- \`${c.path}\`: \`${c.line}\``) : ['None.']));
+  L.push('', '## CONFIG lines that differ', '', ...(config.length ? ['The repo keeps its own CONFIG block: `-` is the line the repo keeps, `+` is the value from the answers. Change a line by hand when the answer is the one you want.', ''] : []), ...(config.length ? config.map((c) => `- \`${c.path}\`: \`${c.line}\``) : ['None.']));
   L.push('', '## Not deleted', '', ...(orphans.length ? orphans.map((f) => `- \`${f.path}\``) : ['None.']));
   L.push('', '## Template updates', '', ...(decisions.templateUpdates.length
     ? decisions.templateUpdates.map((t) => `- \`${cell(t.path)}\`: ${cell(t.feature)} (${cell(t.why)})`) : ['None.']));
@@ -343,9 +350,10 @@ export function installDeps(repo, wt, params) {
 async function upgradeInWorktree(ctx, opt) {
   const { repo, wt, branch, hash, slug } = ctx;
   let committed = false, ok = false;
-  let workDir = null, runDir = null;
+  let workDir = null, runDir = null, claudeRan = false;
+  // the run folder stays once Claude ran in it: a continued session finds the files it saw
   const cleanDirs = () => {
-    for (const d of [workDir, runDir]) if (d) rmSync(d, { recursive: true, force: true });
+    for (const d of [workDir, claudeRan ? null : runDir]) if (d) rmSync(d, { recursive: true, force: true });
   };
   try {
     writeStatus(repo, { step: 'render' });
@@ -380,7 +388,8 @@ async function upgradeInWorktree(ctx, opt) {
       };
       writeFileSync(path.join(runDir, 'task.json'), JSON.stringify(task, null, 2) + '\n');
       const before = must('git', ['-C', wt, 'status', '--porcelain', '--ignored'], wt);
-      await runClaude(repo, runDir);
+      claudeRan = true;
+      await runClaude(repo, runDir, hash);
       const after = must('git', ['-C', wt, 'status', '--porcelain', '--ignored'], wt);
       if (after !== before) throw new Error('the Claude session changed the worktree: it may write only in the run folder');
       writeStatus(repo, { step: 'apply' });
@@ -447,14 +456,17 @@ async function upgradeInWorktree(ctx, opt) {
 async function upgrade(repo, opt) {
   const startedAt = now();
   // the PR of the last run, kept across failed runs: a PR for a newer hash names it in its body
-  let replaces = null;
+  let replaces = null, session = null;
   try {
     const prev = JSON.parse(readFileSync(statusFile(repo), 'utf8'));
+    // a retry that only pushes or opens the PR has no Claude session of its own: the report names the earlier one
+    const q = prev.session;
+    if (q && typeof q.id === 'string' && typeof q.runDir === 'string' && typeof q.hash === 'string') session = { id: q.id, runDir: q.runDir, hash: q.hash };
     const p = prev.state === 'pr' && prev.pr ? { number: prev.pr.number, hash: prev.hash } : prev.replaces;
     if (p && Number.isInteger(p.number) && typeof p.hash === 'string') replaces = { number: p.number, hash: p.hash };
   } catch {}
   writeStatus(repo, { state: 'running', step: 'prepare', hash: null, base: null, branch: null, worktree: null, runDir: null,
-    pid: process.pid, pr: null, error: null, startedAt, endedAt: null, replaces }, true);
+    pid: process.pid, pr: null, error: null, startedAt, endedAt: null, replaces, session }, true);
   try {
     const paramsFile = path.join(repo, '.claude', 'bootstrap.json');
     let paramsText, params;
@@ -539,6 +551,33 @@ async function upgrade(repo, opt) {
   }
 }
 
+/** Gives the command that continues the Claude session of a run. The run folder can be gone (the OS cleans the temp folder): mkdir -p makes it again, and the session history is in ~/.claude/projects/. */
+export const resumeCommand = (runDir, sessionId) => `mkdir -p '${runDir}' && cd '${runDir}' && claude --resume ${sessionId}`;
+
+/** Writes the run report bootstrap-upgrade-<hash>.md from the status file and the saved PR body. It does nothing when the run has no hash yet. */
+export function writeReport(repo) {
+  const s = JSON.parse(readFileSync(statusFile(repo), 'utf8'));
+  if (!/^[0-9a-f]{16}$/.test(String(s.hash))) return;
+  const result = {
+    pr: s.pr ? `draft PR [#${s.pr.number}](${s.pr.url})` : 'draft PR',
+    committed: `committed on \`${s.branch}\`, not pushed`,
+    same: 'nothing to upgrade',
+    failed: `failed at step \`${s.step}\`: ${s.error || 'no reason given'}`,
+  }[s.state] || `state \`${s.state}\``;
+  const L = [`# Bootstrap upgrade of ${path.basename(repo)} (${s.hash})`, '',
+    `- **Result**: ${result}`, `- **Branch**: \`${s.branch}\` from \`${s.base}\``, `- **Worktree**: \`${s.worktree}\``,
+    `- **Log**: \`${logFile(repo)}\``, `- **Ended**: ${s.endedAt || now()}`, ''];
+  L.push('## Continue the Claude session', '');
+  const q = s.session && s.session.hash === s.hash ? s.session : null;
+  if (q) {
+    L.push('Ask the session why it decided something, or tell it what to change. It made the merge decisions in its run folder: `current/` (the repo files), `stage/` (the template files), `merged/` and `decisions.json`. The real files are in the worktree: to change the PR, ask it to edit them there, then commit and push in the worktree.', '',
+      '```', resumeCommand(q.runDir, q.id), '```', '');
+  } else L.push('No Claude session ran (no changed file to merge).', '');
+  const body = bodyFile(repo, s.hash);
+  if (existsSync(body)) L.push('## PR body', '', ...readFileSync(body, 'utf8').split('\n').slice(1).join('\n').replace(/^## /gm, '### ').split('\n'));
+  writeFileSync(path.join(runsDir(repo), `bootstrap-upgrade-${s.hash}.md`), L.join('\n').trimEnd() + '\n');
+}
+
 /** The CLI. Gives the exit code; it never calls process.exit(). */
 export async function main(argv) {
   const noPush = argv.includes('--no-push');
@@ -557,7 +596,9 @@ export async function main(argv) {
   writeSync(fd, String(process.pid) + '\n');
   closeSync(fd);
   try {
-    return await upgrade(repo, { noPush });
+    const code = await upgrade(repo, { noPush });
+    try { writeReport(repo); } catch (e) { console.error('upgrade-run: no report: ' + redactError(e.message)); }
+    return code;
   } finally {
     // remove only the own lock
     try { if (readFileSync(lock, 'utf8').trim() === String(process.pid)) unlinkSync(lock); } catch {}

@@ -596,6 +596,8 @@ function renderList() {
       el.textContent = 'starting…';
       await post('/api/bootstrap-upgrade', { project: el.dataset.bsupgrade }, true);
     }));
+  byId('side').querySelectorAll('[data-bsreport]').forEach((el) =>
+    el.addEventListener('click', (e) => { e.stopPropagation(); openUpgradeReport(el.dataset.bsreport, el.dataset.hash); }));
   // the PR link opens in a new tab; the click must not fold the project card
   byId('side').querySelectorAll('[data-bspr]').forEach((el) =>
     el.addEventListener('click', (e) => e.stopPropagation()));
@@ -3383,6 +3385,13 @@ const escA = (x) => esc(x).replace(/"/g, '&quot;');
 // (POST /api/bootstrap-upgrade) and then shows the state of that run
 function bootstrapUpgradeChip(project, sp) {
   const run = sp.bootstrapRun || null;
+  // the run report (upgrade-run.mjs writes it when a run ends): the result and the command that continues the Claude session
+  const report = run && /^[0-9a-f]{16}$/.test(String(run.hash)) && ['pr', 'committed', 'failed'].includes(run.state)
+    ? '<button class="pbtn" data-bsreport="' + escA(project) + '" data-hash="' + escA(run.hash) +
+      '" title="the upgrade report and the command that continues its Claude session" aria-label="Upgrade report">📄</button>' : '';
+  return report + bootstrapRunChip(project, sp, run);
+}
+function bootstrapRunChip(project, sp, run) {
   if (run && run.state === 'running')
     return '<span class="chip warn" title="the upgrade runs in a worktree (step ' + escA(run.step || '') + ')">upgrading…</span>';
   if (run && run.state === 'pr' && run.pr && run.hash === sp.bootstrapHash && run.prState !== 'CLOSED' && run.prState !== 'MERGED')
@@ -3396,6 +3405,26 @@ function bootstrapUpgradeChip(project, sp) {
     return '<span class="chip bad x" data-bsupgrade="' + escA(project) + '" title="' + escA(run.error || 'the upgrade failed') +
       ' — click to start again">upgrade failed</span>';
   return '<span class="chip warn x" data-bsupgrade="' + escA(project) + '" title="upgrade in a worktree and open a draft PR">bootstrap update ▶</span>';
+}
+/** Opens the report of an upgrade run in the side pane, with a copy row for the command that continues its Claude session. */
+async function openUpgradeReport(project, hash) {
+  logKey = null;   // no 5 s reload: the report does not change after the run ended
+  setBack(null);
+  byId('logtitle').textContent = 'upgrade report: [' + project + '] ' + hash;
+  byId('logpane').classList.add('open');
+  const el = byId('logbody');
+  el._raw = null;
+  el.innerHTML = '<div class="setup">loading report…</div>';
+  const t = await (await fetch('/api/report?project=' + encodeURIComponent(project) + '&slug=bootstrap-upgrade-' + encodeURIComponent(hash))).text();
+  if (byId('logtitle').textContent !== 'upgrade report: [' + project + '] ' + hash) return;   // another pane opened meanwhile
+  el.innerHTML = '<div class="mdc logmd">' + md(t) + '</div>';
+  const cmd = (t.match(/^mkdir -p .* && claude --resume [0-9a-f-]+$/m) || [])[0];
+  if (cmd) {
+    const box = document.createElement('div');
+    box.className = 'metabox'; box.style.flexDirection = 'column'; box.style.alignItems = 'stretch';
+    addCopyRow(box, 'Continue the Claude session of this upgrade in a terminal:', cmd);
+    el.prepend(box);
+  }
 }
 // true while the settings form shows edits that are not saved yet
 let settingsDirty = () => false;

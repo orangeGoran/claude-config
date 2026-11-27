@@ -1,0 +1,7 @@
+kind: added
+audience: internal
+scope: bootstrap-project
+summary: |
+  An unattended scaffolding upgrade now ends with a report, and you can continue its Claude session. A 📄 button next to the upgrade chip opens the report with a copy-ready `claude --resume` command, so you can ask the session about its merge decisions or have it change the PR.
+internal: |
+  `upgrade-run.mjs` starts Claude with `--session-id`, records `session: { id, runDir, hash }` in `bootstrap-upgrade.json` (kept by a retry that only pushes or opens the PR), keeps the run folder once Claude used it, and writes `.plans/auto-runs/bootstrap-upgrade-<hash>.md` when a run ends. The dashboard reads it through `GET /api/report?slug=bootstrap-upgrade-<hash>`. The PR body's "CONFIG lines that differ" section now says that `-` is the line the repo keeps.

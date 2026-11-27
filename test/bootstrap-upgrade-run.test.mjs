@@ -14,7 +14,7 @@ const SCRIPT = path.join(SKILL, 'scripts/upgrade-run.mjs');
 const EXAMPLE = path.join(SKILL, 'references/bootstrap.example.json');
 const SKILL_FILE = '.claude/skills/skill-3-test/SKILL.md';
 const PROJECT_LINE = 'Acme project line: keep the acme fixtures small.';
-const { remoteBranchSha, prBody, symlinkedPath } = await import(SCRIPT);
+const { remoteBranchSha, prBody, symlinkedPath, resumeCommand } = await import(SCRIPT);
 
 // the fake claude: reads task.json, writes merged/<n> and decisions.json. FAKE_MODE picks a
 // bad output for one test. It logs its argv, its cwd and the files of its folder.
@@ -229,7 +229,18 @@ test('without --no-push the run pushes the branch, opens a draft PR and adds the
     assert.match(body, /- \[ \] Keep the acme lint rule\?/);
     assert.match(body, new RegExp(`auto-pipeline\\.sh --cleanup bootstrap-upgrade-${n.hash}`));
     assert.ok(ghLog(t).includes('pr edit 41 --add-label no-changelog'));
-    assert.ok(!existsSync(s.runDir), 'a run that ends with a PR removes the run folder');
+    assert.ok(existsSync(s.runDir), 'the run folder stays for a continued session');
+    // the session id: Claude gets it, the status and the report name it
+    assert.match(s.session.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.deepEqual(s.session, { id: s.session.id, runDir: s.runDir, hash: n.hash });
+    const argv = claudeLog(t)[0].argv;
+    assert.equal(argv[argv.indexOf('--session-id') + 1], s.session.id);
+    const report = read(path.join(runs(t), `bootstrap-upgrade-${n.hash}.md`));
+    assert.match(report, /- \*\*Result\*\*: draft PR \[#41\]\(https:\/\/github\.com\/acme-co\/acme-api\/pull\/41\)/);
+    assert.ok(report.includes(`\n${resumeCommand(s.runDir, s.session.id)}\n`), 'the report has the command that continues the session');
+    assert.equal(resumeCommand('/tmp/run-x', 'abc'), "mkdir -p '/tmp/run-x' && cd '/tmp/run-x' && claude --resume abc");
+    assert.match(report, /## PR body\n[\s\S]*### Questions for the owner\n\n- \[ \] Keep the acme lint rule\?/);
+    assert.ok(!report.includes('<!-- bootstrap-upgrade'), 'no body marker in the report');
   } finally { done(t); }
 });
 
@@ -305,6 +316,9 @@ test('the PR body redacts secrets in the CONFIG lines that differ', () => {
   assert.ok(!body.includes('sk-test-0000'), body);
   assert.match(body, /token: <redacted>/);
   assert.match(body, /BASE_BRANCH="main"/);
+  assert.match(body, /The repo keeps its own CONFIG block: `-` is the line the repo keeps, `\+` is the value from the answers/);
+  const none = prBody({ hash: 'abc', slug: 'bootstrap-upgrade-abc', files: [], changed: [], decisions: { files: [], templateUpdates: [], questions: [] }, alreadyFailing: [] });
+  assert.match(none, /## CONFIG lines that differ\n\nNone\./, 'no note when no line differs');
 });
 
 test('a merged PR for this hash says merged, not closed', () => {
@@ -329,6 +343,12 @@ test('only new files: Claude is not called and the commit has the new file', () 
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(claudeLog(t), []);
     assert.ok(t.g(t.repo, 'show', '--name-only', '--format=', n.branch).split('\n').includes(gone));
+    assert.equal(status(t).session, null);
+    assert.ok(!existsSync(status(t).runDir), 'a run folder that Claude never used is removed');
+    const report = read(path.join(runs(t), `bootstrap-upgrade-${n.hash}.md`));
+    assert.match(report, /- \*\*Result\*\*: committed on `auto\/bootstrap-upgrade-[0-9a-f]{16}`, not pushed/);
+    assert.match(report, /No Claude session ran/);
+    assert.ok(!/claude --resume/.test(report));
   } finally { done(t); }
 });
 
@@ -604,6 +624,9 @@ test('a failed install step fails the run at step install with the tool output, 
     assert.equal(s.state, 'failed');
     assert.equal(s.step, 'install');
     assert.match(s.error, /pnpm install --prefer-offline` failed: ERR_PNPM_FAKE/);
+    const report = read(path.join(runs(t), `bootstrap-upgrade-${n.hash}.md`));
+    assert.match(report, /- \*\*Result\*\*: failed at step `install`: .*ERR_PNPM_FAKE/);
+    assert.ok(report.includes(resumeCommand(s.session.runDir, s.session.id)), 'a failed run can be continued too');
     noLeftover(t, n);
     unlinkSync(path.join(t.dir, 'fail-install'));
     const r = up(t, ['--no-push']);
@@ -654,12 +677,15 @@ test('a retry after a failed PR create does not push again and opens the PR with
     assert.equal(status(t).step, 'pr');
     assert.ok(onOrigin(t, n.branch));
     assert.ok(existsSync(n.wt), 'a failure after the commit keeps the worktree');
-    assert.ok(!existsSync(status(t).runDir), 'a failure after the commit removes the run folder');
+    assert.ok(existsSync(status(t).runDir), 'the run folder stays for a continued session');
+    const first = status(t).session;
     assert.ok(!status(t).error.startsWith(status(t).runDir), 'only a failure before the commit names the run folder');
     const before = pushes(t);
     const r = up(t);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(pushes(t), before, 'no second push');
+    assert.deepEqual(status(t).session, first, 'a retry with no Claude session keeps the earlier session');
+    assert.ok(read(path.join(runs(t), `bootstrap-upgrade-${n.hash}.md`)).includes(resumeCommand(first.runDir, first.id)));
     assert.equal(ghLog(t).split('\n').filter((l) => l.startsWith('pr create')).length, 2, 'one failed and one good pr create');
     assert.equal(read(path.join(t.dir, 'created-body.md')), read(n.body));
     assert.equal(status(t).state, 'pr');

@@ -2166,7 +2166,8 @@ const upgradeChip = (() => {
   const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
   const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
   const body = [pick(/^const esc = .*$/m), pick(/^const escA = .*$/m),
-    pick(/^function bootstrapUpgradeChip\(project, sp\) \{[\s\S]*?\n\}$/m)].join('\n');
+    pick(/^function bootstrapUpgradeChip\(project, sp\) \{[\s\S]*?\n\}$/m),
+    pick(/^function bootstrapRunChip\(project, sp, run\) \{[\s\S]*?\n\}$/m)].join('\n');
   return new Function(body + '\nreturn bootstrapUpgradeChip;')();
 })();
 
@@ -2187,6 +2188,21 @@ test('the page: the upgrade chip shows the run state, and only an open PR for th
   const failed = upgradeChip('acme', sp({ state: 'failed', error: 'git fetch "origin" <failed>' }));
   assert.match(failed, /data-bsupgrade="acme"[^>]*>upgrade failed</);
   assert.match(failed, /title="git fetch &quot;origin&quot; &lt;failed&gt; — click to start again"/);
+});
+
+test('the page: an ended upgrade run gets a report button; a live run or a run with no hash has none', () => {
+  const H = '0123456789abcdef';
+  const sp = (run) => ({ bootstrap: 'outdated', bootstrapHash: H, bootstrapRun: run });
+  const button = /<button class="pbtn" data-bsreport="acme" data-hash="0123456789abcdef"[^>]*>📄<\/button>/;
+  for (const run of [{ state: 'pr', hash: H, pr: { number: 41, url: 'https://github.com/o/r/pull/41' } },
+    { state: 'committed', hash: H }, { state: 'failed', hash: H, error: 'x' }]) {
+    const h = upgradeChip('acme', sp(run));
+    assert.match(h, button, run.state);
+    assert.ok(h.indexOf('data-bsreport') < h.indexOf('chip'), 'the button comes before the chip');
+  }
+  for (const run of [null, { state: 'running', hash: H }, { state: 'failed', hash: null, error: 'x' }, { state: 'same', hash: H },
+    { state: 'failed', hash: '"><img src=x>', error: 'x' }])
+    assert.ok(!/data-bsreport/.test(upgradeChip('acme', sp(run))), JSON.stringify(run));
 });
 
 test('the page: a sent slash command with args on new lines leaves the live area when the log has it', () => {
