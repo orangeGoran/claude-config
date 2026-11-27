@@ -1,0 +1,9 @@
+kind: added
+audience: both
+scope: dashboard
+summary: |
+  Repos that share work can now form a group, and each group gets one checklist. Give the projects the same Group in ⚙ Settings, then open ☑ Checklist in the ⋯ menu (or the palette, or View → Checklist in Shipyard). The checklist shows the group's goals, holds and notes from one ledger.md file, each ticket with its plans, their step and their PR, and an empty Questions area for now. After the pull, run pgrep -fl chat-relay.mjs, and run npm run restart only when it shows that the live chats run under the relay. Then run npm run build-app and open Shipyard again for the new menu item.
+internal: |
+  New apps/dashboard/groups.mjs (no imports): safeGroup, parseTickets (the plan header's "- **Tickets**:" line), ticketKey, planStep, buildChain, ledgerTemplate. Registry entries take an optional "group" (lower case, 1-40 of A-Z a-z 0-9 . _ -); /api/state adds "group" per project and "tickets" per plan. New GET /api/ledger?group=<g> (400 bad group, 500 on a failed state build) and POST /api/ledger/open { group } (makes ~/.claude/pipeline-dashboard/groups/<g>/ledger.md once with flag wx, never overwrites, then opens it in VS Code). The server reads at most 256 KB of the ledger and decodes it with StringDecoder, so a cut character is dropped. Page: #checkBtn, the Settings Group input, checklistHtml/renderChecklist (repaints on each good refresh tick only when the answer changed), palette entry and the window.dashboard.toggleChecklist hook. Shipyard: View → Checklist; it needs npm run build-app and a restart of the app.
+customer:
+  en: You can now group repos that share work and see one checklist per group, with its goals, holds and notes, and each ticket with its plans and pull requests. Open it from the ⋯ menu as ☑ Checklist.

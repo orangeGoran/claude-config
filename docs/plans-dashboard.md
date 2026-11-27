@@ -86,6 +86,7 @@ Projects live in `~/.claude/pipeline-projects.json`. Copy [`scripts/pipeline-pro
 | `name` | yes | unique id; letters, digits, `.`, `_`, `-` |
 | `root` | yes | repo root |
 | `client` | no | grouping header in the sidebar (default `Default`) |
+| `group` | no | repos that share work: each group gets one ledger and one ☑ Checklist (see [Groups and the checklist](#groups-and-the-checklist)) |
 | `plansDir` | no | folder holding the `*.md` plans (default `<root>/.plans`) |
 | `doneDir` | no | where archived plans move (default `<plansDir>/done`) |
 | `launchers` | no | shell commands the ▶ Launch button can run — see below |
@@ -163,7 +164,7 @@ Every column fills in by itself. Tick **queue** on a Ready card and use **▶ La
 
 ## Tabs and keyboard shortcuts
 
-Each plan or worktree you open becomes a tab in the header row, right of **Plans**, **⋯**, **Code** and the **Plan · PR** switch. A tab shows the project, the PR number (a short title when the plan has no PR) and a status dot; its tooltip has the full title, the status word and the ⌃ key. When the tabs do not fit, the mouse wheel scrolls them sideways. Drag a tab onto another tab to move it (the left half puts it before, the right half after), or use **Move tab left** / **Move tab right** in the palette. When the open plan has no PR, the switch shows greyed out (**Plan · no PR**), so the tabs do not move. The other header buttons (Board, Scout, QA reports, Add project, Settings, alerts, theme) are in the **⋯** menu; a dot on **⋯** means that the scout needs a look. The header keeps the status: runs, plans to review and usage. You open it from the sidebar, the run strip, a board card, an alert, a link or the palette. Click a tab to open its plan, and **×** to close the tab.
+Each plan or worktree you open becomes a tab in the header row, right of **Plans**, **⋯**, **Code** and the **Plan · PR** switch. A tab shows the project, the PR number (a short title when the plan has no PR) and a status dot; its tooltip has the full title, the status word and the ⌃ key. When the tabs do not fit, the mouse wheel scrolls them sideways. Drag a tab onto another tab to move it (the left half puts it before, the right half after), or use **Move tab left** / **Move tab right** in the palette. When the open plan has no PR, the switch shows greyed out (**Plan · no PR**), so the tabs do not move. The other header buttons (Board, Scout, Checklist, QA reports, Add project, Settings, alerts, theme) are in the **⋯** menu; a dot on **⋯** means that the scout needs a look. The header keeps the status: runs, plans to review and usage. You open it from the sidebar, the run strip, a board card, an alert, a link or the palette. Click a tab to open its plan, and **×** to close the tab.
 A plan you open from the sidebar, a board card or the drawer goes into the preview tab (its title is in italics). The next plan you open that way takes its place, so you can look through plans without making a tab for each one. Double-click the row, click the preview tab, or send a chat message in it, to keep it as a normal tab. The box on a row (not a double-click) queues the plan for ▶ Launch queued.
 A tab shows the project label, the PR number, the plan title and a status word: working, asks you, your turn, failed, answered, merged or idle. A chat whose turn ended while a background agent or shell still runs counts as working; the chat says "waiting for a background task…" until it ends. The tab strip sits above the plan, right of the sidebar.
 When the open plan's PR is merged, a card on the right says so. **🧹 Clean up worktree and branch** runs the project's `auto-pipeline.sh --cleanup <slug>` (the run report stays; it refuses when the worktree has changes that are not committed). **Okay, close** closes the card and the tab; the card does not come back for that plan. The card shows for a merge of the last 7 days, or while the worktree is still on disk. Closing a tab never stops an agent or a run: the plan stays in the sidebar and in the run strip. Esc closes the open plan, and its tab stays.
@@ -174,13 +175,13 @@ When the open plan's PR is merged, a card on the right says so. **🧹 Clean up 
 | Ctrl+9 | Open the last tab |
 | Ctrl+W | Close the open tab; the tab to its right opens (else the one to its left) |
 | Ctrl+Shift+T | Open the last closed tab again |
-| ⌘K (macOS), Ctrl+K (other systems) | Open the palette: find a plan or a worktree (by title, file, project, `#<PR number>` or a pasted GitHub PR link), or run a header action (Board, Scout, Settings, Add project, Chat: type a message, Plan tab, Files changed, Close tab, Reopen closed tab, Theme, Alerts). A row shows the project, the PR tag (`PR #283 · open`), the title and the status word. |
+| ⌘K (macOS), Ctrl+K (other systems) | Open the palette: find a plan or a worktree (by title, file, project, `#<PR number>` or a pasted GitHub PR link), or run a header action (Board, Scout, Checklist, Settings, Add project, Chat: type a message, Plan tab, Files changed, Close tab, Reopen closed tab, Theme, Alerts). A row shows the project, the PR tag (`PR #283 · open`), the title and the status word. |
 | Arrow Up / Arrow Down, Enter | In the palette: pick a row, run it |
 | Esc | In the palette: close it; the focus goes back where it was |
 
 The tabs are kept in this browser (`localStorage` key `dash-tabs`). A tab goes away when its plan is gone from a project that the dashboard still shows. The closed-tab list is kept only until the page reloads.
 
-The page gives the Mac app (Shipyard) its hooks in `window.dashboard`: `switchSession(n)`, `nextSession(d)`, `closeSession()`, `reopenSession()`, `openSearch()`, `focusChat()`, `toggleBoard()`, `openSettings()`, `toggleScout()`, `toggleNote()`, `openQaReports()`, `addProject()`, `toggleTheme()`, `toggleAlerts()` and `useNativeMenu()`.
+The page gives the Mac app (Shipyard) its hooks in `window.dashboard`: `switchSession(n)`, `nextSession(d)`, `closeSession()`, `reopenSession()`, `openSearch()`, `focusChat()`, `toggleBoard()`, `openSettings()`, `toggleScout()`, `toggleChecklist()`, `toggleNote()`, `openQaReports()`, `addProject()`, `toggleTheme()`, `toggleAlerts()` and `useNativeMenu()`.
 
 Known limits:
 
@@ -198,7 +199,7 @@ Run `npm run build-app` to build and install it. It needs the Swift compiler of 
 
 The icon is `apps/dashboard/page/icon.svg`: the build makes the app icon from it (with `qlmanage`, `sips` and `iconutil`), and the dashboard uses it as the tab icon. While plans run or wait, the tab icon shows the status emoji instead. When the build cannot make the icon, it warns and the app gets the default icon.
 
-In Shipyard, the items of the ⋯ menu are in the macOS menu bar, and the page has no ⋯ button. The View menu has Board, Scout, Sticky Note, QA Reports, Light or Dark Theme and Alerts On or Off. The Shipyard menu has Settings… (⌘,) and Add Project…. QA Reports opens in the default browser.
+In Shipyard, the items of the ⋯ menu are in the macOS menu bar, and the page has no ⋯ button. The View menu has Board, Scout, Checklist, Sticky Note, QA Reports, Light or Dark Theme and Alerts On or Off. The Shipyard menu has Settings… (⌘,) and Add Project…. QA Reports opens in the default browser.
 
 Shipyard also sends the notifications of the dashboard server and the scout, with the Shipyard icon. The first notification makes macOS ask "Allow notifications from Shipyard?"; until you allow it (System Settings → Notifications → Shipyard), `terminal-notifier` sends them. A click on a notification opens its page in the Shipyard window. When a notification still shows the Terminal icon and a click opens the browser, Shipyard notifications are off: turn on **Allow notifications** in System Settings → Notifications → Shipyard. To see why Shipyard did not send one, run `~/Applications/Shipyard.app/Contents/MacOS/Shipyard -title Test -message Test`: it prints the reason. The server runs `~/Applications/Shipyard.app/Contents/MacOS/Shipyard` with the `terminal-notifier` flags (`-title`, `-subtitle`, `-message`, `-open`, `-group`).
 
@@ -366,6 +367,34 @@ Events are written at most once: a crash can lose an event, but never repeats on
 Text that comes from a command (`gh`, `git`, the launcher) has its secrets removed and is cut to 500 characters.
 
 Only one dashboard per HOME runs the watcher (`~/.claude/pipeline-dashboard/watcher.lock`). Another dashboard with the same HOME logs "another dashboard runs the watcher" and takes over when the first one stops. Start a test dashboard by hand with `DASH_WATCH_MS=0` when it uses your real HOME.
+
+## Groups and the checklist
+
+A group is a set of repos that share work, for example `acme-api`, `acme-web` and `acme-e2e`. Give each of them the same `group` in the registry (or the **Group** field in ⚙ Settings). Group names are 1 to 40 characters of letters, digits, `.`, `_` and `-`, and are stored in lower case. When you save a group name that is not good, ⚙ Settings does not keep it and tells you. A project without a group has no ledger and no checklist.
+
+**☑ Checklist** in the **⋯** menu (or "Checklist" in the ⌘K palette) opens one checklist per group. Pick the group at the top. The checklist has three parts: "Goals, holds and notes", "Tickets" and "Questions". It updates at each refresh (5 s).
+
+The ledger is one Markdown file per group: `~/.claude/pipeline-dashboard/groups/<group>/ledger.md`. People and agents write the goals, holds and notes of the group in it, under `## Goals`, `## Holds` and `## Notes`. **✎ Edit ledger** opens it in VS Code; when the file is missing, it makes it from an empty template first. It never overwrites a file. The dashboard shows at most the first 256 KB. When you rename a group, the dashboard starts a new ledger; the old `groups/<old name>/` folder stays on disk.
+
+The tickets come from the `- **Tickets**:` line of each plan header (the lines before the first `## ` heading, outside code blocks). Example: `- **Tickets**: #41, example/acme-api#41`. `#41` is issue 41 of the plan's own repo. `owner/repo#41` is issue 41 of another repo. Other text, for example `acme-api#41` or an issue URL, is not read. A plan with no `Tickets:` line shows under "Not linked to a ticket". The dashboard computes the chain ticket → plan → step → PR each time; it is not stored. An archived plan shows only under a ticket that also has an active plan, so a ticket leaves the checklist when all its plans are archived.
+
+The step of a plan (the first one that is true):
+
+| Step | When |
+| --- | --- |
+| `done` | the plan is archived, or its PR is merged |
+| `running` | its run is live or starting, or its report says it is running and changed in the last 30 minutes |
+| `closed` | its PR is closed and nothing runs |
+| `failed` | its launch or its run failed, or its report says it is running but did not change for 30 minutes |
+| `needs-you` | its run waits for your review, its chat asks you something, or its PR is open |
+| `waiting` | a `Waits for:` condition is not met (each condition shows ✓ or ✗, with the reason when it cannot be checked) |
+| `planned` | none of the above |
+
+A report that `auto-pipeline.sh --cleanup` marked `CLEANED` counts as no run.
+
+`GET /api/ledger?group=<group>` gives the same data as JSON: `group`, `projects`, `ledger` (`path`, `exists`, `text`, `truncated`, and `error` when the file cannot be read), `chain` (`tickets` and `untracked`) and `questions`. Example: `curl -s 'http://127.0.0.1:4899/api/ledger?group=acme-product'`. A group that no project has gives 400 `{ "error": "bad group" }`. `POST /api/ledger/open` with `{ "group": "<group>" }` makes the file when it is missing and opens it in VS Code; it gives `{ ok, path, created }`.
+
+The "Questions" part stays empty ("No question source is set up yet.") until a question source exists.
 
 ## Environment
 

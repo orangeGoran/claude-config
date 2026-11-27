@@ -2526,3 +2526,156 @@ test('the page: the chat pins the last message that scrolled above the view', ()
   // the chat panel calls it on its log
   assert.match(src, /jumpToBottom\(L\);\n\s*pinLastAsk\(L\);/);
 });
+
+test('the page: renderChecklist paints only the newest answer, never a removed group, and never over a selection or a focused select', async () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const m = src.match(/^async function renderChecklist\(byUser\) \{[\s\S]*?\n\}$/m);
+  assert.ok(m, 'app.js has renderChecklist');
+  const body = `
+    let state = [], checkGroup = null, sel = false, ckGen = 0, ckBusy = 0, ckPending = '';
+    const CHECK_TITLE = '☑ checklist';
+    const els = {
+      logpane: { classList: { contains: () => true } }, logtitle: { textContent: CHECK_TITLE },
+      logbody: { innerHTML: '', scrollTop: 0, _ck: null, querySelectorAll: () => [] },
+      ckGroup: { id: 'ckGroup', addEventListener() {} }, ckEdit: { addEventListener() {} },
+    };
+    const document = { activeElement: null };
+    const byId = (id) => els[id];
+    const selectionIn = () => sel;
+    const esc = (x) => String(x);
+    const checklistHtml = (d, groups, pick) => 'G:' + (d ? d.group + '/' + d.n : '-') + '|' + groups.join(',');
+    const calls = [];
+    const fetch = (url) => new Promise((res) => calls.push({ url, answer: (n) => res({ ok: true, status: 200,
+      text: async () => JSON.stringify({ group: decodeURIComponent(url.split('group=')[1]), n }) }) }));
+    ${m[0]}
+    return { renderChecklist, calls, el: els.logbody,
+      set(o) { if ('groups' in o) state = o.groups.map((g, i) => ({ name: 'p' + i, group: g }));
+        if ('pick' in o) checkGroup = o.pick; if ('sel' in o) sel = o.sel;
+        if ('focus' in o) document.activeElement = o.focus ? els.ckGroup : null; } };`;
+  const t = new Function(body)();
+  const flush = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
+
+  // no group: "No group yet" once
+  await t.renderChecklist(true);
+  assert.equal(t.el.innerHTML, 'G:-|');
+  assert.equal(t.calls.length, 0);
+
+  // an older answer never paints over a newer one (A, then B; B answers first)
+  t.set({ groups: ['a', 'b'], pick: 'a' });
+  const p1 = t.renderChecklist(true);
+  t.set({ pick: 'b' });
+  const p2 = t.renderChecklist(true);
+  t.calls[1].answer(1); await flush();
+  assert.equal(t.el.innerHTML, 'G:b/1|a,b');
+  t.calls[0].answer(1); await Promise.all([p1, p2]);
+  assert.equal(t.el.innerHTML, 'G:b/1|a,b', 'the older answer for a is dropped');
+
+  // a refresh tick waits for a request on its way that asks for the same groups and pick
+  const p3 = t.renderChecklist(true);
+  const n = t.calls.length;
+  await t.renderChecklist();
+  assert.equal(t.calls.length, n, 'no second request while the same one is on its way');
+  t.calls[n - 1].answer(2); await p3;
+  assert.equal(t.el.innerHTML, 'G:b/2|a,b');
+
+  // the picked group is removed while its answer is on its way: the old answer never paints
+  const p4 = t.renderChecklist(true);
+  const old = t.calls[t.calls.length - 1];
+  t.set({ groups: ['a'] });
+  const p5 = t.renderChecklist();
+  assert.equal(t.calls.length, n + 2, 'the tick starts a request for the remaining group');
+  old.answer(3); await flush();
+  assert.equal(t.el.innerHTML, 'G:b/2|a,b', 'the answer for the removed group b does not paint');
+  t.calls[t.calls.length - 1].answer(4); await Promise.all([p4, p5]);
+  assert.equal(t.el.innerHTML, 'G:a/4|a');
+
+  // a refresh tick never paints over a text selection or a focused select; a call by the owner does
+  for (const guard of [{ sel: true }, { focus: true }]) {
+    t.set(guard);
+    const tick = t.renderChecklist();
+    t.calls[t.calls.length - 1].answer(5); await tick;
+    assert.equal(t.el.innerHTML, 'G:a/4|a', 'tick held by ' + Object.keys(guard)[0]);
+    const own = t.renderChecklist(true);
+    t.calls[t.calls.length - 1].answer(6); await own;
+    assert.equal(t.el.innerHTML, 'G:a/6|a', 'the owner’s call paints with ' + Object.keys(guard)[0]);
+    t.set({ sel: false, focus: false });
+    t.el._ck = null; t.el.innerHTML = 'G:a/4|a';
+  }
+});
+
+test('the page: checklistHtml escapes every value, links tickets and PRs, and keeps CUR_ISSUES', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
+  const inlineFn = src.slice(src.indexOf('function inline('), src.indexOf('function md('));
+  assert.ok(inlineFn.startsWith('function inline('), 'app.js has inline()');
+  const body = [
+    pick(/^const BT = .*$/m), pick(/^const esc = .*$/m), pick(/^const escA = .*$/m),
+    "let CUR_ISSUES = 'https://github.com/example/other/issues/';",
+    'const seenIssues = [];',
+    'const md = (s) => { seenIssues.push(CUR_ISSUES); return "<div class=\\"md\\">" + inline(s) + "</div>"; };',
+    inlineFn, pick(/^const CK_CHIP = .*$/m), pick(/^function checklistHtml\(d, groups, pick\) \{[\s\S]*?\n\}$/m),
+  ].join('\n');
+  const t = new Function('projPill', body + '\nreturn { checklistHtml, seen: () => seenIssues, cur: () => CUR_ISSUES };')(
+    (name) => '<span class="ppill">' + name + '</span>');
+  const OTHER = 'https://github.com/example/other/issues/';
+
+  const none = t.checklistHtml(null, [], null);
+  assert.match(none, /No group yet/);
+  assert.ok(!none.includes('<select'));
+
+  const goal = (over = {}) => ({
+    group: 'acme-product',
+    projects: [{ name: 'acme-api', short: '', color: '' }, { name: 'acme-web', short: '', color: '' }],
+    ledger: { path: '~/.claude/pipeline-dashboard/groups/acme-product/ledger.md', exists: true, text: '## Goals\n\n- Invoice export before 15 Dec, see #41\n', truncated: false },
+    chain: { tickets: [{ key: 'example/acme-api#41', url: 'https://github.com/example/acme-api/issues/41', done: false, plans: [
+      { project: 'acme-api', slug: '20261127-100000-invoice-export', title: 'Invoice export', step: 'needs-you',
+        pr: { number: 7, state: 'OPEN', url: 'https://example.test/pull/7' }, waits: null, archived: false },
+      { project: 'acme-web', slug: '20261127-110000-invoice-screen', title: 'Fix #41', step: 'waiting', pr: null,
+        waits: [{ text: 'acme-api PR #7 merged', met: false, error: null }], archived: false },
+    ] }], untracked: [] },
+    questions: { source: null, items: [], note: 'No question source is set up yet.' },
+    ...over,
+  });
+  const h = t.checklistHtml(goal(), ['acme-product', 'beta'], 'acme-product');
+  assert.match(h, /^<div class="setup sc">/);
+  assert.match(h, /<option value="acme-product" selected>acme-product<\/option>/);
+  assert.match(h, /<option value="beta">beta<\/option>/);
+  assert.ok(h.includes('href="https://github.com/example/acme-api/issues/41"'));
+  assert.ok(h.includes('data-sopen="acme-api/20261127-100000-invoice-export"'));
+  assert.ok(h.includes('data-sopen="acme-web/20261127-110000-invoice-screen"'));
+  assert.match(h, /<span class="chip warn">needs you<\/span>/);
+  assert.match(h, /<a href="https:\/\/example\.test\/pull\/7"[^>]*>#7<\/a>/);
+  assert.ok(h.includes('acme-api PR #7 merged ✗'));
+  assert.ok(h.includes('No question source is set up yet.'));
+  assert.ok(h.includes('id="ckEdit"'));
+  // a bare #41 in the ledger or in a title is not linked to the issues of the plan that is open
+  assert.deepEqual(t.seen(), ['']);
+  assert.equal(t.cur(), OTHER);
+  assert.ok(!h.includes(OTHER + '41'));
+
+  const bad = '<img src=x onerror=alert(1)>';
+  const q = 'https://github.com/x/y"onmouseover="a/issues/41';
+  const x = t.checklistHtml(goal({ chain: { tickets: [{ key: 'x/y#41', url: q, done: true, plans: [
+    { project: 'acme-api', slug: 's1', title: bad, step: 'failed', pr: { number: 9, state: 'OPEN', url: q }, waits: [{ text: bad, met: true, error: bad }], archived: false },
+  ] }], untracked: [{ project: 'acme-web', slug: 's2', title: 'Loose', step: 'planned', pr: null, waits: null, archived: false }] } }),
+  ['acme-product'], 'acme-product');
+  assert.ok(!x.includes('<img'), 'markup is escaped');
+  assert.ok(!x.includes('onmouseover="'), 'a " in a URL is &quot;');
+  // the escaped values are still shown: the title, the wait text with its ✓ and its error in parentheses, both URLs
+  const shown = '&lt;img src=x onerror=alert(1)&gt;';
+  assert.ok(x.includes('data-sopen="acme-api/s1">' + shown + '</a>'), 'the title is shown, escaped');
+  assert.ok(x.includes(shown + ' ✓ (' + shown + ')'), 'the wait text, its ✓ and its error are shown, escaped');
+  assert.ok(x.includes('href="https://github.com/x/y&quot;onmouseover=&quot;a/issues/41" target="_blank">x/y#41</a>'), 'the ticket URL is kept, escaped');
+  assert.ok(x.includes('href="https://github.com/x/y&quot;onmouseover=&quot;a/issues/41" target="_blank" title="OPEN">#9</a>'), 'the PR URL is kept, escaped');
+  assert.match(x, /<span class="chip bad">failed<\/span>/);
+  assert.match(x, /✓ done/);
+  assert.match(x, /Not linked to a ticket/);
+
+  const missing = t.checklistHtml(goal({ ledger: { path: '~/.claude/pipeline-dashboard/groups/acme-product/ledger.md', exists: false, text: '', truncated: false } }), ['acme-product'], 'acme-product');
+  assert.match(missing, /No ledger yet/);
+  assert.ok(missing.includes('~/.claude/pipeline-dashboard/groups/acme-product/ledger.md'));
+
+  const err = t.checklistHtml(goal({ ledger: { path: '~/x', exists: true, text: '', truncated: false, error: 'Cannot read the ledger: <EACCES>' } }), ['acme-product'], 'acme-product');
+  assert.ok(err.includes('Cannot read the ledger: &lt;EACCES&gt;'));
+  assert.equal(t.cur(), OTHER, 'CUR_ISSUES is back after each call');
+});

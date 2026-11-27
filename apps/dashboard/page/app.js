@@ -3485,6 +3485,7 @@ async function openSettings() {
           '" placeholder="Project name" size="20" aria-label="project name">' +
         '<input type="text" data-f="client" data-i="' + i + '" value="' + escA(e.client || '') +
           '" placeholder="Client" size="12" aria-label="client">' +
+        '<input type="text" data-f="group" data-i="' + i + '" value="' + escA(e.group || '') + '" placeholder="Group" size="12" maxlength="40" aria-label="group" title="group — repos that share work get one checklist">' +
         '<button class="rmbtn" data-rm="' + i + '">Remove</button></div>';
       h += '<div class="pcard-body">' +
         '<span class="flabel">Repo root</span>' +
@@ -4069,8 +4070,8 @@ const TOUR = [
     body: 'Tick plans in the list (or double-click them) and they queue down here. One press starts them all.' },
   { el: () => byId(nativeMenu ? 'home' : 'hdmenuBtn'), get title() { return nativeMenu ? 'The menu bar' : 'The ⋯ menu'; },
     get body() {
-      return (nativeMenu ? 'Board, Scout, Sticky Note, QA Reports, alerts and the theme are in the View menu; Settings and Add Project are in the Shipyard menu. '
-        : 'Board, Scout, QA reports, alerts and the theme are here. ') +
+      return (nativeMenu ? 'Board, Scout, Checklist, Sticky Note, QA Reports, alerts and the theme are in the View menu; Settings and Add Project are in the Shipyard menu. '
+        : 'Board, Scout, Checklist, QA reports, alerts and the theme are here. ') +
         'Add project brings back the walkthrough and the list of repos found on this machine. ' +
         'Settings is where you rename projects, change folders and edit launchers.';
     } },
@@ -4424,6 +4425,8 @@ async function refreshOnce() {
   }
   connMsg('');
   if (logKey) loadLog();
+  // every good tick: the chain changes with each run and PR, and an edit of ledger.md does not change /api/state
+  renderChecklist();
 }
 // --- session tabs ---
 // Each plan or worktree item you open becomes a tab in the strip in the header row. A tab is its key
@@ -4683,6 +4686,7 @@ const openHasPr = () => { const p = find(selected); return !!(p && p.pr); };
 const PALETTE_ACTIONS = [
   { id: 'board', label: 'Board', run: () => byId('boardBtn').click() },
   { id: 'scout', label: 'Scout', run: () => byId('scoutBtn').click() },
+  { id: 'checklist', label: 'Checklist', run: () => byId('checkBtn').click() },
   { id: 'note', label: 'Sticky note: show or hide', run: () => byId('noteBtn').click() },
   { id: 'settings', label: 'Settings', run: () => openSettings() },
   { id: 'guide', label: 'Add project', run: () => openGuide(1) },
@@ -4809,7 +4813,7 @@ const menuHook = (id) => tabHook(() => byId(id).click());
 window.dashboard = { switchSession: tabHook(switchSession), nextSession: tabHook(nextSession),
   closeSession: tabHook(() => closeSession()), reopenSession: tabHook(reopenSession), openSearch: searchHook,
   focusChat: tabHook(focusChat), toggleBoard: tabHook(toggleBoard), openSettings: tabHook(() => openSettings()),
-  toggleScout: menuHook('scoutBtn'), toggleNote: menuHook('noteBtn'), openQaReports: tabHook(openQaReports),
+  toggleScout: menuHook('scoutBtn'), toggleChecklist: menuHook('checkBtn'), toggleNote: menuHook('noteBtn'), openQaReports: tabHook(openQaReports),
   addProject: menuHook('guidebtn'), toggleAlerts: menuHook('alertBtn'), toggleTheme: menuHook('themeBtn'), useNativeMenu };
 // --- Board: every plan of every project in one column, by where it stands. Every column fills in by itself:
 // from the run, the PR, archiving and the validation rounds. The sidebar is hidden (the board is the list), and
@@ -5182,6 +5186,130 @@ async function renderScout() {
 let scoutRawOpen = false;
 let scoutAboutOpen = null;   // null: open until the first run, then folded; after a click, what you chose
 byId('scoutBtn').addEventListener('click', () => (byId('logpane').classList.contains('open') && byId('logtitle').textContent === SCOUT_TITLE ? closeLog() : openScout()));
+
+// --- ☑ Checklist drawer: one group of repos — its ledger (goals, holds, notes), each ticket with its plans and PRs,
+// and the questions. Data: GET /api/ledger. Guide: docs/plans-dashboard.md, "Groups and the checklist".
+const CHECK_TITLE = '☑ checklist';
+let checkGroup = null;   // the group picked last, remembered per browser
+try { checkGroup = localStorage.getItem('dash-check-group'); } catch {}
+let ckGen = 0;           // each render takes a number: only the newest request paints
+let ckBusy = 0;          // requests on their way: a refresh tick does not start one while another is on its way
+let ckPending = '';      // the groups and pick of the newest request on its way ("<groups>|<pick>")
+const CK_CHIP = { done: 'chip ok', failed: 'chip bad', closed: 'chip bad', 'needs-you': 'chip warn', running: 'chip warn', waiting: 'chip warn', planned: 'chip' };
+/**
+ * Gives the HTML of the checklist for the GET /api/ledger answer `d`, the group list `groups` and the picked group `pick`.
+ * It changes nothing outside itself: CUR_ISSUES is empty while it runs (a bare #41 is not linked to the open plan's repo)
+ * and has its old value again when it returns.
+ */
+function checklistHtml(d, groups, pick) {
+  const keep = CUR_ISSUES; CUR_ISSUES = '';
+  try {
+    if (!groups.length || !d) return '<div class="setup sc"><div class="sc-card"><div class="sc-sub">No group yet. Give two or more projects the same Group in ⚙ Settings.</div></div></div>';
+    let h = '<div class="setup sc"><div class="ck-bar"><select id="ckGroup" aria-label="group">' +
+      groups.map((g) => '<option value="' + escA(g) + '"' + (g === pick ? ' selected' : '') + '>' + esc(g) + '</option>').join('') +
+      '</select><button class="mini" id="ckEdit" title="Open ledger.md in VS Code (made from the template when it is missing)">✎ Edit ledger</button></div>';
+    const L = d.ledger || {};
+    h += '<div class="sc-card"><div class="sc-head"><b>Goals, holds and notes</b><span class="dim">' + esc(L.path || '') + '</span></div>' +
+      (L.error ? '<div class="sc-sub bad">' + esc(L.error) + '</div>'
+        : L.exists ? '<div class="ck-ledger">' + md(L.text || '') + '</div>'
+        : '<div class="sc-sub">No ledger yet. ✎ Edit ledger makes one at <code>' + esc(L.path || '') + '</code>.</div>') +
+      (L.truncated ? '<p class="hint">The file is larger than 256 KB: only its start is shown.</p>' : '') + '</div>';
+    const row = (r) => '<div class="ck-row">' + projPill(r.project) +
+      '<a href="#" data-sopen="' + escA(r.project + '/' + r.slug) + '">' + inline(r.title || r.slug) + '</a>' +
+      '<span class="' + (CK_CHIP[r.step] || 'chip') + '">' + esc(String(r.step).replace(/-/g, ' ')) + '</span>' +
+      (r.pr ? (r.pr.url ? '<a href="' + escA(r.pr.url) + '" target="_blank" title="' + escA(r.pr.state || '') + '">#' + esc(String(r.pr.number)) + '</a>'
+        : '<span>#' + esc(String(r.pr.number)) + '</span>') + ' <span class="dim">' + esc(r.pr.state || '') + '</span>' : '') +
+      (r.waits && r.waits.length ? '<span class="ck-waits">' + r.waits.map((w) => esc(w.text) + ' ' + (w.met ? '✓' : '✗') +
+        (w.error ? ' (' + esc(w.error) + ')' : '')).join(' · ') + '</span>' : '') + '</div>';
+    const C = d.chain || { tickets: [], untracked: [] };
+    h += '<div class="sc-card"><div class="sc-head"><b>Tickets</b><span class="dim">from each plan’s Tickets: line</span></div>';
+    if (!C.tickets.length && !C.untracked.length) h += '<div class="sc-sub">No plans in this group yet.</div>';
+    for (const t of C.tickets) h += '<div class="ck-ticket"><div class="ck-key">' +
+      (t.url ? '<a href="' + escA(t.url) + '" target="_blank">' + esc(t.key) + '</a>' : '<b>' + esc(t.key) + '</b>') +
+      (t.done ? ' <span class="chip ok">✓ done</span>' : '') + '</div>' + t.plans.map(row).join('') + '</div>';
+    if (C.untracked.length) h += '<div class="ck-ticket"><div class="ck-key"><b>Not linked to a ticket</b></div>' + C.untracked.map(row).join('') + '</div>';
+    h += '</div>';
+    const Q = d.questions || { items: [] };
+    h += '<div class="sc-card"><div class="sc-head"><b>Questions</b></div>' +
+      (Q.items && Q.items.length ? '<ul>' + Q.items.map((q) => '<li>' + esc(q.text || q) + '</li>').join('') + '</ul>'
+        : '<div class="sc-sub">' + esc(Q.note || '') + '</div>') + '</div>';
+    return h + '</div>';
+  } finally { CUR_ISSUES = keep; }
+}
+/** Opens the ☑ Checklist drawer in the side pane and always paints it again (a reopen never stays on "loading…"). */
+function openChecklist() {
+  closeLog(); setBack(null);
+  byId('logtitle').textContent = CHECK_TITLE;
+  byId('logpane').classList.add('open');
+  byId('logbody').innerHTML = '<div class="setup">loading…</div>';
+  byId('logbody')._ck = null;
+  renderChecklist(true);
+}
+/**
+ * Paints the checklist when the drawer shows it. `byUser` is true for a call the owner caused (open, a group pick, an edit):
+ * it always paints a new answer. A refresh tick paints only a changed answer, never over a text selection or a focused select.
+ */
+async function renderChecklist(byUser) {
+  const showing = () => byId('logpane').classList.contains('open') && byId('logtitle').textContent === CHECK_TITLE;
+  if (!showing()) return;
+  const groups = [...new Set(state.map((p) => p.group).filter(Boolean))].sort();
+  const pick = groups.includes(checkGroup) ? checkGroup : groups[0];
+  // a tick waits for the request on its way only when that request asks for the same groups and pick;
+  // else (a group was removed or added) it starts a newer one, so the old answer can no longer paint
+  const want = groups.join(',') + '|' + (pick || '');
+  if (!byUser && ckBusy && ckPending === want) return;
+  const gen = ++ckGen;
+  const body = byId('logbody');
+  const paint = (h) => { const top = body.scrollTop; body.innerHTML = h; body.scrollTop = top; };
+  if (!pick) {
+    if (body._ck === '') return;
+    body._ck = '';
+    paint(checklistHtml(null, [], null));
+    return;
+  }
+  let text = '', err = '';
+  // a counter, not a flag: an older request that ends must not let a tick start over the owner's request
+  ckBusy++;
+  ckPending = want;
+  try {
+    const r = await fetch('/api/ledger?group=' + encodeURIComponent(pick));
+    text = await r.text();
+    if (!r.ok) { try { err = JSON.parse(text).error || ''; } catch {} err = err || 'HTTP ' + r.status; }
+  } catch (e) { err = String(e.message || e); } finally { ckBusy--; }
+  if (gen !== ckGen || !showing()) return;
+  if (err) {
+    body._ck = null;
+    paint('<div class="setup sc"><div class="sc-sub bad">Cannot read the checklist: ' + esc(err) + '</div></div>');
+    return;
+  }
+  const key = groups.join(',') + '|' + pick + '|' + text;
+  if (key === body._ck || (!byUser && selectionIn(body))) return;
+  if (!byUser && document.activeElement && document.activeElement.id === 'ckGroup') return;
+  body._ck = key;
+  paint(checklistHtml(JSON.parse(text), groups, pick));
+  byId('ckGroup').addEventListener('change', (e) => {
+    checkGroup = e.target.value;
+    try { localStorage.setItem('dash-check-group', checkGroup); } catch {}
+    body._ck = null;
+    renderChecklist(true);
+  });
+  byId('ckEdit').addEventListener('click', async () => {
+    // post() shows only `output`: a 400 { error } or a failed request must not end without a word
+    try {
+      const r = await post('/api/ledger/open', { group: pick });
+      if (r && r.error) alert('⚠️ ' + r.error);
+    } catch (e) { alert('⚠️ Cannot open the ledger: ' + String((e && e.message) || e)); }
+    body._ck = null;
+    renderChecklist(true);
+  });
+  body.querySelectorAll('[data-sopen]').forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    closeLog();
+    if (boardOn) openFromBoard(a.dataset.sopen);
+    else { selected = a.dataset.sopen; renderList(); renderDetail(true); }
+  }));
+}
+byId('checkBtn').addEventListener('click', () => (byId('logpane').classList.contains('open') && byId('logtitle').textContent === CHECK_TITLE ? closeLog() : openChecklist()));
 scoutPeek();
 setInterval(scoutPeek, 60000);
 // --- sticky note ---

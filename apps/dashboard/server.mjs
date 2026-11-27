@@ -26,10 +26,11 @@ import net from 'node:net';
 import { EventEmitter } from 'node:events';
 import {
   readFileSync, readdirSync, existsSync, openSync, mkdirSync, unlinkSync,
-  writeFileSync, renameSync, statSync, closeSync, readSync, realpathSync, appendFileSync, linkSync,
+  writeFileSync, renameSync, statSync, fstatSync, closeSync, readSync, realpathSync, appendFileSync, linkSync,
 } from 'node:fs';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { StringDecoder } from 'node:string_decoder';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +38,7 @@ import { OTHER, inlineHtml, findIssues, readMeta } from '../../scripts/artifact-
 import { olderVersions } from '../../scripts/page-versions.mjs';
 import { plistScript } from './restart.mjs';
 import { parseWaitsFor, prMap, prEvents, outcomeEvents, runningCount, canAutoLaunch, capLines, redact } from './watch.mjs';
+import { safeGroup, parseTickets, buildChain, ledgerTemplate } from './groups.mjs';
 import { NOTIFIERS, notifyFirst } from '../scout/scout.mjs';
 import { QA_ICON, QA_ICON_URI } from '../../skills/browser-usability-test/scripts/qa-icon.mjs';
 
@@ -199,6 +201,7 @@ const resolveProject = (p) => {
   return {
     name: p.name, client: p.client || 'Default', root, plansDir,
     color: /^#[0-9a-f]{3,8}$/i.test(p.color || '') ? p.color : '', short: p.short ? String(p.short).slice(0, 12) : '',
+    group: safeGroup(p.group) ? p.group.toLowerCase() : '',
     launchers: Array.isArray(p.launchers) ? p.launchers : [],
     hasPipeline: existsSync(launcherScript), launcherScript,
     hasLanes: existsSync(path.join(root, '.claude/scripts/plan-lanes.mjs')),
@@ -584,6 +587,7 @@ const listPlans = async (proj) => {
       try { reportAt = statSync(proj.hasPipeline ? path.join(proj.autoRunsDir, slug + '.md') : runReportFile(proj, slug)).mtimeMs; } catch {}
       return {
         reportAt, waits: planWaits(key, content),
+        tickets: parseTickets(content),
         slug, file: f, key,
         title: planTitle(content) || slug,
         summary: summaries[slug] || null,
@@ -609,14 +613,16 @@ const listPlans = async (proj) => {
     .filter((slug) => !activeSlugs.has(slug))
     .map((slug) => {
       let title = slug;
+      let tickets = [];
       try {
         const content = readFileSync(path.join(proj.doneDir, slug + '.md'), 'utf8');
         title = planTitle(content) || slug;
+        tickets = parseTickets(content);
         branches[slug] = planBranch(content);
       } catch {}
       const key = proj.name + '/' + slug;
       return {
-        slug, file: slug + '.md', key, title,
+        slug, file: slug + '.md', key, title, tickets,
         summary: summaries[slug] || null, summarizing: false,
         validations: validationRounds(proj, slug),
         run: null, live: false, worktree: !!proj.hasPipeline && existsSync(worktreeOf(proj, slug)), archived: true, reportAt: null, waits: null,
@@ -639,7 +645,7 @@ const fullState = async () => {
     const health = projectHealth(proj.root, entry);
     const boot = health.checks.find((c) => c.id === 'bootstrap');
     out.push({
-      name: proj.name, client: proj.client, root: proj.root, plansDir: proj.plansDir,
+      name: proj.name, client: proj.client, group: proj.group, root: proj.root, plansDir: proj.plansDir,
       color: proj.color, short: proj.short,
       hasPipeline: proj.hasPipeline, hasLanes: proj.hasLanes,
       modes: pipelineModes(proj).map(({ flag, ...m }) => m),
@@ -927,11 +933,17 @@ const cleanEntry = (e) => {
   // optional look: a CSS hex color and a short tag; without them the dashboard picks both
   if (/^#[0-9a-f]{3,8}$/i.test(e.color || '')) entry.color = e.color;
   if (e.short && String(e.short).trim()) entry.short = String(e.short).trim().slice(0, 12);
+  // optional group: repos that share work get one ledger; lower case, because it is also a folder name
+  const g = String(e.group || '').trim().toLowerCase();
+  if (safeGroup(g)) entry.group = g;
   let warning;
   if (!existsSync(expand(entry.root)))
     warning = entry.name + ': root does not exist: ' + entry.root;
   else if (entry.plansDir && !existsSync(expand(entry.plansDir)))
     warning = entry.name + ': plansDir does not exist: ' + entry.plansDir;
+  // a typed group that is not a good name is not kept: say so, else "Settings saved" hides the loss
+  if (g && !entry.group)
+    warning = (warning ? warning + '\n' : '') + entry.name + ': group not kept (use 1 to 40 of A-Z a-z 0-9 . _ -): ' + g.slice(0, 60);
   return { entry, warning };
 };
 
@@ -1328,6 +1340,100 @@ const openInVsCode = (proj, slug) => {
   const ext = extWorktree(proj, slug);
   const wt = ext ? ext.path : slug ? worktreeOf(proj, slug) : '';
   return openFolderInVsCode((ext || proj.hasPipeline) && wt && existsSync(wt) ? wt : proj.root);
+};
+
+// ---------- group ledger: one ledger.md and one checklist per group of projects ----------
+// Guide: docs/plans-dashboard.md, "Groups and the checklist". Pure helpers: groups.mjs.
+
+/** The folder of the group ledgers. Not inside state/: state/<name>/ is the folder of the project <name>. */
+const LEDGER_DIR = path.join(CENTRAL, 'groups');
+/** Gives the path of the ledger file of `group`. */
+const ledgerFile = (group) => path.join(LEDGER_DIR, group, 'ledger.md');
+/** The server reads at most this many bytes of a ledger file. */
+const LEDGER_MAX = 256 * 1024;
+
+/** Gives the items of `stateProjects` (the /api/state project objects) whose group is `group`. */
+const groupProjects = (group, stateProjects) => stateProjects.filter((p) => p.group === group);
+
+/**
+ * Tells what is at `f`: 'file', 'none' (missing, ENOTDIR, a dangling link, or not a file) or 'error'
+ * (any other stat error, for example EACCES). It never throws.
+ */
+const fileState = (f) => {
+  try { return statSync(f).isFile() ? 'file' : 'none'; } catch (e) {
+    return e && (e.code === 'ENOENT' || e.code === 'ENOTDIR') ? 'none' : 'error';
+  }
+};
+
+/**
+ * Gives the answer of GET /api/ledger for `group`: the group's projects, its ledger file (at most LEDGER_MAX bytes),
+ * the chain ticket → plan → step → PR, and the (empty) questions.
+ * Returns null for a bad group or a group that no project has, and { failed: true } when the state build fails.
+ * A ledger file that cannot be read gives `error` and an empty `text`, never a failure.
+ */
+const ledgerState = async (group) => {
+  if (!safeGroup(group)) return null;
+  let st;
+  try { st = JSON.parse((await buildStateBody()).body); } catch (e) {
+    console.error('ledger: cannot build the state:', e);
+    return { failed: true };
+  }
+  const projs = groupProjects(group, st);
+  if (!projs.length) return null;
+  const f = ledgerFile(group);
+  const ledger = { path: tilde(f), exists: false, text: '', truncated: false };
+  const state = fileState(f);
+  if (state === 'error') {
+    let code = 'unknown';
+    try { statSync(f); } catch (e) { code = e.code || code; }
+    Object.assign(ledger, { exists: true, error: 'Cannot read the ledger: ' + code });
+  } else if (state === 'file') {
+    ledger.exists = true;
+    let fd;
+    try {
+      fd = openSync(f, 'r');
+      // the size of the open file, not of the path: an editor's save (a new file renamed over it) can come in between
+      const size = fstatSync(fd).size;
+      const buf = Buffer.alloc(Math.min(size, LEDGER_MAX));
+      const n = buf.length ? readSync(fd, buf, 0, buf.length, 0) : 0;
+      // the decoder holds back the bytes of a character cut at the limit; a real U+FFFD in the file stays
+      ledger.text = new StringDecoder('utf8').write(buf.subarray(0, n));
+      ledger.truncated = size > LEDGER_MAX;
+    } catch (e) {
+      ledger.text = '';
+      ledger.error = 'Cannot read the ledger: ' + (e.code || 'unknown');
+    } finally {
+      if (fd !== undefined) try { closeSync(fd); } catch {}
+    }
+  }
+  return {
+    group,
+    projects: projs.map((p) => ({ name: p.name, short: p.short, color: p.color })),
+    ledger,
+    chain: buildChain(projs, Date.now(), STALE_RUN_MS),
+    questions: { source: null, items: [], note: 'No question source is set up yet.' },
+  };
+};
+
+/**
+ * Makes the ledger file of `group` from ledgerTemplate() when it is missing (never overwrites), then opens it in VS Code.
+ * Returns null for a bad group or a group that no registered project has, { ok: false, output } when the file
+ * cannot be written, else { ok: true, path, created }.
+ */
+const ledgerOpen = (group) => {
+  if (!safeGroup(group) || !allProjects().some((p) => p.group === group)) return null;
+  const f = ledgerFile(group);
+  let created;
+  try {
+    mkdirSync(path.dirname(f), { recursive: true });
+    writeFileSync(f, ledgerTemplate(group), { flag: 'wx' });
+    created = true;
+  } catch (e) {
+    if (e && e.code === 'EEXIST' && fileState(f) === 'file') created = false;
+    else return { ok: false, output: 'Cannot write ' + tilde(f) + ': ' + ((e && e.code) || 'not a file') };
+  }
+  openFolderInVsCode(f);
+  return { ok: true, path: tilde(f), created };
 };
 const archivePlan = async (proj, slug) => {
   const live = proj.hasPipeline ? await pipelineLive(proj, slug) : genericRunInfo(proj, slug).live;
@@ -3450,6 +3556,14 @@ const server = http.createServer(async (req, res) => {
       }
       return json(res, 200, { events: events.slice(-limit) });
     }
+    // the group ledger and the computed chain of one group (docs/plans-dashboard.md, "Groups and the checklist")
+    if (url.pathname === '/api/ledger' && req.method === 'GET') {
+      // group names are stored in lower case: Acme-Product and acme-product are the same group
+      const r = await ledgerState((url.searchParams.get('group') || '').toLowerCase());
+      return !r ? json(res, 400, { error: 'bad group' })
+        : r.failed ? json(res, 500, { error: 'Cannot build the state. See server.log.' })
+        : json(res, 200, r);
+    }
     if (url.pathname.startsWith('/api/chat') && req.method === 'GET') {
       const proj = getProj();
       if (!proj || !safeName(slug)) return json(res, 400, { error: 'bad request' });
@@ -3545,6 +3659,11 @@ const server = http.createServer(async (req, res) => {
       }
       if (url.pathname === '/api/scout/run') return json(res, 200, scoutRun());
       if (url.pathname === '/api/scout/unmute') return json(res, 200, scoutUnmute(b));
+      // ✎ Edit ledger: makes the group's ledger.md once (never overwrites), then opens it in VS Code
+      if (url.pathname === '/api/ledger/open') {
+        const r = ledgerOpen(String(b.group || '').toLowerCase());
+        return r ? json(res, 200, r) : json(res, 400, { error: 'bad group' });
+      }
       if (!proj || !safeName(b.slug)) return json(res, 400, { error: 'bad request' });
       if (url.pathname === '/api/launch-generic')
         return json(res, 200, launchGeneric(proj, b.slug, +b.launcher || 0));

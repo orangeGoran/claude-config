@@ -952,6 +952,16 @@
   @keyframes scspin { to { transform:rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .sc-spin { animation:none; border-top-color:var(--run); } }
   .sc-sum { margin:-2px 0 6px; font-size:calc(12.5px * var(--fs)); }
+  /* ☑ Checklist drawer: the group bar, one block per ticket, one row per plan */
+  .ck-bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .ck-ledger { white-space:normal; overflow-wrap:anywhere; }
+  .ck-ticket { margin-top:8px; padding-top:8px; border-top:1px solid var(--line); }
+  .sc-head + .ck-ticket { border-top:0; padding-top:0; }
+  .ck-key { font-weight:600; margin-bottom:4px; overflow-wrap:anywhere; }
+  .ck-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:3px 0; min-width:0; }
+  .ck-row > a { overflow-wrap:anywhere; }
+  .ck-row .chip { flex:none; }
+  .ck-waits { color:var(--dim); font-size:calc(11.5px * var(--fs)); overflow-wrap:anywhere; }
   .sc-steps > li[data-stag] { cursor:pointer; border-radius:6px; }
   .sc-steps > li[data-stag]:hover { background:var(--sel); }
   .sc-skip.res summary { color:var(--ok); }
