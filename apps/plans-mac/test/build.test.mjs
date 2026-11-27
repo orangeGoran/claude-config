@@ -64,16 +64,16 @@ const pageHooks = () => {
   return [...m[1].matchAll(/(?:^|,)\s*(\w+)/g)].map((x) => x[1]);
 };
 
-test('every hook the Swift menu calls exists in the page, and the menu calls all fourteen', () => {
+test('every hook the Swift menu calls exists in the page, and the menu calls all fifteen', () => {
   const called = [...new Set([...SWIFT.matchAll(/call\("(\w+)\(/g)].map((m) => m[1]))];
   const page = pageHooks();
   for (const name of called) assert.ok(page.includes(name), `the page has window.dashboard.${name}`);
   assert.deepEqual(called.sort(), ['addProject', 'closeSession', 'focusChat', 'nextSession', 'openQaReports', 'openSearch',
-    'openSettings', 'reopenSession', 'switchSession', 'toggleAlerts', 'toggleBoard', 'toggleNote', 'toggleScout', 'toggleTheme']);
+    'openSettings', 'reopenSession', 'switchSession', 'toggleAlerts', 'toggleBoard', 'toggleChecklist', 'toggleNote', 'toggleScout', 'toggleTheme']);
 });
 
 test('the ⋯ menu items are in the menu bar, and the app tells the page to hide its ⋯ button', () => {
-  for (const [title, action] of [['Scout', 'scout'], ['Sticky Note', 'note'], ['QA Reports', 'qaReports'],
+  for (const [title, action] of [['Scout', 'scout'], ['Checklist', 'checklist'], ['Sticky Note', 'note'], ['QA Reports', 'qaReports'],
     ['Add Project…', 'addProject'], ['Light or Dark Theme', 'theme'], ['Alerts On or Off', 'alerts']])
     assert.ok(SWIFT.includes(`NSMenuItem(title: "${title}", action: #selector(${action}(_:))`), title);
   assert.ok(pageHooks().includes('useNativeMenu'), 'the page has window.dashboard.useNativeMenu');

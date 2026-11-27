@@ -10,6 +10,7 @@
     {
       "name": "docs-site",
       "client": "Acme",
+      "group": "acme-product",
       "root": "~/Workspace/acme/docs-site",
       "plansDir": "~/Workspace/acme/wiki/plans",
       "doneDir": "~/Workspace/acme/wiki/plans/done",

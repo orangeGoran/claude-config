@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import {
   mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, rmSync, realpathSync,
-  utimesSync, statSync, readdirSync, unlinkSync,
+  utimesSync, statSync, readdirSync, unlinkSync, chmodSync,
 } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -84,7 +84,7 @@ const envFor = (h, p, q, extra = {}) => ({
   ...process.env, HOME: h, DASH_PORT: String(p), QA_REPORTS_PORT: String(q), QA_HOME: '',
   CLAUDE_TMP: path.join(tmp, 'claude-tmp'), DASH_NO_OPEN: '1', DASH_NO_SUMMARY: '1', SCOUT_NO_NOTIFY: '1',
   PATH: bin + ':' + process.env.PATH, FAKE_GH_DIR: ghDir, DASH_WATCH_MS: String(TICK),
-  DASH_NO_NOTIFY: '1', DASH_NOTIFIER: '',
+  DASH_NO_NOTIFY: '1', DASH_NOTIFIER: '', CODE_LOG: path.join(tmp, 'code.log'),
   // each test reads the files it just wrote; the result cache has its own test
   DASH_STATE_CACHE_MS: '0', ...extra,
 });
@@ -154,6 +154,11 @@ const makeRepo = (name, { plans = {}, pipeline = true, script = PIPE_SCRIPT } = 
   ghData(name);
   return root;
 };
+// makes `root` a git repo whose origin is the made-up GitHub repo example/<name> (never fetched)
+const gitRemote = (root, name) => {
+  git(root, 'init', '-q');
+  git(root, 'remote', 'add', 'origin', 'https://github.com/example/' + name + '.git');
+};
 const argsOf = (root) => { const f = path.join(root, '.claude', 'scripts', 'args.log'); return existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').filter(Boolean) : []; };
 const report = (root, slug, status) =>
   writeFileSync(path.join(root, '.plans', 'auto-runs', slug + '.md'), '# Auto-run: ' + slug + '\n\n## Status: ' + status + '\n');
@@ -182,6 +187,8 @@ before(async () => {
   writeFileSync(path.join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
   writeFileSync(path.join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
   writeFileSync(path.join(bin, 'notifier'), '#!/bin/sh\necho "$*" >> "$NOTIFY_LOG"\n', { mode: 0o755 });
+  // a stand-in for VS Code's code: it only logs what it would open
+  writeFileSync(path.join(bin, 'code'), '#!/bin/sh\necho "$*" >> "$CODE_LOG"\n', { mode: 0o755 });
   register([]);
   port = await freePort();
   qaPort = await freePort();
@@ -867,4 +874,295 @@ test('an archived plan says whether its worktree is still on disk, for the merge
   assert.equal(shipped.worktree, true, 'the worktree is still there: the card offers Clean up');
   assert.equal((await plan('web21', 'cleaned')).worktree, false);
   unregister(['web21']);
+});
+
+// ---- group ledger: GET /api/ledger, POST /api/ledger/open ----
+const ledgerPath = (group) => path.join(home, '.claude', 'pipeline-dashboard', 'groups', group, 'ledger.md');
+const getLedger = async (group, headers = {}) => {
+  const r = await fetch(`http://127.0.0.1:${port}/api/ledger` + (group == null ? '' : '?group=' + group), { headers });
+  const t = await r.text();
+  let body = null;
+  try { body = JSON.parse(t); } catch {}
+  return { status: r.status, body };
+};
+const openLedger = async (data, headers = {}) => {
+  const r = await fetch(`http://127.0.0.1:${port}/api/ledger/open`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(data),
+  });
+  const t = await r.text();
+  let body = null;
+  try { body = JSON.parse(t); } catch {}
+  return { status: r.status, body };
+};
+const codeLog = () => { const f = path.join(tmp, 'code.log'); return existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').filter(Boolean) : []; };
+const ticketPlan = (lines) => '# Plan: ' + 'Invoice work' + '\n\n- **Base**: main\n' + lines.map((l) => l + '\n').join('') + '\n## Goal\n\nDo the thing.\n';
+
+test('group ledger: the chain of one ticket from two repos', async () => {
+  const api = makeRepo('gl-api', { plans: { '20261127-100000-invoice-export': ticketPlan(['- **Tickets**: #41']) } });
+  gitRemote(api, 'gl-api');
+  setPrs('gl-api', [prRow(7, 'OPEN', { headRefName: 'auto/20261127-100000-invoice-export' })]);
+  const web = makeRepo('gl-web', { plans: { '20261127-110000-invoice-screen':
+    ticketPlan(['- **Tickets**: example/gl-api#41', '- **Waits for**: gl-api PR #99 merged']) } });
+  gitRemote(web, 'gl-web');
+  setPrs('gl-web', []);
+  try {
+    register([{ name: 'gl-api', root: api, group: 'gl-group' }, { name: 'gl-web', root: web, group: 'gl-group' }]);
+    const r = await until(async () => {
+      const x = await getLedger('gl-group');
+      return x.status === 200 && x.body.chain.tickets[0]?.plans.find((p) => p.project === 'gl-api')?.pr?.number === 7 && x;
+    }, 'the ledger with PR #7');
+    const b = r.body;
+    assert.equal(b.group, 'gl-group');
+    assert.deepEqual(b.projects.map((p) => p.name).sort(), ['gl-api', 'gl-web']);
+    assert.equal(b.chain.tickets.length, 1);
+    const t = b.chain.tickets[0];
+    assert.equal(t.key, 'example/gl-api#41');
+    assert.equal(t.url, 'https://github.com/example/gl-api/issues/41');
+    assert.equal(t.done, false);
+    assert.deepEqual(t.plans.map((p) => [p.project, p.slug, p.step]), [
+      ['gl-api', '20261127-100000-invoice-export', 'needs-you'],
+      ['gl-web', '20261127-110000-invoice-screen', 'waiting'],
+    ]);
+    assert.deepEqual(t.plans[0].pr, { number: 7, state: 'OPEN', url: 'https://example.test/pull/7' });
+    assert.equal(t.plans[1].waits[0].text, 'gl-api PR #99 merged');
+    assert.equal(t.plans[1].waits[0].met, false);
+    assert.deepEqual(b.chain.untracked, []);
+    assert.deepEqual(b.questions.items, []);
+    assert.equal(b.questions.source, null);
+    const st = await (await fetch(`http://127.0.0.1:${port}/api/state`)).json();
+    for (const n of ['gl-api', 'gl-web']) assert.equal(st.find((x) => x.name === n).group, 'gl-group');
+    // the sidebar's group bar: 1 open ticket, and the plan with the open PR needs you
+    for (const n of ['gl-api', 'gl-web']) assert.deepEqual(st.find((x) => x.name === n).groupInfo, { tickets: 1, needsYou: 1 });
+    assert.deepEqual((await plan('gl-api', '20261127-100000-invoice-export')).tickets, [{ repo: null, number: 41 }]);
+  } finally { unregister(['gl-api', 'gl-web']); }
+});
+
+test('group ledger: the chain follows a merge', async () => {
+  const slug = '20261127-120000-merge-me';
+  const root = makeRepo('gl-merge', { plans: { [slug]: ticketPlan(['- **Tickets**: #41']) } });
+  setPrs('gl-merge', [prRow(8, 'OPEN', { headRefName: 'auto/' + slug })]);
+  try {
+    register([{ name: 'gl-merge', root, group: 'gl-group3' }]);
+    const r = await until(async () => {
+      const x = await getLedger('gl-group3');
+      return x.status === 200 && x.body.chain.tickets[0]?.plans[0]?.pr?.number === 8 && x;
+    }, 'the ledger with PR #8');
+    const t = r.body.chain.tickets[0];
+    assert.equal(t.key, 'gl-merge#41');
+    assert.equal(t.url, null);
+    assert.equal(t.plans[0].step, 'needs-you');
+    setPrs('gl-merge', [prRow(8, 'MERGED', { headRefName: 'auto/' + slug })]);
+    await post('/api/pr-refresh', { project: 'gl-merge', slug });
+    const m = await until(async () => {
+      const x = await getLedger('gl-group3');
+      return x.body?.chain.tickets[0]?.plans[0]?.step === 'done' && x;
+    }, 'the merged step');
+    assert.equal(m.body.chain.tickets[0].plans[0].pr.state, 'MERGED');
+    assert.equal(m.body.chain.tickets[0].done, true);
+  } finally { unregister(['gl-merge']); }
+});
+
+test('group ledger: an untracked plan, and a project outside the group', async () => {
+  const un = makeRepo('gl-un', { plans: {
+    '20261127-130000-no-ticket': ticketPlan([]),
+    '20261127-130001-with-ticket': ticketPlan(['- **Tickets**: #41']),
+  } });
+  const other = makeRepo('gl-other', { plans: { '20261127-130002-other': ticketPlan(['- **Tickets**: #41']) } });
+  setPrs('gl-un', []);
+  setPrs('gl-other', []);
+  try {
+    register([{ name: 'gl-un', root: un, group: 'gl-group7' }, { name: 'gl-other', root: other }]);
+    const r = await until(async () => { const x = await getLedger('gl-group7'); return x.status === 200 && x; }, 'the ledger of gl-group7');
+    assert.deepEqual(r.body.chain.untracked.map((p) => p.slug), ['20261127-130000-no-ticket']);
+    assert.deepEqual(r.body.projects.map((p) => p.name), ['gl-un']);
+    assert.ok(!JSON.stringify(r.body.chain).includes('gl-other'), 'no row of gl-other');
+    assert.deepEqual(r.body.chain.tickets.map((t) => [t.key, t.plans.map((p) => p.slug)]), [['gl-un#41', ['20261127-130001-with-ticket']]]);
+  } finally { unregister(['gl-un', 'gl-other']); }
+});
+
+test('group ledger: the ledger text, its 256 KB limit and the read errors', async () => {
+  const root = makeRepo('gl-text');
+  const root4 = makeRepo('gl-g4');
+  const root4b = makeRepo('gl-g4b');
+  try {
+    register([{ name: 'gl-text', root, group: 'gl-group8' }, { name: 'gl-g4', root: root4, group: 'gl-group4' },
+      { name: 'gl-g4b', root: root4b, group: 'gl-group4b' }]);
+    let r = await until(async () => { const x = await getLedger('gl-group8'); return x.status === 200 && x; }, 'the ledger of gl-group8');
+    assert.equal(r.body.ledger.exists, false);
+    assert.equal(r.body.ledger.text, '');
+    const f = ledgerPath('gl-group8');
+    mkdirSync(path.dirname(f), { recursive: true });
+    writeFileSync(f, '## Goals\n\n- Invoice export before 15 Dec\n');
+    r = await getLedger('gl-group8');
+    assert.equal(r.body.ledger.exists, true);
+    assert.match(r.body.ledger.text, /Invoice export before 15 Dec/);
+    assert.equal(r.body.ledger.truncated, false);
+    assert.ok(r.body.ledger.path.startsWith('~/.claude/pipeline-dashboard/groups/gl-group8/'), r.body.ledger.path);
+
+    writeFileSync(f, 'a'.repeat(300 * 1024));
+    r = await getLedger('gl-group8');
+    assert.equal(r.body.ledger.text.length, 262144);
+    assert.equal(r.body.ledger.truncated, true);
+
+    // 1 + 300000 bytes: the cut at 262144 falls inside an é
+    writeFileSync(f, 'a' + 'é'.repeat(150000));
+    r = await getLedger('gl-group8');
+    assert.equal(r.body.ledger.truncated, true);
+    assert.ok(!r.body.ledger.text.includes('�'), 'a cut character is dropped, not shown as U+FFFD');
+    assert.equal(Buffer.byteLength(r.body.ledger.text), 262143);
+
+    // a real U+FFFD (3 bytes) that ends exactly at the limit stays
+    writeFileSync(f, 'a'.repeat(262141) + '�' + 'more text');
+    r = await getLedger('gl-group8');
+    assert.ok(r.body.ledger.text.endsWith('�'));
+
+    if (process.getuid?.() !== 0) {
+      writeFileSync(f, '## Goals\n');
+      chmodSync(f, 0o000);
+      try {
+        r = await getLedger('gl-group8');
+        assert.equal(r.status, 200);
+        assert.equal(r.body.ledger.exists, true);
+        assert.equal(r.body.ledger.text, '');
+        assert.match(r.body.ledger.error, /^Cannot read the ledger/);
+      } finally { chmodSync(f, 0o644); }
+    }
+
+    // a folder at the ledger.md path
+    mkdirSync(ledgerPath('gl-group4'), { recursive: true });
+    r = await getLedger('gl-group4');
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ledger.exists, false);
+    const before = codeLog().length;
+    let o = await openLedger({ group: 'gl-group4' });
+    assert.equal(o.status, 200);
+    assert.equal(o.body.ok, false);
+    assert.match(o.body.output, /^Cannot write/);
+    await ticks(2);
+    assert.equal(codeLog().length, before, 'nothing opened in VS Code');
+
+    // a file at groups/gl-group4b: the ledger folder cannot be made
+    writeFileSync(path.dirname(ledgerPath('gl-group4b')), 'not a folder');
+    o = await openLedger({ group: 'gl-group4b' });
+    assert.equal(o.status, 200);
+    assert.equal(o.body.ok, false);
+    assert.match(o.body.output, /^Cannot write/);
+  } finally { unregister(['gl-text', 'gl-g4', 'gl-g4b']); }
+});
+
+test('group ledger: POST /api/ledger/open makes the file once and never overwrites it', async () => {
+  const root2 = makeRepo('gl-g2');
+  const root5 = makeRepo('gl-g5');
+  try {
+    register([{ name: 'gl-g2', root: root2, group: 'gl-group2' }, { name: 'gl-g5', root: root5, group: 'gl-group5' }]);
+    const f = ledgerPath('gl-group2');
+    let o = await openLedger({ group: 'gl-group2' });
+    assert.equal(o.status, 200);
+    assert.equal(o.body.ok, true);
+    assert.equal(o.body.created, true);
+    assert.equal(o.body.path, '~/.claude/pipeline-dashboard/groups/gl-group2/ledger.md');
+    assert.match(readFileSync(f, 'utf8'), /^# Ledger: gl-group2\n[\s\S]*## Goals\n\n## Holds\n\n## Notes\n$/);
+    await until(() => codeLog().some((l) => l.includes(f)), 'code opens the ledger');
+    writeFileSync(f, '## Goals\n- kept\n');
+    o = await openLedger({ group: 'gl-group2' });
+    assert.equal(o.body.ok, true);
+    assert.equal(o.body.created, false);
+    assert.equal(readFileSync(f, 'utf8'), '## Goals\n- kept\n');
+
+    const both = await Promise.all([openLedger({ group: 'gl-group5' }), openLedger({ group: 'gl-group5' })]);
+    assert.deepEqual(both.map((x) => x.body.created).sort(), [false, true]);
+    const t = readFileSync(ledgerPath('gl-group5'), 'utf8');
+    assert.equal(t.split('# Ledger: gl-group5').length, 2, 'the template is in the file once');
+  } finally { unregister(['gl-g2', 'gl-g5']); }
+});
+
+test('group ledger: bad groups and cross-site requests are refused', async () => {
+  const root = makeRepo('gl-g5b');
+  const rootG = makeRepo('gl-g1');
+  const central = path.join(home, '.claude', 'pipeline-dashboard');
+  try {
+    register([{ name: 'gl-g5b', root, group: 'gl-group5b' }, { name: 'gl-g1', root: rootG, group: 'gl-group' }]);
+    for (const g of [null, '..', 'a%2Fb', 'nobody']) {
+      const r = await getLedger(g);
+      assert.equal(r.status, 400, String(g));
+      assert.deepEqual(r.body, { error: 'bad group' });
+    }
+    for (const g of ['..', 'nobody']) {
+      const o = await openLedger({ group: g });
+      assert.equal(o.status, 400, g);
+      assert.deepEqual(o.body, { error: 'bad group' });
+    }
+    assert.equal(existsSync(path.join(central, 'ledger.md')), false);
+    assert.equal(existsSync(path.join(central, 'groups', 'nobody')), false);
+    const evil = { Origin: 'https://evil.example' };
+    assert.equal((await getLedger('gl-group', evil)).status, 403);
+    assert.equal((await openLedger({ group: 'gl-group5b' }, evil)).status, 403);
+    assert.equal(existsSync(ledgerPath('gl-group5b')), false);
+  } finally { unregister(['gl-g5b', 'gl-g1']); }
+});
+
+test('group ledger: Settings keep the group in lower case, and a bad group is dropped', async () => {
+  const oldText = readFileSync(regFile(), 'utf8');
+  const a = makeRepo('gl-set-a');
+  const b = makeRepo('gl-set-b');
+  const c = makeRepo('gl-g9');
+  try {
+    const earlier = registry();
+    const r = await post('/api/registry', { projects: [...earlier, { name: 'gl-set-a', root: a, group: 'GL-Group6' }, { name: 'gl-set-b', root: b, group: 'a/b' }] });
+    assert.equal(r.ok, true);
+    assert.match(r.output, /gl-set-b: group not kept .*: a\/b/, 'Settings say that the bad group is not kept');
+    assert.doesNotMatch(r.output, /gl-set-a: group/);
+    // the "Group these repos" form reads the warnings as a list: only a warning makes it show an alert
+    assert.ok(r.warnings.some((w) => /^gl-set-b: group not kept/.test(w)));
+    assert.ok(!r.warnings.some((w) => /^gl-set-a: group/.test(w)));
+    const saved = registry();
+    assert.deepEqual(saved.map((e) => e.name), [...earlier.map((e) => e.name), 'gl-set-a', 'gl-set-b']);
+    assert.equal(saved.find((e) => e.name === 'gl-set-a').group, 'gl-group6');
+    assert.equal('group' in saved.find((e) => e.name === 'gl-set-b'), false);
+
+    register([{ name: 'gl-g9', root: c, group: 'GL-Group9' }]);
+    const st = await (await fetch(`http://127.0.0.1:${port}/api/state`)).json();
+    assert.equal(st.find((x) => x.name === 'gl-g9').group, 'gl-group9');
+    assert.equal((await getLedger('gl-group9')).status, 200);
+    const mixed = await getLedger('GL-Group9');
+    assert.equal(mixed.status, 200, 'a group name in another case is the same group');
+    assert.equal(mixed.body.group, 'gl-group9');
+    // ✎ Edit ledger with the name in another case opens the same lower-case ledger
+    const opened = await openLedger({ group: 'GL-Group9' });
+    assert.equal(opened.status, 200);
+    assert.equal(opened.body.ok, true);
+    assert.equal(opened.body.path, '~/.claude/pipeline-dashboard/groups/gl-group9/ledger.md');
+    assert.equal(existsSync(ledgerPath('gl-group9')), true);
+  } finally { writeFileSync(regFile(), oldText); }
+});
+
+test('group ledger: a failed state build gives 500 with a fixed text, and the next build works again', async () => {
+  // a hand-written entry whose root is not a text makes the state build throw
+  const oldText = readFileSync(regFile(), 'utf8');
+  try {
+    writeFileSync(regFile(), JSON.stringify({ projects: [...registry(), { name: 'gl-broken', root: 5, group: 'gl-group11' }] }));
+    const r = await getLedger('gl-group11');
+    assert.equal(r.status, 500);
+    assert.deepEqual(r.body, { error: 'Cannot build the state. See server.log.' });
+  } finally { writeFileSync(regFile(), oldText); }
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/state`)).status, 200);
+});
+
+test('group ledger: an archived plan shows under a ticket that still has an active plan, and nowhere else', async () => {
+  const root = makeRepo('gl-arch', { plans: { '20261127-140000-active-41': ticketPlan(['- **Tickets**: #41']) } });
+  mkdirSync(path.join(root, '.plans', 'done'), { recursive: true });
+  writeFileSync(path.join(root, '.plans', 'done', '20261120-140000-done-41.md'), ticketPlan(['- **Tickets**: #41']));
+  writeFileSync(path.join(root, '.plans', 'done', '20261120-150000-done-50.md'), ticketPlan(['- **Tickets**: #50']));
+  setPrs('gl-arch', []);
+  try {
+    register([{ name: 'gl-arch', root, group: 'gl-group10' }]);
+    const r = await until(async () => { const x = await getLedger('gl-group10'); return x.status === 200 && x; }, 'the ledger of gl-group10');
+    assert.deepEqual(r.body.chain.tickets.map((t) => t.key), ['gl-arch#41'], 'no ticket #50: it has only an archived plan');
+    assert.deepEqual(r.body.chain.tickets[0].plans.map((p) => [p.slug, p.step, p.archived]), [
+      ['20261120-140000-done-41', 'done', true],
+      ['20261127-140000-active-41', 'planned', false],
+    ]);
+    assert.equal(r.body.chain.tickets[0].done, false);
+    assert.deepEqual((await plan('gl-arch', '20261120-140000-done-41')).tickets, [{ repo: null, number: 41 }]);
+  } finally { unregister(['gl-arch']); }
 });

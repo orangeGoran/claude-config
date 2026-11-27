@@ -312,6 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
   @objc func settings(_ sender: Any?) { call("openSettings()") }
   @objc func board(_ sender: Any?) { call("toggleBoard()") }
   @objc func scout(_ sender: Any?) { call("toggleScout()") }
+  @objc func checklist(_ sender: Any?) { call("toggleChecklist()") }
   @objc func note(_ sender: Any?) { call("toggleNote()") }
   @objc func qaReports(_ sender: Any?) { call("openQaReports()") }
   @objc func addProject(_ sender: Any?) { call("addProject()") }
@@ -373,6 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     let view = NSMenu(title: "View")
     item(view, NSMenuItem(title: "Board", action: #selector(board(_:)), keyEquivalent: "b"))
     item(view, NSMenuItem(title: "Scout", action: #selector(scout(_:)), keyEquivalent: ""))
+    item(view, NSMenuItem(title: "Checklist", action: #selector(checklist(_:)), keyEquivalent: ""))
     item(view, NSMenuItem(title: "Sticky Note", action: #selector(note(_:)), keyEquivalent: ""))
     item(view, NSMenuItem(title: "QA Reports", action: #selector(qaReports(_:)), keyEquivalent: ""))
     view.addItem(.separator())
