@@ -1,0 +1,7 @@
+kind: fixed
+audience: internal
+scope: bootstrap-project
+summary: |
+  A project with git submodules now gets allow rules for the git commands inside each submodule (for example `git -C contracts checkout <sha>`), so a headless run that moves a submodule pointer no longer stops with "This command requires approval". The checkout rule matches with and without `--detach`. The rules come on the next bootstrap upgrade of the project.
+internal: |
+  render.mjs: submodulePaths(repo) reads the paths from .gitmodules (git config -f .gitmodules), submoduleAllow(paths) gives Bash(git -C <path> <verb>*) for fetch, status, rev-parse, log, show, diff, merge-base, cat-file, ls-tree, grep, checkout and switch --detach. renderAll passes the paths to buildVars, which adds the rules to settings.json permissions.allow. Paths with a space or a special character get no rules. Test in test/bootstrap-project.test.mjs.

@@ -1090,3 +1090,23 @@ test('unusedParts offers codexInVerify only while the codex module is on and the
   off.modules.codex = false;
   assert.ok(!keys(off).includes('setting:codexInVerify'));
 });
+
+test('a repo with submodules gets git -C <submodule> rules, and the checkout rule takes a plain sha and --detach', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'bootstrap-sub-'));
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+    writeFileSync(path.join(dir, '.gitmodules'), '[submodule "contracts"]\n\tpath = contracts\n\turl = https://example.test/contracts.git\n'
+      + '[submodule "bad"]\n\tpath = has space\n\turl = https://example.test/bad.git\n');
+    assert.deepEqual(render.submodulePaths(dir), ['contracts']);
+    const params = JSON.parse(readFileSync(EXAMPLE, 'utf8'));
+    const allowOf = (repo) => JSON.parse(render.renderAll(params, { repo }).find((f) => f.path === '.claude/settings.json').content).permissions.allow;
+    const allow = allowOf(dir);
+    for (const v of ['fetch', 'status', 'rev-parse', 'log', 'merge-base', 'checkout', 'switch --detach']) assert.ok(allow.includes(`Bash(git -C contracts ${v}*)`), v);
+    const matches = (cmd) => allow.some((a) => { const m = /^Bash\((.*)\*\)$/.exec(a); return m && cmd.startsWith(m[1]); });
+    assert.ok(matches('git -C contracts checkout 52adfb603fdf948be14b7897cc6799a3df152e3f'));
+    assert.ok(matches('git -C contracts checkout --detach 52adfb603fdf948be14b7897cc6799a3df152e3f'));
+    assert.ok(!allow.some((a) => a.includes('has space')));
+    rmSync(path.join(dir, '.gitmodules'));
+    assert.ok(!allowOf(dir).some((a) => a.startsWith('Bash(git -C ')));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

@@ -327,7 +327,17 @@ export function mergeLimits(limits, tmpl) {
 export const baseBranch = (p) => str(p?.git?.base, 'develop');
 
 /** Turns the interview answers into the placeholder values. */
-export function buildVars(p, now = new Date()) {
+/**
+ * Gives the allow rules for the git submodules of the repo: read commands and the pointer
+ * move (`checkout`, `switch --detach`) inside each submodule, as `git -C <path> …`. A plan
+ * may write the checkout with or without `--detach`, so the checkout rule takes both.
+ */
+export function submoduleAllow(paths) {
+  const verbs = ['fetch', 'status', 'rev-parse', 'log', 'show', 'diff', 'merge-base', 'cat-file', 'ls-tree', 'grep', 'checkout', 'switch --detach'];
+  return arr(paths).flatMap((sp) => verbs.map((v) => `Bash(git -C ${sp} ${v}*)`));
+}
+
+export function buildVars(p, now = new Date(), { submodules = [] } = {}) {
   const pr = p.project, g = p.git || {}, st = p.stack || {}, r = p.rules || {}, ly = p.layout || {};
   const cmd = st.commands || {};
   const base = baseBranch(p), prod = str(g.prod, 'main'), staging = str(g.staging);
@@ -387,6 +397,7 @@ export function buildVars(p, now = new Date()) {
     ...(moduleOn(p, 'codex') ? CODEX_ALLOW : []),
     ...(moduleOn(p, 'step-gate') ? ['Bash(bash .claude/scripts/workflow-complete-step.sh*)'] : []),
     ...(moduleOn(p, 'changelog') ? [clValidateCmd ? `Bash(${clValidateCmd})` : 'Bash(node .claude/scripts/changelog-validate.mjs*)'] : []),
+    ...submoduleAllow(submodules),
     ...arr(r.extraAllow),
   ];
   // deny: destructive commands only. Never a plain push or PR rule: deny beats every
@@ -758,7 +769,7 @@ export const isExecutable = (p) => /^\.claude\/scripts\/.*\.(sh|mjs)$/.test(p);
 
 /** Renders every enabled template. Returns [{ path, content, kind }]. */
 export function renderAll(params, { upgrade = false, now = new Date(), repo = null } = {}) {
-  const vars = buildVars(params, now);
+  const vars = buildVars(params, now, { submodules: repo ? submodulePaths(repo) : [] });
   if (repo) vars.HAS_MAKEFILE = hasMakefile(repo);
   const limits = arr(params.rules?.validatorLimits).map((x) => str(x)).filter(Boolean);
   const sources = [
@@ -824,6 +835,18 @@ export function renderAll(params, { upgrade = false, now = new Date(), repo = nu
     }
   }
   return [...files.values()];
+}
+
+/**
+ * Gives the submodule paths from the repo's .gitmodules. A path with a space or another
+ * special character is left out, because it cannot go into a Bash(...) rule safely.
+ */
+export function submodulePaths(repo) {
+  if (!existsSync(path.join(repo, '.gitmodules'))) return [];
+  try {
+    return execFileSync('git', ['config', '-f', '.gitmodules', '--get-regexp', '^submodule\\..*\\.path$'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+      .split('\n').map((l) => l.split(' ').slice(1).join(' ').trim()).filter((x) => /^[\w.\/-]+$/.test(x)).sort();
+  } catch { return []; }
 }
 
 /** Returns true when the repo has a Makefile (any folder), so .editorconfig gets its tab block. */
