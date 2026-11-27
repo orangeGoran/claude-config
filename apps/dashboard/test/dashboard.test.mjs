@@ -2245,12 +2245,12 @@ test('the page: revealInSide opens the folds and clears a search that hide a pla
   assert.ok(m, 'app.js has revealInSide');
   const plan = { key: 'acme/20260101-000000-demo', project: 'acme', title: 'Demo' };
   const wt = { key: 'acme/wt.fix', kind: 'wt', project: 'acme', name: 'fix' };
-  const make = (q) => {
-    const env = { collapsedProjects: new Set(['acme', 'wt:acme', 'other']), saved: 0, box: { value: q } };
-    const reveal = new Function('find', 'collapsedProjects', 'saveCollapsed', 'byId', 'matchesQ', 'visibleWts',
+  const make = (q, folds = ['acme', 'wt:acme', 'other'], group = '') => {
+    const env = { collapsedProjects: new Set(folds), saved: 0, box: { value: q } };
+    const reveal = new Function('find', 'collapsedProjects', 'saveCollapsed', 'byId', 'matchesQ', 'visibleWts', 'state',
       m[0] + '\nreturn revealInSide;')(
       (k) => [plan, wt].find((x) => x.key === k), env.collapsedProjects, () => env.saved++, () => env.box,
-      (p, s) => p.title.toLowerCase().includes(s), () => (env.box.value ? [] : [wt]));
+      (p, s) => p.title.toLowerCase().includes(s), () => (env.box.value ? [] : [wt]), [{ name: 'acme', group }]);
     return { env, reveal };
   };
   let { env, reveal } = make('');
@@ -2266,6 +2266,10 @@ test('the page: revealInSide opens the folds and clears a search that hide a pla
   assert.equal(env.box.value, 'demo', 'a search that shows the plan stays');
   reveal('acme/unknown');
   assert.equal(env.saved, 1, 'an unknown key changes nothing');
+  // a plan in a hidden group: the group shows its projects again, and the project opens
+  ({ env, reveal } = make('', ['acme', 'grp:acme-product', 'grp:other'], 'acme-product'));
+  reveal(plan.key);
+  assert.deepEqual([...env.collapsedProjects], ['grp:other'], 'the hidden group and its folded project open');
 });
 
 test('the page: a tab shows a readable title and a status word', () => {
@@ -2546,4 +2550,295 @@ test('the page: the chat pins the last message that scrolled above the view', ()
   assert.equal(pinnedAsk([], 0), -1);
   // the chat panel calls it on its log
   assert.match(src, /jumpToBottom\(L\);\n\s*pinLastAsk\(L\);/);
+});
+
+test('the page: renderChecklist paints only the newest answer and never a removed group, in the right area or the drawer', async () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
+  const body = `
+    let state = [], checkGroup = null, sel = false, ckGen = 0, ckBusy = 0, ckPending = '', selected = null, boardOn = false, drawerOpen = false;
+    const CK_DRAWER = '☑ checklist';
+    const ckmain = { classList: { contains: (c) => c === 'ckmain' } };
+    const els = {
+      detail: { innerHTML: '', scrollTop: 0, _ck: null, firstElementChild: ckmain, querySelectorAll: () => [] },
+      logbody: { innerHTML: '', scrollTop: 0, _ck: null, firstElementChild: ckmain, querySelectorAll: () => [] },
+      logpane: { classList: { contains: () => drawerOpen } }, logtitle: { get textContent() { return CK_DRAWER; } },
+      ckEdit: { addEventListener() {} },
+    };
+    const byId = (id) => els[id];
+    const selectionIn = () => sel;
+    const esc = (x) => String(x);
+    ${pick(/^const ckDrawer = .*$/m)}
+    ${pick(/^const ckGroups = .*$/m)}
+    ${pick(/^const ckPick = .*$/m)}
+    const checklistHtml = (d) => 'G:' + d.group + '/' + d.n;
+    const calls = [];
+    const fetch = (url) => new Promise((res) => calls.push({ url, answer: (n) => res({ ok: true, status: 200,
+      text: async () => JSON.stringify({ group: decodeURIComponent(url.split('group=')[1]), n }) }) }));
+    ${pick(/^async function renderChecklist\(byUser\) \{[\s\S]*?\n\}$/m)}
+    return { renderChecklist, calls, els,
+      set(o) { if ('groups' in o) state = o.groups.map((g, i) => ({ name: 'p' + i, group: g }));
+        if ('pick' in o) checkGroup = o.pick; if ('sel' in o) sel = o.sel; if ('selected' in o) selected = o.selected;
+        if ('drawer' in o) drawerOpen = o.drawer; } };`;
+  const t = new Function(body)();
+  const shown = (el = t.els.detail) => el.innerHTML.replace(/^<div class="ckmain">|<\/div>$/g, '');
+  const flush = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
+
+  // no group: nothing to fetch (renderEmptyDetail shows how to make one)
+  await t.renderChecklist(true);
+  assert.equal(t.calls.length, 0);
+  assert.equal(t.els.detail.innerHTML, '');
+
+  // an older answer never paints over a newer one (A, then B; B answers first)
+  t.set({ groups: ['a', 'b'], pick: 'a' });
+  const p1 = t.renderChecklist(true);
+  t.set({ pick: 'b' });
+  const p2 = t.renderChecklist(true);
+  t.calls[1].answer(1); await flush();
+  assert.equal(shown(), 'G:b/1');
+  t.calls[0].answer(1); await Promise.all([p1, p2]);
+  assert.equal(shown(), 'G:b/1', 'the older answer for a is dropped');
+
+  // a refresh tick waits for a request on its way that asks for the same groups and pick
+  const p3 = t.renderChecklist(true);
+  const n = t.calls.length;
+  await t.renderChecklist();
+  assert.equal(t.calls.length, n, 'no second request while the same one is on its way');
+  t.calls[n - 1].answer(2); await p3;
+  assert.equal(shown(), 'G:b/2');
+
+  // the picked group is removed while its answer is on its way: the old answer never paints
+  const p4 = t.renderChecklist(true);
+  const old = t.calls[t.calls.length - 1];
+  t.set({ groups: ['a'] });
+  const p5 = t.renderChecklist();
+  assert.equal(t.calls.length, n + 2, 'the tick starts a request for the remaining group');
+  old.answer(3); await flush();
+  assert.equal(shown(), 'G:b/2', 'the answer for the removed group b does not paint');
+  t.calls[t.calls.length - 1].answer(4); await Promise.all([p4, p5]);
+  assert.equal(shown(), 'G:a/4');
+
+  // a refresh tick never paints over a text selection; a call by the owner does
+  t.set({ sel: true });
+  const tick = t.renderChecklist();
+  t.calls[t.calls.length - 1].answer(5); await tick;
+  assert.equal(shown(), 'G:a/4', 'tick held by the selection');
+  const own = t.renderChecklist(true);
+  t.calls[t.calls.length - 1].answer(6); await own;
+  assert.equal(shown(), 'G:a/6', 'the owner’s call paints over the selection');
+  t.set({ sel: false });
+
+  // a plan opened while the answer is on its way: the answer does not paint over the plan
+  const p6 = t.renderChecklist(true);
+  t.set({ selected: 'p0/x' });
+  t.calls[t.calls.length - 1].answer(7); await p6;
+  assert.equal(shown(), 'G:a/6');
+  const before = t.calls.length;
+  await t.renderChecklist(true);
+  assert.equal(t.calls.length, before, 'no request while a plan is open');
+  t.set({ selected: null });
+
+  // a narrow screen: the drawer shows the checklist and gets the paint, the right area stays as it is
+  t.set({ drawer: true });
+  const p7 = t.renderChecklist(true);
+  t.calls[t.calls.length - 1].answer(8); await p7;
+  assert.equal(shown(t.els.logbody), 'G:a/8');
+  assert.equal(shown(), 'G:a/6');
+});
+
+test('the page: checklistHtml shows what needs you first, escapes every value, links tickets and PRs, and keeps CUR_ISSUES', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
+  const inlineFn = src.slice(src.indexOf('function inline('), src.indexOf('function md('));
+  assert.ok(inlineFn.startsWith('function inline('), 'app.js has inline()');
+  const body = [
+    pick(/^const BT = .*$/m), pick(/^const esc = .*$/m), pick(/^const escA = .*$/m),
+    "let CUR_ISSUES = 'https://github.com/example/other/issues/';",
+    'const seenIssues = [];',
+    'const md = (s) => { seenIssues.push(CUR_ISSUES); return "<div class=\\"md\\">" + inline(s) + "</div>"; };',
+    inlineFn, pick(/^const CK_CHIP = .*$/m), pick(/^function ledgerBody\(text\) \{[\s\S]*?\n\}$/m),
+    pick(/^function checklistHtml\(d\) \{[\s\S]*?\n\}$/m),
+  ].join('\n');
+  const t = new Function('projPill', body + '\nreturn { checklistHtml, seen: () => seenIssues, cur: () => CUR_ISSUES };')(
+    (name) => '<span class="ppill">' + name + '</span>');
+  const OTHER = 'https://github.com/example/other/issues/';
+  const goal = (over = {}) => ({
+    group: 'acme-product',
+    projects: [{ name: 'acme-api', short: '', color: '' }, { name: 'acme-web', short: '', color: '' }],
+    ledger: { path: '~/.claude/pipeline-dashboard/groups/acme-product/ledger.md', exists: true,
+      text: '# Ledger: acme-product\n\nGoals, holds and notes of this group. The dashboard computes the tickets, plans and PRs by itself.\n\n## Goals\n\n- Invoice export before 15 Dec, see #41\n\n## Holds\n\n## Notes\n', truncated: false },
+    chain: { tickets: [{ key: 'example/acme-api#41', url: 'https://github.com/example/acme-api/issues/41', done: false, plans: [
+      { project: 'acme-api', slug: '20261127-100000-invoice-export', title: 'Invoice export', step: 'needs-you',
+        pr: { number: 7, state: 'OPEN', url: 'https://example.test/pull/7' }, waits: null, archived: false },
+      { project: 'acme-web', slug: '20261127-110000-invoice-screen', title: 'Fix #41', step: 'waiting', pr: null,
+        waits: [{ text: 'acme-api PR #7 merged', met: false, error: null }], archived: false },
+    ] }, { key: 'example/acme-api#52', url: 'https://github.com/example/acme-api/issues/52', done: false, plans: [
+      { project: 'acme-api', slug: '20261127-100000-invoice-export', title: 'Invoice export', step: 'needs-you',
+        pr: { number: 7, state: 'OPEN', url: 'https://example.test/pull/7' }, waits: null, archived: false },
+    ] }], untracked: [] },
+    questions: { source: null, items: [], note: 'No question source is set up yet.' },
+    ...over,
+  });
+  const h = t.checklistHtml(goal());
+  assert.ok(!h.includes('<select'), 'no group picker: the group bars in the sidebar pick the group');
+  assert.ok(h.includes('<h2>☑ acme-product</h2>'));
+  assert.ok(h.includes('acme-api · acme-web — updates every 5 s'));
+  // "Needs you now" comes first and lists a plan in two tickets once
+  const you = h.slice(h.indexOf('Needs you now'), h.indexOf('<h3>Tickets</h3>'));
+  assert.ok(h.indexOf('Needs you now') < h.indexOf('<h3>Tickets</h3>'));
+  assert.equal(you.split('data-sopen="acme-api/20261127-100000-invoice-export"').length - 1, 1);
+  assert.ok(!you.includes('invoice-screen'), 'a waiting plan is not in "Needs you now"');
+  // the ticket shows its number and repo name and links the issue; the plan rows link the plan and the PR
+  assert.ok(h.includes('<a href="https://github.com/example/acme-api/issues/41" target="_blank" title="example/acme-api#41">#41</a> <span class="dim">· acme-api</span>'));
+  assert.ok(h.includes('data-sopen="acme-web/20261127-110000-invoice-screen"'));
+  assert.match(h, /<span class="chip warn">needs you<\/span>/);
+  assert.match(h, /<a href="https:\/\/example\.test\/pull\/7"[^>]*>PR #7<\/a> <span class="dim">open<\/span>/);
+  assert.ok(h.includes('waits for acme-api PR #7 merged ✗'));
+  assert.ok(h.includes('None yet. Questions from agents will show here.'));
+  assert.ok(h.includes('title="No question source is set up yet."'));
+  assert.ok(h.includes('id="ckEdit"'));
+  // the ledger shows the written goal under its heading; the template title, help line and empty sections are gone
+  assert.ok(h.includes('Goals &amp; rules'));
+  assert.ok(h.includes('Invoice export before 15 Dec'));
+  assert.ok(!h.includes('Ledger: acme-product') && !h.includes('Goals, holds and notes of this group'));
+  assert.ok(!h.includes('## Holds') && !h.includes('## Notes'));
+  assert.ok(!h.includes('pipeline-dashboard/groups/acme-product/ledger.md<'), 'the file path is only in the ✎ Edit tooltip');
+  // a bare #41 in the ledger or in a title is not linked to the issues of the plan that is open
+  assert.deepEqual(t.seen(), ['']);
+  assert.equal(t.cur(), OTHER);
+  assert.ok(!h.includes(OTHER + '41'));
+  // nothing waits for the owner: no "Needs you now" part
+  assert.ok(!t.checklistHtml(goal({ chain: { tickets: [], untracked: [] } })).includes('Needs you now'));
+  assert.match(t.checklistHtml(goal({ chain: { tickets: [], untracked: [] } })), /No plans in this group yet/);
+
+  const bad = '<img src=x onerror=alert(1)>';
+  const q = 'https://github.com/x/y"onmouseover="a/issues/41';
+  const x = t.checklistHtml(goal({ group: bad, projects: [{ name: bad }], chain: { tickets: [{ key: 'x/y#41', url: q, done: true, plans: [
+    { project: 'acme-api', slug: 's1', title: bad, step: 'failed', pr: { number: 9, state: 'OPEN', url: q }, waits: [{ text: bad, met: true, error: bad }], archived: false },
+  ] }], untracked: [{ project: 'acme-web', slug: 's2', title: 'Loose', step: 'planned', pr: null, waits: null, archived: false }] } }));
+  assert.ok(!x.includes('<img'), 'markup is escaped');
+  assert.ok(!x.includes('onmouseover="'), 'a " in a URL is &quot;');
+  // the escaped values are still shown: the title, the wait text with its ✓ and its error in parentheses, both URLs
+  const shownBad = '&lt;img src=x onerror=alert(1)&gt;';
+  assert.ok(x.includes('<h2>☑ ' + shownBad + '</h2>'), 'the group name is shown, escaped');
+  assert.ok(x.includes('data-sopen="acme-api/s1">' + shownBad + '</a>'), 'the title is shown, escaped');
+  assert.ok(x.includes(shownBad + ' ✓ (' + shownBad + ')'), 'the wait text, its ✓ and its error are shown, escaped');
+  assert.ok(x.includes('href="https://github.com/x/y&quot;onmouseover=&quot;a/issues/41" target="_blank" title="x/y#41">#41</a>'), 'the ticket URL is kept, escaped');
+  assert.ok(x.includes('href="https://github.com/x/y&quot;onmouseover=&quot;a/issues/41" target="_blank" title="OPEN">PR #9</a>'), 'the PR URL is kept, escaped');
+  assert.match(x, /<span class="chip bad">failed<\/span>/);
+  assert.match(x, /✓ done/);
+  assert.match(x, /<b>No ticket<\/b>/);
+
+  for (const ledger of [{ path: '~/x', exists: false, text: '', truncated: false },
+    { path: '~/x', exists: true, text: '# Ledger: acme-product\n\nGoals, holds and notes of this group. x\n\n## Goals\n\n## Holds\n\n## Notes\n', truncated: false }])
+    assert.match(t.checklistHtml(goal({ ledger })), /Nothing written yet\. ✎ Edit adds the goals/, 'a missing or empty ledger says how to start');
+  const err = t.checklistHtml(goal({ ledger: { path: '~/x', exists: true, text: '', truncated: false, error: 'Cannot read the ledger: <EACCES>' } }));
+  assert.ok(err.includes('Cannot read the ledger: &lt;EACCES&gt;'));
+  assert.match(t.checklistHtml(goal({ ledger: { path: '~/x', exists: true, text: '## Goals\n\nA\n', truncated: true } })), /larger than 256 KB/);
+  assert.equal(t.cur(), OTHER, 'CUR_ISSUES is back after each call');
+});
+
+test('the page: ledgerBody, groupNameFor and the group bar', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
+  const t = new Function([pick(/^const esc = .*$/m), pick(/^const escA = .*$/m), pick(/^const groupNameFor = [\s\S]*?;$/m),
+    pick(/^function ledgerBody\(text\) \{[\s\S]*?\n\}$/m), pick(/^const groupFold = [\s\S]*?;$/m),
+    pick(/^function groupFoldNext\(g, names, closed\) \{[\s\S]*?\n\}$/m), pick(/^const FOLD_SVG = [\s\S]*?;$/m), pick(/^const GROUP_FOLD = \{[\s\S]*?\n\};$/m),
+    pick(/^function groupBarHtml\(group, info, on, fold = 'open', repos = 0\) \{[\s\S]*?\n\}$/m),
+    'return { ledgerBody, groupNameFor, groupBarHtml, groupFold, groupFoldNext };'].join('\n'))();
+  assert.equal(t.ledgerBody(''), '');
+  assert.equal(t.ledgerBody('# Ledger: g\n\nGoals, holds and notes of this group. The dashboard computes the tickets, plans and PRs by itself.\n\n## Goals\n\n## Holds\n\n## Notes\n'), '');
+  assert.equal(t.ledgerBody('# Ledger: g\r\n\r\n## Goals\r\n\r\n- Ship\r\n\r\n## Holds\r\n\r\n## Notes\r\n\r\nA note\r\n'), '## Goals\n\n- Ship\n\n## Notes\n\nA note');
+  assert.equal(t.ledgerBody('Intro text\n\n## Goals\n\n- Ship\n'), 'Intro text\n\n## Goals\n\n- Ship', 'own text before the first section stays');
+
+  assert.equal(t.groupNameFor('Acme'), 'acme');
+  assert.equal(t.groupNameFor('Acme Corp / EU'), 'acme-corp-eu');
+  assert.equal(t.groupNameFor('..'), 'group');
+  assert.equal(t.groupNameFor(''), 'group');
+  assert.equal(t.groupNameFor('x'.repeat(60)).length, 40);
+
+  const on = t.groupBarHtml('acme-product', { tickets: 2, needsYou: 1 }, true);
+  assert.ok(on.includes('data-ckgroup="acme-product"') && on.includes('class="grpbar on"') && on.includes('aria-pressed="true"'));
+  assert.ok(on.includes('☑ acme-product') && on.includes('2 tickets') && on.includes('1 needs you'));
+  const off = t.groupBarHtml('a"b', { tickets: 1, needsYou: 0 }, false);
+  assert.ok(off.includes('1 ticket<') && !off.includes('needs you</span>') && off.includes('data-ckgroup="a&quot;b"') && off.includes('aria-pressed="false"'));
+  assert.ok(t.groupBarHtml('g', undefined, false).includes('0 tickets'), 'a state from an older server has no groupInfo');
+  // the fold button is its own button beside the checklist button (a button in a button is not valid HTML)
+  assert.ok(on.includes('<button class="grpfold" data-grpfold="acme-product"') && on.includes('data-fold="open"') && on.includes('</svg></button><button class="grpopen"'));
+  assert.ok(!/<button[^>]*>[^<]*<button/.test(on));
+  const hidden = t.groupBarHtml('acme-product', { tickets: 2, needsYou: 0 }, false, 'hide', 3);
+  assert.ok(hidden.includes('data-fold="hide"') && hidden.includes('M8.5 3.5 13 8') && hidden.includes('2 tickets · 3 repos hidden'));
+  assert.ok(t.groupBarHtml('g', null, false, 'min', 1).includes('data-fold="min"'));
+  assert.ok(!on.includes('repos hidden'), 'an open group says nothing about hidden repos');
+
+  // one click folds the plans, the next hides the projects, the next shows all again
+  const names = ['acme-api', 'acme-web'];
+  const closed = new Set(['other']);
+  assert.equal(t.groupFold('acme-product', names, closed), 'open');
+  assert.equal(t.groupFoldNext('acme-product', names, closed), 'min');
+  assert.deepEqual([...closed].sort(), ['acme-api', 'acme-web', 'other']);
+  assert.equal(t.groupFoldNext('acme-product', names, closed), 'hide');
+  assert.ok(closed.has('grp:acme-product'));
+  assert.equal(t.groupFoldNext('acme-product', names, closed), 'open');
+  assert.deepEqual([...closed], ['other'], 'the folds of other projects stay');
+  // a project folded by hand: the group is still open until all of its projects are folded
+  assert.equal(t.groupFold('acme-product', names, new Set(['acme-api'])), 'open');
+  assert.equal(t.groupFold('acme-product', [], new Set()), 'open');
+});
+
+test('the page: the group form, the group bar and the ⋯ Checklist all show the checklist in the right area', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const html = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'page.html'), 'utf8');
+  assert.match(html, /<dialog id="grpdlg" aria-labelledby="grpdlgt"><\/dialog>/);
+  assert.match(src, /querySelectorAll\('\[data-ckgroup\]'\)\.forEach\(\(el\) =>\s*el\.addEventListener\('click', \(\) => showChecklist\(el\.dataset\.ckgroup\)\)\);/);
+  assert.match(src, /querySelectorAll\('\[data-grpadd\]'\)\.forEach\(\(el\) =>\s*el\.addEventListener\('click', \(e\) => \{ e\.stopPropagation\(\); openGroupForm\(el\.dataset\.grpadd\); \}\)\);/);
+  assert.match(src, /byId\('checkBtn'\)\.addEventListener\('click', \(\) => showChecklist\(\)\);/);
+  // the fold button moves the group one fold on and keeps it in the folds the page remembers
+  assert.match(src, /groupFoldNext\(g, state\.filter\(\(s\) => s\.group === g\)\.map\(\(s\) => s\.name\), collapsedProjects\);\s*saveCollapsed\(\); renderList\(\);/);
+  // a hidden group shows its cards for a search, and a plan opened from a tab or the palette shows the group again
+  assert.match(src, /const cards = fold === 'hide' && !filtering \? '' :/);
+  assert.match(src, /if \(g\) folds\.push\('grp:' \+ g\);/);
+  // the form saves through the Settings save, and a shortcut does nothing while it is open
+  assert.match(src, /for \(const entry of reg\) if \(names\.includes\(entry\.name\)\) entry\.group = group;/);
+  assert.match(src, /byId\('seldlg'\)\.open \|\| byId\('grpdlg'\)\.open;/);
+  // ⚙ Settings suggests the existing groups
+  assert.match(src, /list="grplist"/);
+  assert.match(src, /'<datalist id="grplist">'/);
+});
+
+test('the page: drag a project onto a group box to join it, or onto a client name to leave its group', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const css = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.css'), 'utf8');
+  const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
+  const t = new Function([pick(/^const groupOffer = .*$/m), pick(/^function projDropGroup\(el, proj\) \{[\s\S]*?\n\}$/m),
+    pick(/^const FOLD_SVG = [\s\S]*?;$/m), pick(/^const GROUP_FOLD = \{[\s\S]*?\n\};$/m),
+    'return { groupOffer, projDropGroup, GROUP_FOLD };'].join('\n'))();
+  // a fake element: closest() finds the first ancestor that the selector names
+  const node = (chain) => ({ closest: (sel) => chain.find((n) => sel.split(',').some((s) => n.is(s.trim()))) || null });
+  const box = (g) => ({ is: (s) => s === '[data-grp]', dataset: { grp: g } });
+  const head = { is: (s) => s === '.ghead[data-client]', dataset: { client: 'Acme' } };
+  const plain = { is: () => false };
+  const api = { name: 'acme-api', group: 'acme-product' }, e2e = { name: 'acme-e2e', group: '' };
+  assert.equal(t.projDropGroup(node([plain, box('acme-product')]), e2e), 'acme-product', 'a project without a group joins the box');
+  assert.equal(t.projDropGroup(node([box('beta')]), api), 'beta', 'a project moves to another group');
+  assert.equal(t.projDropGroup(node([box('acme-product')]), api), null, 'its own group: nothing changes');
+  assert.equal(t.projDropGroup(node([head]), api), '', 'a client name takes the project out of its group');
+  assert.equal(t.projDropGroup(node([head]), e2e), null, 'a project without a group: the client name changes nothing');
+  assert.equal(t.projDropGroup(node([plain]), e2e), null);
+  assert.equal(t.projDropGroup(null, e2e), null);
+  assert.equal(t.projDropGroup(node([box('g')]), null), null, 'no drag on its way');
+
+  const st = [{ client: 'Acme', group: '' }, { client: 'Acme', group: '' }, { client: 'Beta', group: '' }, { client: 'Beta', group: 'b' }];
+  assert.equal(t.groupOffer('Acme', st), true, 'two projects without a group: the link shows');
+  assert.equal(t.groupOffer('Beta', st), false, 'one project without a group: no link');
+
+  // the three fold drawings share one 16 × 16 box, so each sits in the middle of its button
+  for (const [svg] of Object.values(t.GROUP_FOLD)) assert.match(svg, /^<svg viewBox="0 0 16 16"/);
+  assert.match(css, /\.grpfold \{[^}]*display:inline-flex; align-items:center; justify-content:center;[^}]*padding:0;/);
+
+  // the project header is the handle; the form and the drop save the same way
+  assert.match(src, /data-toggle="' \+ esc\(pr\) \+ '" draggable="true" data-drag-proj="'/);
+  assert.match(src, /const r = await saveGroups\(picked, name\);/);
+  assert.match(src, /const r = await saveGroups\(\[proj\.name\], g\);/);
+  assert.match(src, /'<div class="grpbox' \+ \(cards \? '' : ' folded'\) \+ '" data-grp="' \+ escA\(g\) \+ '">'/);
 });

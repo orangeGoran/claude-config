@@ -4,7 +4,7 @@
 <title>Plans</title>
 <link rel="icon" id="favicon" href="{{ICON}}">
 <style><!--@CSS--></style>
-<header class="mainhd"><div class="hdl"><h1><a href="/" id="home" title="close the open plan">Plans</a></h1><button id="hdmenuBtn" class="hdbtn" popovertarget="hdmenu" aria-haspopup="true" title="Board, Scout, QA reports, Add project, Settings, alerts and theme">⋯</button><button id="dashCodeBtn" class="hdbtn" title="Open this dashboard's code in VS Code"><svg class="vsc-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="#007ACC" d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z"/></svg> Code</button></div>
+<header class="mainhd"><div class="hdl"><h1><a href="/" id="home" title="close the open plan">Plans</a></h1><button id="hdmenuBtn" class="hdbtn" popovertarget="hdmenu" aria-haspopup="true" title="Board, Scout, Checklist, QA reports, Add project, Settings, alerts and theme">⋯</button><button id="dashCodeBtn" class="hdbtn" title="Open this dashboard's code in VS Code"><svg class="vsc-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="#007ACC" d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z"/></svg> Code</button></div>
   <div id="hdtabs"></div>
   <nav id="stabs" aria-label="Open plans" hidden></nav>
   <div class="hright"><button id="boardExit" class="hdbtn" hidden title="Leave the board">✕ Board</button><button id="bpClose" class="hdbtn" hidden title="Close the plan and show the whole board (Esc)">✕ Close plan</button>
@@ -16,6 +16,7 @@
 <div id="hdmenu" class="hdmenu" popover>
   <button id="boardBtn" aria-pressed="false" title="All plans on one board: Backlog, Ready, Running, Needs you, Failed, Done">▦ Board</button>
   <button id="scoutBtn" title="The scout: what it found, its last runs, its log and setup">🔭 Scout</button>
+  <button id="checkBtn" title="The checklist of a group of repos: what needs you, each ticket with its plans and PRs, and the goals">☑ Checklist</button>
   <button id="noteBtn" aria-pressed="false" title="A sticky note over the page. Drag it by its top bar. It stays in this browser.">📝 Note</button>
   <a class="hdlink" id="qaLink" href="http://localhost:{{QA_PORT}}/" target="_blank" rel="noopener" title="report pages of the browser-usability-test skill">QA reports ↗</a>
   <hr>
@@ -72,6 +73,7 @@
       <button class="primary" id="onbnext">Continue</button></div>
   </div>
 </div>
+<dialog id="grpdlg" aria-labelledby="grpdlgt"></dialog>
 <dialog id="seldlg" aria-labelledby="seldlgt"><div class="seldlg-top"><b id="seldlgt"></b><span style="flex:1"></span>
   <button class="ccopy" id="seldlgcopy">Copy</button><button class="onb-x" id="seldlgx" title="Close (Esc)">✕</button></div>
   <p id="seldlgnote" hidden></p><pre id="seldlgbody"></pre></dialog>
