@@ -20,11 +20,11 @@ Show the owner what the background runs cost and give: spend per week and per pr
 - Decisions: 1A (the server writes the line), the ledger path above.
 - Open decisions: none.
 
-### 2. Insights page — not written yet
+### 2. Insights page — `.plans/20261127-230105-insights-page.md`
 
-- Scope: the `/insights` and `/dashboard` URLs, `/` opens the last page (per-browser `localStorage`, the `dash-*` key pattern of `apps/dashboard/page/app.js`), the page switch in the header, `GET /api/insights` (reads the ledger and the plan counts, with a cache), and the first panels (decision 3). The Plans pipeline panel counts the plan files of each project (open, parent, done) and the runs and draft PRs from the ledger.
-- Decisions: the Page and First panels decisions above.
-- Open decisions: who can call `GET /api/insights` (the other `/api/*` GET endpoints are local only and same-origin; ask the owner in the plan's question queue). Where the switch sits (title menu or side menu): show the owner both in the plan.
+- Scope: the `/insights` and `/dashboard` URLs, `/` opens the last page (per-browser `localStorage` `dash-page`; a query on `/` always opens the Dashboard), the page switch in the header, `GET /api/insights` (reads the run log of plan 1 and the plan counts, with a cache), and the first panels (decision 3). The Plans pipeline panel counts the plan files of each project (open, parent, done) and the runs and draft PRs from the run log. Waits for plan 1 merged.
+- Decisions: the Page and First panels decisions above; 13A (2026-11-27): `GET /api/insights` has the same access as every other `/api/*` route (local host names and same-origin requests only); 14A (2026-11-27): a click on the page title opens a small menu with Dashboard and Insights, and the ⋯ menu keeps the tools; naming (2026-11-27): UI and docs call `insights.jsonl` the "run log", because orchestrator plan 2a adds a separate "group ledger" (plan 1's code names stay); a group chip is out of scope (later), so this plan does not depend on orchestrator 2a. The plan lists the defaults it took for the owner under "Decisions taken for the owner".
+- Open decisions: none. Not in this plan: the preview's "Most expensive runs" panel (no plan has it yet).
 
 ### 3. More panels — not written yet
 
