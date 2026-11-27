@@ -370,13 +370,17 @@ Only one dashboard per HOME runs the watcher (`~/.claude/pipeline-dashboard/watc
 
 ## Groups and the checklist
 
-A group is a set of repos that share work, for example `acme-api`, `acme-web` and `acme-e2e`. Give each of them the same `group` in the registry (or the **Group** field in ⚙ Settings). Group names are 1 to 40 characters of letters, digits, `.`, `_` and `-`, and are stored in lower case. When you save a group name that is not good, ⚙ Settings does not keep it and tells you. A project without a group has no ledger and no checklist.
+A group is a set of repos that share work, for example `acme-api`, `acme-web` and `acme-e2e`. The group gets one checklist: what needs you, each ticket across the repos with its plans and PRs, and the goals and rules of the group. A project without a group has no ledger and no checklist.
 
-**☑ Checklist** in the **⋯** menu (or "Checklist" in the ⌘K palette) opens one checklist per group. Pick the group at the top. The checklist has three parts: "Goals, holds and notes", "Tickets" and "Questions". It updates at each refresh (5 s).
+To make a group, click **＋ Group these repos** next to a client name in the sidebar. The link shows when two or more projects of that client have no group. Type a name, keep the repos that belong to the group ticked, and click **Create group**. You can also give each project the same `group` in the registry, or type it in the **Group** field in ⚙ Settings; that field suggests the groups that exist. Group names are 1 to 40 characters of letters, digits, `.`, `_` and `-`, and are stored in lower case. When you save a group name that is not good, the dashboard does not keep it and tells you.
 
-The ledger is one Markdown file per group: `~/.claude/pipeline-dashboard/groups/<group>/ledger.md`. People and agents write the goals, holds and notes of the group in it, under `## Goals`, `## Holds` and `## Notes`. **✎ Edit ledger** opens it in VS Code; when the file is missing, it makes it from an empty template first. It never overwrites a file. The dashboard shows at most the first 256 KB. When you rename a group, the dashboard starts a new ledger; the old `groups/<old name>/` folder stays on disk.
+In the sidebar, the projects of a group sit in one box under the group bar, for example **☑ acme-product · 2 tickets · 1 needs you**. "Tickets" counts the tickets that are not done. "Needs you" counts the plans whose step is `needs-you`. Click the bar to show the checklist in the big right area. With no plan open, the right area shows the checklist of the group you picked last. **☑ Checklist** in the **⋯** menu (or "Checklist" in the ⌘K palette) shows it too. On a screen of 600 px or less, the checklist opens in the side pane. It updates at each refresh (5 s).
 
-The tickets come from the `- **Tickets**:` line of each plan header (the lines before the first `## ` heading, outside code blocks). Example: `- **Tickets**: #41, example/acme-api#41`. `#41` is issue 41 of the plan's own repo. `owner/repo#41` is issue 41 of another repo. Other text, for example `acme-api#41` or an issue URL, is not read. A plan with no `Tickets:` line shows under "Not linked to a ticket". The dashboard computes the chain ticket → plan → step → PR each time; it is not stored. An archived plan shows only under a ticket that also has an active plan, so a ticket leaves the checklist when all its plans are archived.
+The checklist has four parts, from the top: "Needs you now" (only when a plan needs you), "Tickets", "Goals & rules" and "Questions". Click a plan to open it; click the group bar to go back.
+
+The ledger is one Markdown file per group: `~/.claude/pipeline-dashboard/groups/<group>/ledger.md`. People and agents write the goals, holds and notes of the group in it, under `## Goals`, `## Holds` and `## Notes`. "Goals & rules" shows the sections that have text. **✎ Edit** opens the file in VS Code; when the file is missing, it makes it from an empty template first. It never overwrites a file. The dashboard shows at most the first 256 KB. When you rename a group, the dashboard starts a new ledger; the old `groups/<old name>/` folder stays on disk.
+
+The tickets come from the `- **Tickets**:` line of each plan header (the lines before the first `## ` heading, outside code blocks). Example: `- **Tickets**: #41, example/acme-api#41`. `#41` is issue 41 of the plan's own repo. `owner/repo#41` is issue 41 of another repo. Other text, for example `acme-api#41` or an issue URL, is not read. A plan with no `Tickets:` line shows under "No ticket". The dashboard computes the chain ticket → plan → step → PR each time; it is not stored. An archived plan shows only under a ticket that also has an active plan, so a ticket leaves the checklist when all its plans are archived.
 
 The step of a plan (the first one that is true):
 
@@ -392,9 +396,9 @@ The step of a plan (the first one that is true):
 
 A report that `auto-pipeline.sh --cleanup` marked `CLEANED` counts as no run.
 
-`GET /api/ledger?group=<group>` gives the same data as JSON: `group`, `projects`, `ledger` (`path`, `exists`, `text`, `truncated`, and `error` when the file cannot be read), `chain` (`tickets` and `untracked`) and `questions`. Example: `curl -s 'http://127.0.0.1:4899/api/ledger?group=acme-product'`. A group that no project has gives 400 `{ "error": "bad group" }`. `POST /api/ledger/open` with `{ "group": "<group>" }` makes the file when it is missing and opens it in VS Code; it gives `{ ok, path, created }`.
+`GET /api/ledger?group=<group>` gives the same data as JSON: `group`, `projects`, `ledger` (`path`, `exists`, `text`, `truncated`, and `error` when the file cannot be read), `chain` (`tickets` and `untracked`) and `questions`. Example: `curl -s 'http://127.0.0.1:4899/api/ledger?group=acme-product'`. A group that no project has gives 400 `{ "error": "bad group" }`. `POST /api/ledger/open` with `{ "group": "<group>" }` makes the file when it is missing and opens it in VS Code; it gives `{ ok, path, created }`. In `/api/state`, each project of a group has `groupInfo`: `{ tickets, needsYou }`, the counts of the group bar.
 
-The "Questions" part stays empty ("No question source is set up yet.") until a question source exists.
+The "Questions" part stays empty ("None yet.") until a question source exists.
 
 ## Environment
 

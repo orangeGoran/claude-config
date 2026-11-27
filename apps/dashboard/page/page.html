@@ -16,7 +16,7 @@
 <div id="hdmenu" class="hdmenu" popover>
   <button id="boardBtn" aria-pressed="false" title="All plans on one board: Backlog, Ready, Running, Needs you, Failed, Done">▦ Board</button>
   <button id="scoutBtn" title="The scout: what it found, its last runs, its log and setup">🔭 Scout</button>
-  <button id="checkBtn" title="One checklist per group of repos: goals, holds, and each ticket with its plans and PRs">☑ Checklist</button>
+  <button id="checkBtn" title="The checklist of a group of repos: what needs you, each ticket with its plans and PRs, and the goals">☑ Checklist</button>
   <button id="noteBtn" aria-pressed="false" title="A sticky note over the page. Drag it by its top bar. It stays in this browser.">📝 Note</button>
   <a class="hdlink" id="qaLink" href="http://localhost:{{QA_PORT}}/" target="_blank" rel="noopener" title="report pages of the browser-usability-test skill">QA reports ↗</a>
   <hr>
@@ -73,6 +73,7 @@
       <button class="primary" id="onbnext">Continue</button></div>
   </div>
 </div>
+<dialog id="grpdlg" aria-labelledby="grpdlgt"></dialog>
 <dialog id="seldlg" aria-labelledby="seldlgt"><div class="seldlg-top"><b id="seldlgt"></b><span style="flex:1"></span>
   <button class="ccopy" id="seldlgcopy">Copy</button><button class="onb-x" id="seldlgx" title="Close (Esc)">✕</button></div>
   <p id="seldlgnote" hidden></p><pre id="seldlgbody"></pre></dialog>

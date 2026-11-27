@@ -931,6 +931,8 @@ test('group ledger: the chain of one ticket from two repos', async () => {
     assert.equal(b.questions.source, null);
     const st = await (await fetch(`http://127.0.0.1:${port}/api/state`)).json();
     for (const n of ['gl-api', 'gl-web']) assert.equal(st.find((x) => x.name === n).group, 'gl-group');
+    // the sidebar's group bar: 1 open ticket, and the plan with the open PR needs you
+    for (const n of ['gl-api', 'gl-web']) assert.deepEqual(st.find((x) => x.name === n).groupInfo, { tickets: 1, needsYou: 1 });
     assert.deepEqual((await plan('gl-api', '20261127-100000-invoice-export')).tickets, [{ repo: null, number: 41 }]);
   } finally { unregister(['gl-api', 'gl-web']); }
 });
@@ -1110,6 +1112,9 @@ test('group ledger: Settings keep the group in lower case, and a bad group is dr
     assert.equal(r.ok, true);
     assert.match(r.output, /gl-set-b: group not kept .*: a\/b/, 'Settings say that the bad group is not kept');
     assert.doesNotMatch(r.output, /gl-set-a: group/);
+    // the "Group these repos" form reads the warnings as a list: only a warning makes it show an alert
+    assert.ok(r.warnings.some((w) => /^gl-set-b: group not kept/.test(w)));
+    assert.ok(!r.warnings.some((w) => /^gl-set-a: group/.test(w)));
     const saved = registry();
     assert.deepEqual(saved.map((e) => e.name), [...earlier.map((e) => e.name), 'gl-set-a', 'gl-set-b']);
     assert.equal(saved.find((e) => e.name === 'gl-set-a').group, 'gl-group6');

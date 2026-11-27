@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { safeGroup, parseTickets, ticketKey, planStep, buildChain, ledgerTemplate } from '../groups.mjs';
+import { safeGroup, parseTickets, ticketKey, planStep, buildChain, groupSummary, ledgerTemplate } from '../groups.mjs';
 
 test('groups.mjs has no imports: pure helpers, no npm dependency (AGENTS.md hard rule)', () => {
   const src = readFileSync(new URL('../groups.mjs', import.meta.url), 'utf8');
@@ -116,6 +116,20 @@ test('buildChain: groups one ticket across two repos (the Goal example)', () => 
   assert.equal(t.plans[1].pr, null);
   assert.equal(t.plans[1].archived, false);
   assert.deepEqual(c.untracked, []);
+});
+
+test('groupSummary: open tickets, and each plan that needs you once', () => {
+  const row = (slug, step, extra = {}) => ({ project: 'acme-api', slug, step, archived: false, ...extra });
+  assert.deepEqual(groupSummary({ tickets: [], untracked: [] }), { tickets: 0, needsYou: 0 });
+  assert.deepEqual(groupSummary({
+    tickets: [
+      { key: 'a#41', done: false, plans: [row('s1', 'needs-you'), row('s2', 'waiting')] },
+      { key: 'a#52', done: false, plans: [row('s1', 'needs-you')] },          // the same plan in a second ticket
+      { key: 'a#60', done: true, plans: [row('s3', 'done')] },                // a done ticket is not counted
+      { key: 'a#61', done: false, plans: [row('s4', 'needs-you', { archived: true }), row('s5', 'planned')] },
+    ],
+    untracked: [row('s6', 'needs-you'), { ...row('s1', 'needs-you'), project: 'acme-web' }],
+  }), { tickets: 3, needsYou: 3 });
 });
 
 test('buildChain: archived and untracked rules', () => {

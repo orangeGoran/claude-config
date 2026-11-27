@@ -38,7 +38,7 @@ import { OTHER, inlineHtml, findIssues, readMeta } from '../../scripts/artifact-
 import { olderVersions } from '../../scripts/page-versions.mjs';
 import { plistScript } from './restart.mjs';
 import { parseWaitsFor, prMap, prEvents, outcomeEvents, runningCount, canAutoLaunch, capLines, redact } from './watch.mjs';
-import { safeGroup, parseTickets, buildChain, ledgerTemplate } from './groups.mjs';
+import { safeGroup, parseTickets, buildChain, groupSummary, ledgerTemplate } from './groups.mjs';
 import { NOTIFIERS, notifyFirst } from '../scout/scout.mjs';
 import { QA_ICON, QA_ICON_URI } from '../../skills/browser-usability-test/scripts/qa-icon.mjs';
 
@@ -664,6 +664,12 @@ const fullState = async () => {
       worktrees: proj.issuesUrl ? worktreesFor(proj)
         .filter((w) => !Object.values(planBranches[proj.root] || {}).includes(w.branch)) : [],
     });
+  }
+  // the group bar in the sidebar shows the counts of its group's chain (the same chain as GET /api/ledger)
+  const now = Date.now();
+  for (const g of new Set(out.map((p) => p.group).filter(Boolean))) {
+    const sum = groupSummary(buildChain(groupProjects(g, out), now, STALE_RUN_MS));
+    for (const p of out) if (p.group === g) p.groupInfo = sum;
   }
   return out;
 };
@@ -3635,7 +3641,7 @@ const server = http.createServer(async (req, res) => {
           cleaned.push(entry);
         }
         saveRegistry(cleaned);
-        return json(res, 200, { ok: true,
+        return json(res, 200, { ok: true, warnings,
           output: warnings.length ? warnings.join('\n') : 'Settings saved — ' + cleaned.length + ' project(s).' });
       }
       if (url.pathname === '/api/add-project') return json(res, 200, addProject(b));

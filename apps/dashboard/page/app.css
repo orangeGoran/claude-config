@@ -952,13 +952,50 @@
   @keyframes scspin { to { transform:rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .sc-spin { animation:none; border-top-color:var(--run); } }
   .sc-sum { margin:-2px 0 6px; font-size:calc(12.5px * var(--fs)); }
-  /* ☑ Checklist drawer: the group bar, one block per ticket, one row per plan */
-  .ck-bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  /* ☑ Checklist: in the sidebar a group box with its bar; in the right area one card per part, one row per plan */
+  #side .ghead { display:flex; align-items:center; gap:8px; }
+  .grpadd { margin-left:auto; font-size:calc(11.5px * var(--fs)); letter-spacing:0; font-weight:600; text-transform:none;
+            color:var(--accent); background:none; border:1px dashed var(--accent); border-radius:7px; padding:3px 8px; cursor:pointer; }
+  .grpadd:hover { background:var(--hover); }
+  .grpbox { margin:0 6px 12px; padding:0 0 1px; border:2px solid var(--fg); border-radius:14px; }
+  .grpbox > .pgrp { margin:0 4px 6px; }
+  .grpbar { display:flex; align-items:center; gap:8px; width:calc(100% - 8px); margin:4px; padding:8px 10px; border:0; border-radius:10px;
+            background:none; color:var(--fg); font:inherit; text-align:left; cursor:pointer; }
+  .grpbar:hover { background:var(--hover); }
+  .grpbar.on { background:var(--card); box-shadow:0 0 0 1px var(--line); }
+  .grpname { font-weight:700; overflow-wrap:anywhere; }
+  .grpcnt { color:var(--dim); font-size:calc(12px * var(--fs)); white-space:nowrap; }
+  .grpyou { margin-left:auto; white-space:nowrap; font-size:calc(11.5px * var(--fs)); font-weight:600; color:var(--warn);
+            border:1px solid var(--warn); border-radius:99px; padding:1px 8px; }
+  #grpdlg { width:min(380px, calc(100vw - 32px)); padding:16px 18px; background:var(--panel); color:var(--fg);
+            border:1px solid var(--line); border-radius:12px; }
+  #grpdlg::backdrop { background:rgba(5,7,12,.5); }
+  .grpform h3 { margin:0 0 4px; }
+  .grpform p { margin:4px 0 8px; }
+  .grpf-name { display:flex; flex-direction:column; gap:4px; font-weight:600; margin-top:10px; }
+  .grpf-name input { font:inherit; padding:6px 9px; }
+  .grpf-pick { display:flex; align-items:center; gap:8px; padding:4px 0; font-family:ui-monospace, Menlo, monospace; font-weight:600; }
+  .grpf-acts { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+  .ck-tip { margin-top:18px; padding:14px 16px; max-width:560px; border:1px dashed var(--line); border-radius:10px; line-height:1.5; }
+  .ckv { max-width:900px; }
+  #logbody .ckmain { font-family:-apple-system,sans-serif; font-size:calc(13px * var(--fs)); line-height:1.6; white-space:normal; }
+  .ck-key .dim { font-weight:400; }
+  .ck-head h2 { margin:0 0 2px; }
+  .ck-head { margin-bottom:16px; }
+  .ck-box { border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:14px; }
+  .ck-box h3 { display:flex; align-items:center; gap:8px; margin:0 0 8px; font-size:calc(14px * var(--fs)); }
+  .ck-box h3 .mini { margin-left:auto; }
+  .ck-you { border-color:var(--warn); }
   .ck-ledger { white-space:normal; overflow-wrap:anywhere; }
+  .ck-ledger :is(h1, h2, h3) { margin:10px 0 2px; font-size:calc(11px * var(--fs)); letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
+  .ck-ledger > :first-child, .ck-ledger .md > :first-child { margin-top:0; }
   .ck-ticket { margin-top:8px; padding-top:8px; border-top:1px solid var(--line); }
-  .sc-head + .ck-ticket { border-top:0; padding-top:0; }
+  .ck-box h3 + .ck-ticket { border-top:0; padding-top:0; margin-top:0; }
   .ck-key { font-weight:600; margin-bottom:4px; overflow-wrap:anywhere; }
-  .ck-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:3px 0; min-width:0; }
+  .ck-key code { font-weight:400; }
+  .ck-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:3px 0 3px 12px; min-width:0; }
+  .ck-you .ck-row { padding-left:0; }
+  .ck-you .chip.warn { display:none; }
   .ck-row > a { overflow-wrap:anywhere; }
   .ck-row .chip { flex:none; }
   .ck-waits { color:var(--dim); font-size:calc(11.5px * var(--fs)); overflow-wrap:anywhere; }

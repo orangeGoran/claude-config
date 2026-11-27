@@ -537,7 +537,25 @@ function renderList() {
       '<button class="primary" data-guide="">Get started</button></div>'
     : clients.map((c) => {
     const projNames = shownProjs.filter((s) => s.client === c).map((s) => s.name);
-    return '<div class="ghead">' + esc(c) + '</div>' + projNames.map((pr) => {
+    const groupOf = (pr) => (state.find((s) => s.name === pr) || {}).group || '';
+    // the checklist shows in the right area when no plan is open; its group bar is then marked
+    const ckOn = !selected && !boardOn ? ckPick(ckGroups(state)) : null;
+    const ungrouped = state.filter((s) => s.client === c && !s.group).length;
+    const head = '<div class="ghead">' + esc(c) + (!filtering && ungrouped >= 2
+      ? ' <button class="grpadd" data-grpadd="' + escA(c) + '" title="Put repos of ' + escA(c) +
+        ' in one group: they get one checklist together">＋ Group these repos</button>' : '') + '</div>';
+    // the projects of one group sit in one box under its bar, at the place of the group's first project
+    const done = new Set();
+    return head + projNames.map((pr) => {
+      const g = groupOf(pr);
+      if (!g) return card(pr);
+      if (done.has(g)) return '';
+      done.add(g);
+      const sp = state.find((s) => s.name === pr) || {};
+      return '<div class="grpbox">' + groupBarHtml(g, sp.groupInfo, ckOn === g) +
+        projNames.filter((n) => groupOf(n) === g).map(card).join('') + '</div>';
+    }).join('');
+    function card(pr) {
       const items = vis.filter((p) => p.project === pr);
       const closed = collapsedProjects.has(pr);
       const sp = state.find((s) => s.name === pr) || {};
@@ -573,7 +591,7 @@ function renderList() {
           : filtering ? '' : '<div class="emptyproj">' + (projPlans.length ? 'All plans are archived.'
             : 'No plans yet — add a <code>.md</code> file to <code>' + esc(sp.plansDir) + '</code>.') + '</div>') +
           wtSectionHtml(pr, visWts.filter((w) => w.project === pr))) + '</div>';
-    }).join('');
+    }
   }).join('') + (arch.length ? '<div class="ghead">📦 Archived' + (filtering ? ' — ' + arch.length + ' match' +
     (arch.length === 1 ? '' : 'es') : '') + '</div><div class="pgrp">' + arch.map((p) => itemHtml(p, true)).join('') + '</div>' : '');
   byId('side').querySelectorAll('[data-guide]').forEach((el) =>
@@ -601,6 +619,10 @@ function renderList() {
   // the PR link opens in a new tab; the click must not fold the project card
   byId('side').querySelectorAll('[data-bspr]').forEach((el) =>
     el.addEventListener('click', (e) => e.stopPropagation()));
+  byId('side').querySelectorAll('[data-ckgroup]').forEach((el) =>
+    el.addEventListener('click', () => showChecklist(el.dataset.ckgroup)));
+  byId('side').querySelectorAll('[data-grpadd]').forEach((el) =>
+    el.addEventListener('click', (e) => { e.stopPropagation(); openGroupForm(el.dataset.grpadd); }));
   byId('side').querySelectorAll('[data-suggest]').forEach((el) =>
     el.addEventListener('click', (e) => { e.stopPropagation(); openSuggest(el.dataset.suggest); }));
   byId('side').querySelectorAll('[data-pull]').forEach((el) =>
@@ -3485,7 +3507,7 @@ async function openSettings() {
           '" placeholder="Project name" size="20" aria-label="project name">' +
         '<input type="text" data-f="client" data-i="' + i + '" value="' + escA(e.client || '') +
           '" placeholder="Client" size="12" aria-label="client">' +
-        '<input type="text" data-f="group" data-i="' + i + '" value="' + escA(e.group || '') + '" placeholder="Group" size="12" maxlength="40" aria-label="group" title="group — repos that share work get one checklist">' +
+        '<input type="text" data-f="group" data-i="' + i + '" value="' + escA(e.group || '') + '" placeholder="Group" size="12" maxlength="40" list="grplist" aria-label="group" title="group — repos that share work get one checklist">' +
         '<button class="rmbtn" data-rm="' + i + '">Remove</button></div>';
       h += '<div class="pcard-body">' +
         '<span class="flabel">Repo root</span>' +
@@ -3517,7 +3539,10 @@ async function openSettings() {
     h += '<div class="setupbar"><button id="addProj" title="find repos on this machine and add them, with readiness checks">' +
       '＋ Add project</button><button class="pbtn" id="addManual" title="a blank project card: type name, client and paths yourself">' +
       'or type the paths</button>' +
-      '<span style="flex:1"></span><button class="primary" id="saveReg">Save changes</button></div></div>';
+      '<span style="flex:1"></span><button class="primary" id="saveReg">Save changes</button></div>' +
+      // the Group boxes suggest the groups that exist, so a typo does not start a second group
+      '<datalist id="grplist">' + [...new Set(rows.map((r) => r.group).filter(Boolean))].sort()
+        .map((g) => '<option value="' + escA(g) + '">').join('') + '</datalist></div>';
     byId('logbody').innerHTML = h;
     byId('logbody').querySelectorAll('input[data-f]').forEach((el) =>
       el.addEventListener('input', () => { rows[+el.dataset.i][el.dataset.f] = el.value; }));
@@ -3801,14 +3826,30 @@ function markDetailProject(name) {
   d.style.removeProperty('--ph'); d.style.removeProperty('--pc');
   if (name) { const [k, v] = projLook(name).style.split(':'); d.style.setProperty(k, v); }
 }
-function renderEmptyDetail() {
+// with a group, the empty area shows its checklist (renderChecklist); `byUser` is true when the owner asked for it
+function renderEmptyDetail(byUser) {
   syncUrl();
   markDetailProject(null);
   syncChat(null);
   drawHdTabs(null);
   drawSessionTabs();
   document.body.classList.remove('review');
-  byId('detail').innerHTML = state.length ? '<span class="dim">Select a plan on the left.</span>'
+  const d = byId('detail');
+  if (!boardOn && ckGroups(state).length) {
+    // the checklist stays on screen while its next answer loads: only a first paint shows "loading…"
+    if (!(d.firstElementChild && d.firstElementChild.classList.contains('ckmain'))) {
+      d.innerHTML = '<div class="ckmain"><span class="dim">loading…</span></div>';
+      d._ck = null;
+    }
+    renderChecklist(byUser);
+    return;
+  }
+  d._ck = null;
+  // two or more projects of one client without a group: say what a group is for and where to make one
+  const canGroup = state.some((s) => !s.group && state.filter((o) => o.client === s.client && !o.group).length >= 2);
+  d.innerHTML = state.length ? '<span class="dim">Select a plan on the left.</span>' + (canGroup
+    ? '<div class="ck-tip"><b>Tip:</b> repos that work on one product can share one checklist: what needs you, what waits, ' +
+      'and the goals of the product. Click <b>＋ Group these repos</b> next to a client name on the left.</div>' : '')
     : '<div class="welcome"><h2>Hand off the work. Review the result.</h2><p>Describe a change in a plan ' +
       'file. Claude Code implements and tests it in the background. You come back to a diff.</p>' +
       '<button class="primary" data-guide="">Get started</button></div>';
@@ -4782,7 +4823,7 @@ document.addEventListener('mousedown', (e) => {
 });
 // an overlay that owns the keys: the guide, the tour, a full-screen diagram or picture, the selection dialog
 const keysOwned = () => byId('onb').classList.contains('open') || tourStep >= 0 ||
-  !!document.querySelector('.mmdfull, .imgview') || byId('seldlg').open;
+  !!document.querySelector('.mmdfull, .imgview') || byId('seldlg').open || byId('grpdlg').open;
 // the global keys, in the capture phase so they work in text boxes too (on macOS, Ctrl with a digit, W or T types nothing)
 document.addEventListener('keydown', (e) => {
   if (keysOwned()) return;
@@ -5187,86 +5228,142 @@ let scoutRawOpen = false;
 let scoutAboutOpen = null;   // null: open until the first run, then folded; after a click, what you chose
 byId('scoutBtn').addEventListener('click', () => (byId('logpane').classList.contains('open') && byId('logtitle').textContent === SCOUT_TITLE ? closeLog() : openScout()));
 
-// --- ☑ Checklist drawer: one group of repos — its ledger (goals, holds, notes), each ticket with its plans and PRs,
-// and the questions. Data: GET /api/ledger. Guide: docs/plans-dashboard.md, "Groups and the checklist".
-const CHECK_TITLE = '☑ checklist';
+// --- ☑ Checklist: one group of repos — what needs you, each ticket with its plans and PRs, the goals and rules
+// (ledger.md) and the questions. It fills the big right area when no plan is open; the group bar in the sidebar opens it.
+// Data: GET /api/ledger. Guide: docs/plans-dashboard.md, "Groups and the checklist".
 let checkGroup = null;   // the group picked last, remembered per browser
 try { checkGroup = localStorage.getItem('dash-check-group'); } catch {}
 let ckGen = 0;           // each render takes a number: only the newest request paints
 let ckBusy = 0;          // requests on their way: a refresh tick does not start one while another is on its way
 let ckPending = '';      // the groups and pick of the newest request on its way ("<groups>|<pick>")
 const CK_CHIP = { done: 'chip ok', failed: 'chip bad', closed: 'chip bad', 'needs-you': 'chip warn', running: 'chip warn', waiting: 'chip warn', planned: 'chip' };
+/** Gives the sorted group names of the projects in `projects` (the /api/state list). */
+const ckGroups = (projects) => [...new Set(projects.map((p) => p.group).filter(Boolean))].sort();
+/** Gives the group the checklist shows: the group picked last when it still exists, else the first one, else undefined. */
+const ckPick = (groups) => (groups.includes(checkGroup) ? checkGroup : groups[0]);
+/** Gives a group name made from a client name: lower case, other characters become "-", at most 40; "group" when nothing is left. */
+const groupNameFor = (client) =>
+  String(client || '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 40) || 'group';
 /**
- * Gives the HTML of the checklist for the GET /api/ledger answer `d`, the group list `groups` and the picked group `pick`.
+ * Gives the part of a ledger.md text that the checklist shows: without `# ` title lines, without the help line
+ * of the template ("Goals, holds and notes of this group. …"), and without `## ` sections that have no text.
+ * Gives '' when nothing is written.
+ */
+function ledgerBody(text) {
+  const parts = String(text || '').replace(/\r\n/g, '\n').split(/^(?=## )/m);
+  const out = [];
+  for (const part of parts) {
+    const lines = part.split('\n').filter((l) => !/^# /.test(l) && !l.startsWith('Goals, holds and notes of this group.'));
+    const head = lines[0] && lines[0].startsWith('## ') ? lines.shift() : null;
+    const rest = lines.join('\n').trim();
+    if (rest) out.push((head ? head + '\n\n' : '') + rest);
+  }
+  return out.join('\n\n');
+}
+/** Gives the HTML of the group bar of `group` in the sidebar, with the counts `info` (state groupInfo); `on` marks the group shown now. */
+function groupBarHtml(group, info, on) {
+  const n = (info && info.tickets) || 0, you = (info && info.needsYou) || 0;
+  return '<button class="grpbar' + (on ? ' on' : '') + '" data-ckgroup="' + escA(group) + '" aria-pressed="' + !!on +
+    '" title="Open the checklist of ' + escA(group) + ': what needs you, each ticket across its repos, and the goals">' +
+    '<span class="grpname">☑ ' + esc(group) + '</span><span class="grpcnt">' + n + ' ticket' + (n === 1 ? '' : 's') + '</span>' +
+    (you ? '<span class="grpyou">' + you + ' needs you</span>' : '') + '</button>';
+}
+/**
+ * Gives the HTML of the checklist for the GET /api/ledger answer `d`.
  * It changes nothing outside itself: CUR_ISSUES is empty while it runs (a bare #41 is not linked to the open plan's repo)
  * and has its old value again when it returns.
  */
-function checklistHtml(d, groups, pick) {
+function checklistHtml(d) {
   const keep = CUR_ISSUES; CUR_ISSUES = '';
   try {
-    if (!groups.length || !d) return '<div class="setup sc"><div class="sc-card"><div class="sc-sub">No group yet. Give two or more projects the same Group in ⚙ Settings.</div></div></div>';
-    let h = '<div class="setup sc"><div class="ck-bar"><select id="ckGroup" aria-label="group">' +
-      groups.map((g) => '<option value="' + escA(g) + '"' + (g === pick ? ' selected' : '') + '>' + esc(g) + '</option>').join('') +
-      '</select><button class="mini" id="ckEdit" title="Open ledger.md in VS Code (made from the template when it is missing)">✎ Edit ledger</button></div>';
-    const L = d.ledger || {};
-    h += '<div class="sc-card"><div class="sc-head"><b>Goals, holds and notes</b><span class="dim">' + esc(L.path || '') + '</span></div>' +
-      (L.error ? '<div class="sc-sub bad">' + esc(L.error) + '</div>'
-        : L.exists ? '<div class="ck-ledger">' + md(L.text || '') + '</div>'
-        : '<div class="sc-sub">No ledger yet. ✎ Edit ledger makes one at <code>' + esc(L.path || '') + '</code>.</div>') +
-      (L.truncated ? '<p class="hint">The file is larger than 256 KB: only its start is shown.</p>' : '') + '</div>';
     const row = (r) => '<div class="ck-row">' + projPill(r.project) +
       '<a href="#" data-sopen="' + escA(r.project + '/' + r.slug) + '">' + inline(r.title || r.slug) + '</a>' +
       '<span class="' + (CK_CHIP[r.step] || 'chip') + '">' + esc(String(r.step).replace(/-/g, ' ')) + '</span>' +
-      (r.pr ? (r.pr.url ? '<a href="' + escA(r.pr.url) + '" target="_blank" title="' + escA(r.pr.state || '') + '">#' + esc(String(r.pr.number)) + '</a>'
-        : '<span>#' + esc(String(r.pr.number)) + '</span>') + ' <span class="dim">' + esc(r.pr.state || '') + '</span>' : '') +
-      (r.waits && r.waits.length ? '<span class="ck-waits">' + r.waits.map((w) => esc(w.text) + ' ' + (w.met ? '✓' : '✗') +
+      (r.pr ? (r.pr.url ? '<a href="' + escA(r.pr.url) + '" target="_blank" title="' + escA(r.pr.state || '') + '">PR #' + esc(String(r.pr.number)) + '</a>'
+        : '<span>PR #' + esc(String(r.pr.number)) + '</span>') + ' <span class="dim">' + esc(String(r.pr.state || '').toLowerCase()) + '</span>' : '') +
+      (r.waits && r.waits.length ? '<span class="ck-waits">waits for ' + r.waits.map((w) => esc(w.text) + ' ' + (w.met ? '✓' : '✗') +
         (w.error ? ' (' + esc(w.error) + ')' : '')).join(' · ') + '</span>' : '') + '</div>';
     const C = d.chain || { tickets: [], untracked: [] };
-    h += '<div class="sc-card"><div class="sc-head"><b>Tickets</b><span class="dim">from each plan’s Tickets: line</span></div>';
-    if (!C.tickets.length && !C.untracked.length) h += '<div class="sc-sub">No plans in this group yet.</div>';
-    for (const t of C.tickets) h += '<div class="ck-ticket"><div class="ck-key">' +
-      (t.url ? '<a href="' + escA(t.url) + '" target="_blank">' + esc(t.key) + '</a>' : '<b>' + esc(t.key) + '</b>') +
-      (t.done ? ' <span class="chip ok">✓ done</span>' : '') + '</div>' + t.plans.map(row).join('') + '</div>';
-    if (C.untracked.length) h += '<div class="ck-ticket"><div class="ck-key"><b>Not linked to a ticket</b></div>' + C.untracked.map(row).join('') + '</div>';
+    let h = '<div class="ckv"><div class="ck-head"><h2>☑ ' + esc(d.group) + '</h2><div class="dim">' +
+      (d.projects || []).map((p) => esc(p.name)).join(' · ') + ' — updates every 5 s</div></div>';
+    // the plans that wait for the owner come first, each once (a plan can be in two tickets)
+    const seen = new Set();
+    const you = [...C.tickets.flatMap((t) => t.plans), ...C.untracked].filter((r) => {
+      const k = r.project + '/' + r.slug;
+      if (r.step !== 'needs-you' || r.archived || seen.has(k)) return false;
+      seen.add(k); return true;
+    });
+    if (you.length) h += '<div class="ck-box ck-you"><h3>Needs you now</h3>' + you.map(row).join('') + '</div>';
+    h += '<div class="ck-box"><h3>Tickets</h3>';
+    if (!C.tickets.length && !C.untracked.length) h += '<div class="dim">No plans in this group yet.</div>';
+    for (const t of C.tickets) {
+      const i = t.key.lastIndexOf('#'), repo = t.key.slice(0, i);
+      const num = esc(t.key.slice(i));
+      h += '<div class="ck-ticket"><div class="ck-key">' +
+        (t.url ? '<a href="' + escA(t.url) + '" target="_blank" title="' + escA(t.key) + '">' + num + '</a>' : '<b>' + num + '</b>') +
+        ' <span class="dim">· ' + esc(repo.slice(repo.lastIndexOf('/') + 1)) + '</span>' +
+        (t.done ? ' <span class="chip ok">✓ done</span>' : '') + '</div>' + t.plans.map(row).join('') + '</div>';
+    }
+    if (C.untracked.length) h += '<div class="ck-ticket"><div class="ck-key"><b>No ticket</b> <span class="dim">· add <code>- **Tickets**: #41</code> to a plan header to link it</span></div>' +
+      C.untracked.map(row).join('') + '</div>';
     h += '</div>';
+    const L = d.ledger || {};
+    const text = L.error ? '' : ledgerBody(L.text);
+    h += '<div class="ck-box"><h3>Goals &amp; rules <button class="mini" id="ckEdit" title="Open ' + escA(L.path || 'ledger.md') +
+      ' in VS Code (it is made when it is missing)">✎ Edit</button></h3>' +
+      (L.error ? '<div class="bad">' + esc(L.error) + '</div>'
+        : text ? '<div class="ck-ledger">' + md(text) + '</div>'
+        : '<div class="dim">Nothing written yet. ✎ Edit adds the goals and the rules (holds) of this group. Agents read them too.</div>') +
+      (L.truncated ? '<p class="hint">The file is larger than 256 KB: only its start is shown.</p>' : '') + '</div>';
     const Q = d.questions || { items: [] };
-    h += '<div class="sc-card"><div class="sc-head"><b>Questions</b></div>' +
+    h += '<div class="ck-box"><h3>Questions</h3>' +
       (Q.items && Q.items.length ? '<ul>' + Q.items.map((q) => '<li>' + esc(q.text || q) + '</li>').join('') + '</ul>'
-        : '<div class="sc-sub">' + esc(Q.note || '') + '</div>') + '</div>';
+        : '<div class="dim" title="' + escA(Q.note || '') + '">None yet. Questions from agents will show here.</div>') + '</div>';
     return h + '</div>';
   } finally { CUR_ISSUES = keep; }
 }
-/** Opens the ☑ Checklist drawer in the side pane and always paints it again (a reopen never stays on "loading…"). */
-function openChecklist() {
-  closeLog(); setBack(null);
-  byId('logtitle').textContent = CHECK_TITLE;
-  byId('logpane').classList.add('open');
-  byId('logbody').innerHTML = '<div class="setup">loading…</div>';
-  byId('logbody')._ck = null;
-  renderChecklist(true);
-}
+// a screen of 600 px or less has no room for the right area: there the checklist opens in the drawer (full width)
+const CK_DRAWER = '☑ checklist';
+const ckDrawer = () => byId('logpane').classList.contains('open') && byId('logtitle').textContent === CK_DRAWER;
 /**
- * Paints the checklist when the drawer shows it. `byUser` is true for a call the owner caused (open, a group pick, an edit):
- * it always paints a new answer. A refresh tick paints only a changed answer, never over a text selection or a focused select.
+ * Shows the checklist of `group` (or of the group picked last) in the big right area: it closes the open plan,
+ * the drawer and the board. With no group, the area shows how to make one. On a narrow screen it opens in the drawer.
  */
-async function renderChecklist(byUser) {
-  const showing = () => byId('logpane').classList.contains('open') && byId('logtitle').textContent === CHECK_TITLE;
-  if (!showing()) return;
-  const groups = [...new Set(state.map((p) => p.group).filter(Boolean))].sort();
-  const pick = groups.includes(checkGroup) ? checkGroup : groups[0];
-  // a tick waits for the request on its way only when that request asks for the same groups and pick;
-  // else (a group was removed or added) it starts a newer one, so the old answer can no longer paint
-  const want = groups.join(',') + '|' + (pick || '');
-  if (!byUser && ckBusy && ckPending === want) return;
-  const gen = ++ckGen;
-  const body = byId('logbody');
-  const paint = (h) => { const top = body.scrollTop; body.innerHTML = h; body.scrollTop = top; };
-  if (!pick) {
-    if (body._ck === '') return;
-    body._ck = '';
-    paint(checklistHtml(null, [], null));
+function showChecklist(group) {
+  if (group) { checkGroup = group; try { localStorage.setItem('dash-check-group', group); } catch {} }
+  closeLog(); selected = null; boardOn = false;
+  applyView(); renderList();
+  if (window.matchMedia && matchMedia('(max-width: 600px)').matches && ckGroups(state).length) {
+    byId('logtitle').textContent = CK_DRAWER;
+    byId('logpane').classList.add('open');
+    byId('logbody').innerHTML = '<div class="ckmain"><span class="dim">loading…</span></div>';
+    byId('logbody')._ck = null;
+    renderChecklist(true);
     return;
   }
+  byId('detail')._ck = null;
+  renderEmptyDetail(true);
+}
+/**
+ * Paints the checklist when the big right area shows it (no plan open, no board), or the drawer on a narrow screen.
+ * `byUser` is true for a call the owner caused (a group bar click, an edit): it always paints a new answer.
+ * A refresh tick paints only a changed answer, never over a text selection.
+ */
+async function renderChecklist(byUser) {
+  const drawer = ckDrawer();
+  const body = drawer ? byId('logbody') : byId('detail');
+  const showing = () => (drawer ? ckDrawer()
+    : !selected && !boardOn && !!body.firstElementChild && body.firstElementChild.classList.contains('ckmain'));
+  if (!showing()) return;
+  const groups = ckGroups(state);
+  const pick = ckPick(groups);
+  if (!pick) return;   // renderEmptyDetail shows how to make a group
+  // a tick waits for the request on its way only when that request asks for the same groups and pick;
+  // else (a group was removed or added) it starts a newer one, so the old answer can no longer paint
+  const want = groups.join(',') + '|' + pick;
+  if (!byUser && ckBusy && ckPending === want) return;
+  const gen = ++ckGen;
+  const paint = (h) => { const top = body.scrollTop; body.innerHTML = '<div class="ckmain">' + h + '</div>'; body.scrollTop = top; };
   let text = '', err = '';
   // a counter, not a flag: an older request that ends must not let a tick start over the owner's request
   ckBusy++;
@@ -5279,20 +5376,13 @@ async function renderChecklist(byUser) {
   if (gen !== ckGen || !showing()) return;
   if (err) {
     body._ck = null;
-    paint('<div class="setup sc"><div class="sc-sub bad">Cannot read the checklist: ' + esc(err) + '</div></div>');
+    paint('<div class="ckv"><div class="bad">Cannot read the checklist: ' + esc(err) + '</div></div>');
     return;
   }
-  const key = groups.join(',') + '|' + pick + '|' + text;
+  const key = want + '|' + text;
   if (key === body._ck || (!byUser && selectionIn(body))) return;
-  if (!byUser && document.activeElement && document.activeElement.id === 'ckGroup') return;
   body._ck = key;
-  paint(checklistHtml(JSON.parse(text), groups, pick));
-  byId('ckGroup').addEventListener('change', (e) => {
-    checkGroup = e.target.value;
-    try { localStorage.setItem('dash-check-group', checkGroup); } catch {}
-    body._ck = null;
-    renderChecklist(true);
-  });
+  paint(checklistHtml(JSON.parse(text)));
   byId('ckEdit').addEventListener('click', async () => {
     // post() shows only `output`: a 400 { error } or a failed request must not end without a word
     try {
@@ -5304,12 +5394,52 @@ async function renderChecklist(byUser) {
   });
   body.querySelectorAll('[data-sopen]').forEach((a) => a.addEventListener('click', (e) => {
     e.preventDefault(); e.stopPropagation();
-    closeLog();
-    if (boardOn) openFromBoard(a.dataset.sopen);
-    else { selected = a.dataset.sopen; renderList(); renderDetail(true); }
+    if (drawer) closeLog();
+    selected = a.dataset.sopen; renderList(); renderDetail(true);
   }));
 }
-byId('checkBtn').addEventListener('click', () => (byId('logpane').classList.contains('open') && byId('logtitle').textContent === CHECK_TITLE ? closeLog() : openChecklist()));
+/**
+ * Opens the "Group these repos" form for the projects of `client` that have no group: a name and one ticked box per project.
+ * Create saves the group through POST /api/registry (the save of ⚙ Settings) and shows the new checklist.
+ */
+function openGroupForm(client) {
+  const names = state.filter((s) => s.client === client && !s.group).map((s) => s.name);
+  const D = byId('grpdlg');
+  D.innerHTML = '<form id="grpform" class="grpform"><h3 id="grpdlgt">Group these repos</h3>' +
+    '<p class="dim">They get one checklist together: what needs you, each ticket across the repos, and the goals.</p>' +
+    '<label class="grpf-name">Name <input id="grpname" required maxlength="40" pattern="[A-Za-z0-9._\\-]{1,40}" value="' +
+      escA(groupNameFor(client)) + '" aria-describedby="grpnamehint"></label>' +
+    '<p class="hint" id="grpnamehint">1 to 40 letters, digits, dots, dashes or underscores.</p>' +
+    names.map((n) => '<label class="grpf-pick"><input type="checkbox" value="' + escA(n) + '" checked> ' + esc(n) + '</label>').join('') +
+    '<p class="bad" id="grperr" hidden></p>' +
+    '<div class="grpf-acts"><button type="button" id="grpcancel">Cancel</button><button class="primary" type="submit">Create group</button></div></form>';
+  byId('grpcancel').addEventListener('click', () => D.close());
+  byId('grpform').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = byId('grpname').value.trim().toLowerCase();
+    const picked = [...D.querySelectorAll('.grpf-pick input:checked')].map((b) => b.value);
+    const errEl = byId('grperr');
+    if (!picked.length) { errEl.textContent = 'Tick at least one repo.'; errEl.hidden = false; return; }
+    try {
+      const reg = await (await fetch('/api/registry')).json();
+      for (const entry of reg) if (picked.includes(entry.name)) entry.group = name;
+      const r = await answer(await fetch('/api/registry', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projects: reg }) }));
+      if (!r.ok) { errEl.textContent = r.error || r.output || 'Cannot save the group.'; errEl.hidden = false; return; }
+      // a warning of another project (for example a root that is gone) is shown, but the group is saved
+      if (r.warnings && r.warnings.length) alert('⚠️ ' + r.warnings.join('\n'));
+    } catch (err) { errEl.textContent = 'Cannot save the group: ' + String((err && err.message) || err); errEl.hidden = false; return; }
+    D.close();
+    checkGroup = name;
+    try { localStorage.setItem('dash-check-group', name); } catch {}
+    await refresh();
+    showChecklist(name);
+  });
+  D.showModal();
+  byId('grpname').select();
+}
+byId('grpdlg').addEventListener('click', (e) => { if (e.target.id === 'grpdlg') e.currentTarget.close(); });
+byId('checkBtn').addEventListener('click', () => showChecklist());
 scoutPeek();
 setInterval(scoutPeek, 60000);
 // --- sticky note ---

@@ -128,6 +128,17 @@ export function buildChain(projects, now, staleMs) {
   return { tickets: list, untracked };
 }
 
+/**
+ * Gives the counts of the group bar in the sidebar for one `buildChain()` result:
+ * `tickets` is the number of tickets that are not done, `needsYou` the number of active plans whose step is `needs-you`
+ * (a plan in two tickets counts once).
+ */
+export function groupSummary(chain) {
+  const rows = [...(chain.tickets || []).flatMap((t) => t.plans), ...(chain.untracked || [])];
+  const you = new Set(rows.filter((r) => r.step === 'needs-you' && !r.archived).map((r) => r.project + '/' + r.slug));
+  return { tickets: (chain.tickets || []).filter((t) => !t.done).length, needsYou: you.size };
+}
+
 /** Gives the text of a new `ledger.md` for `group`: a title, one line of help, and empty Goals, Holds and Notes. */
 export function ledgerTemplate(group) {
   return '# Ledger: ' + group + '\n\nGoals, holds and notes of this group. The dashboard computes the tickets, plans and PRs by itself.\n\n## Goals\n\n## Holds\n\n## Notes\n';
