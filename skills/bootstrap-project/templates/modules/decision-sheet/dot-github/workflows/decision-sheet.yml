@@ -3,8 +3,8 @@
 #
 # /skill-5-ship --unattended writes the sheet into the PR body between two
 # markers (format: .claude/skills/decision-sheet/SKILL.md). Each box is one
-# question that only a person can answer. A PR without the markers passes, so
-# a PR written by hand is not affected.
+# question that only a person can answer. A PR without the markers skips the
+# job (a skipped job passes), so a PR written by hand is not affected.
 #
 # A separate workflow: it listens for `edited`, so a ticked box runs the check
 # again by itself. It reads only the event payload: no checkout, no token, no
@@ -31,6 +31,10 @@ concurrency:
 jobs:
   decision-sheet:
     name: Decision Sheet
+    # Only a PR body with the sheet starts the job. A skipped job costs no
+    # Actions minutes and satisfies the required check. A run costs a full
+    # billed minute, even for a PR without a sheet (for example Dependabot).
+    if: contains(github.event.pull_request.body, '<!-- decision-sheet:start')
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
