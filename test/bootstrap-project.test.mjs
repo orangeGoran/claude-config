@@ -412,6 +412,256 @@ function lanesWith({ dir, repo }, plans, reports, json = true) {
   return r.stdout;
 }
 
+// write full plan texts (slug -> text) into a rendered repo's .plans/
+function writePlans(repo, plans) {
+  mkdirSync(path.join(repo, '.plans'), { recursive: true });
+  for (const [slug, text] of Object.entries(plans)) writeFileSync(path.join(repo, '.plans', slug + '.md'), text);
+}
+// write one file of the dashboard's central state for the project <name>, under HOME = dir
+function writeState(dir, name, file, data) {
+  const d = path.join(dir, '.claude/pipeline-dashboard/state', name);
+  mkdirSync(d, { recursive: true });
+  writeFileSync(path.join(d, file), JSON.stringify(data));
+}
+// run the rendered plan-lanes.mjs with HOME = c.dir; the parsed JSON, or the text
+function runLanes(c, json = true) {
+  const r = spawnSync(process.execPath, ['.claude/scripts/plan-lanes.mjs', ...(json ? ['--json'] : [])],
+    { cwd: c.repo, encoding: 'utf8', env: { ...process.env, HOME: c.dir } });
+  assert.equal(r.status, 0, r.stderr);
+  return json ? JSON.parse(r.stdout) : r.stdout;
+}
+// a plan text with optional header lines and the code files it changes
+const waitPlan = (slug, { header = [], files = [`src/${slug}.ts`], body = '' } = {}) =>
+  `# Plan: ${slug}\n\n${header.map((h) => h + '\n').join('')}\n## Steps\n\n1. Change ${files.map((f) => '`' + f + '`').join(', ')}.\n${body}`;
+const WAITS_PR12 = '- **Waits for**: acme-web PR #12 merged';
+const inBatch = (out, slug) => out.recommendedBatch.some((p) => p.slug === slug);
+const planOf = (out, slug) => out.plans.find((p) => p.slug === slug);
+
+test('plan-lanes keeps a plan with an unmet Waits for line out of the batch', () => {
+  const c = bootstrapRepo();
+  try {
+    writePlans(c.repo, { 'ana-plan': waitPlan('ana-plan', { header: [WAITS_PR12] }), 'bea-plan': waitPlan('bea-plan') });
+    // no watcher state at all
+    const out = runLanes(c);
+    assert.ok(!inBatch(out, 'ana-plan'), JSON.stringify(out.recommendedBatch));
+    assert.ok(inBatch(out, 'bea-plan'));
+    assert.equal(out.waitingCount, 1);
+    assert.equal(out.waiting.length, 1);
+    const [w] = out.waiting;
+    assert.equal(w.slug, 'ana-plan');
+    assert.deepEqual(w.conditions, ['acme-web PR #12 merged']);
+    assert.ok(!('met' in w));
+    assert.equal(w.file, '.plans/ana-plan.md');
+    assert.equal(w.checkedAt, null);
+    assert.match(w.note, /no watcher state/);
+    assert.ok(out.lanes.some((l) => l.members.includes('ana-plan')), 'a waiting plan stays in its lane');
+    assert.equal(planOf(out, 'bea-plan').waits, null);
+    const text = runLanes(c, false);
+    assert.match(text, /\nWAITING /);
+    assert.match(text, /ana-plan — acme-web PR #12 merged\n {6}no watcher state/);
+    assert.match(text, /ana-plan {2}files=.*⏳WAITING/);
+    assert.match(text, /waiting: 1/);
+
+    // a watch.json that holds null reads as no watcher state, with no crash
+    writeState(c.dir, 'acme-api', 'watch.json', null);
+    const nul = runLanes(c);
+    assert.ok(!inBatch(nul, 'ana-plan'));
+    assert.match(nul.waiting[0].note, /no watcher state/);
+    // a plan-meta.json, runs.json or plan-summaries.json that holds null does not crash either
+    for (const f of ['plan-meta.json', 'runs.json', 'plan-summaries.json']) writeState(c.dir, 'acme-api', f, null);
+    assert.ok(inBatch(runLanes(c), 'bea-plan'));
+    rmSync(path.join(c.dir, '.claude/pipeline-dashboard/state/acme-api/runs.json'));
+    rmSync(path.join(c.dir, '.claude/pipeline-dashboard/state/acme-api/plan-summaries.json'));
+
+    // a parked waiting plan says that the watcher does not start it
+    writeState(c.dir, 'acme-api', 'plan-meta.json', { 'ana-plan': { status: 'parked' } });
+    const parked = runLanes(c);
+    assert.match(parked.waiting.find((x) => x.slug === 'ana-plan').note, /status parked: the watcher does not start it by itself/);
+    // a proposed waiting plan says the same
+    writeState(c.dir, 'acme-api', 'plan-meta.json', { 'ana-plan': { status: 'proposed' } });
+    assert.match(runLanes(c).waiting.find((x) => x.slug === 'ana-plan').note, /status proposed: the watcher does not start it by itself/);
+  } finally { rmSync(c.dir, { recursive: true, force: true }); }
+});
+
+test('plan-lanes reads met and checkedAt of the watcher: met is met at any age, else the age is in the note', () => {
+  const c = bootstrapRepo();
+  try {
+    writePlans(c.repo, { 'ana-plan': waitPlan('ana-plan', { header: [WAITS_PR12] }), 'bea-plan': waitPlan('bea-plan') });
+    const now = new Date().toISOString();
+    const ago = (ms) => new Date(Date.now() - ms).toISOString();
+    const watchWith = (data) => { writeState(c.dir, 'acme-api', 'watch.json', data); return runLanes(c); };
+
+    // met by the watcher, fresh check → ready
+    let out = watchWith({ met: { 'ana-plan': true }, checkedAt: now });
+    assert.ok(inBatch(out, 'ana-plan'));
+    assert.deepEqual(out.waiting, []);
+    assert.deepEqual(planOf(out, 'ana-plan').waits, { conditions: ['acme-web PR #12 merged'], met: true, checkedAt: now, stale: false, note: null });
+
+    // met stays met when the check is old or missing (1A+)
+    for (const data of [{ met: { 'ana-plan': true }, checkedAt: ago(2 * 3600e3) }, { met: { 'ana-plan': true } }]) {
+      out = watchWith(data);
+      assert.ok(inBatch(out, 'ana-plan'), JSON.stringify(data));
+      const w = planOf(out, 'ana-plan').waits;
+      assert.equal(w.met, true);
+      assert.equal(w.stale, true);
+      assert.equal(w.note, null);
+    }
+
+    // not met: the note tells the age of the last check
+    const cases = [
+      [{ met: {}, checkedAt: ago(2 * 3600e3) }, true, /last checked 120 min ago/],
+      [{ met: {} }, true, /last checked never/],
+      [{ met: {}, checkedAt: 'not a time' }, true, /at an unknown time/],
+      [{ met: {}, checkedAt: new Date(Date.now() + 3600e3).toISOString() }, true, /at an unknown time/],
+      [{ met: {}, checkedAt: now }, false, null],
+      // the 10-minute limit: 5 min is fresh, 11 min is stale
+      [{ met: {}, checkedAt: ago(5 * 60e3) }, false, null],
+      [{ met: {}, checkedAt: ago(11 * 60e3) }, true, /last checked 11 min ago/],
+      // the blank state of the watcher's first tick (loadWatch)
+      [{ prs: null, outcomes: null, launched: {}, met: {}, errors: {}, since: now, checkedAt: null }, true, /last checked never/],
+    ];
+    for (const [data, stale, note] of cases) {
+      out = watchWith(data);
+      const msg = JSON.stringify(data);
+      assert.ok(!inBatch(out, 'ana-plan'), msg);
+      const w = out.waiting.find((x) => x.slug === 'ana-plan');
+      assert.equal(w.stale, stale, msg);
+      assert.equal(w.checkedAt, typeof data.checkedAt === 'string' ? data.checkedAt : null, msg);
+      if (note) { assert.match(w.note, note, msg); assert.doesNotMatch(w.note, /NaN|no watcher state/, msg); }
+      else assert.equal(w.note, null, msg);
+    }
+  } finally { rmSync(c.dir, { recursive: true, force: true }); }
+});
+
+test('plan-lanes does not list a running plan as waiting', () => {
+  const c = bootstrapRepo();
+  try {
+    const shared = ['src/shared-a.ts', 'src/shared-b.ts', 'src/shared-c.ts'];
+    writePlans(c.repo, {
+      'ana-plan': waitPlan('ana-plan', { header: [WAITS_PR12], files: shared }),
+      'bea-plan': waitPlan('bea-plan', { files: shared }),
+    });
+    // the test process is alive, so the dashboard run of ana-plan counts as live
+    writeState(c.dir, 'acme-api', 'runs.json', { 'ana-plan': { pid: process.pid, exitCode: null } });
+    const out = runLanes(c);
+    assert.ok(out.inFlight.some((r) => r.slug === 'ana-plan'));
+    assert.ok(!out.waiting.some((w) => w.slug === 'ana-plan'));
+    const bea = out.recommendedBatch.find((p) => p.slug === 'bea-plan');
+    assert.ok(bea, JSON.stringify(out.recommendedBatch));
+    assert.deepEqual(bea.sharesWithWaiting, []);
+    assert.ok(bea.blockedByActiveRun.some((b) => b.slug === 'ana-plan'));
+  } finally { rmSync(c.dir, { recursive: true, force: true }); }
+});
+
+test('plan-lanes finds its state folder by the registry name, not the folder name', () => {
+  const c = bootstrapRepo();
+  try {
+    writePlans(c.repo, { 'ana-plan': waitPlan('ana-plan', { header: [WAITS_PR12] }) });
+    mkdirSync(path.join(c.dir, '.claude'), { recursive: true });
+    const registry = (root) => writeFileSync(path.join(c.dir, '.claude/pipeline-projects.json'),
+      JSON.stringify({ projects: [null, { name: 'acme-backend', root }] }));
+    writeState(c.dir, 'acme-backend', 'watch.json', { met: { 'ana-plan': true }, checkedAt: new Date().toISOString() });
+    writeState(c.dir, 'acme-backend', 'plan-summaries.json', { 'ana-plan': 'Ana summary' });
+
+    registry(c.repo);
+    let out = runLanes(c);
+    assert.ok(inBatch(out, 'ana-plan'), 'the state came from state/acme-backend/');
+    assert.equal(planOf(out, 'ana-plan').summary, 'Ana summary');
+
+    // a root written with ~ (HOME is c.dir)
+    registry('~/' + path.relative(c.dir, c.repo));
+    out = runLanes(c);
+    assert.ok(inBatch(out, 'ana-plan'));
+    assert.equal(planOf(out, 'ana-plan').summary, 'Ana summary');
+
+    // another root: the folder name acme-api is used, which has no watcher state
+    registry(path.join(c.dir, 'other-repo'));
+    out = runLanes(c);
+    assert.ok(!inBatch(out, 'ana-plan'));
+    assert.match(out.waiting[0].note, /no watcher state/);
+  } finally { rmSync(c.dir, { recursive: true, force: true }); }
+});
+
+test('plan-lanes in a linked worktree reads the state folder of its main checkout', () => {
+  const c = bootstrapRepo();
+  try {
+    writePlans(c.repo, { 'ana-plan': waitPlan('ana-plan', { header: [WAITS_PR12] }) });
+    const git = (...args) => execFileSync('git', ['-c', 'user.name=Ana Example', '-c', 'user.email=ana@example.test', ...args], { cwd: c.repo });
+    git('add', '-A');
+    git('commit', '-q', '-m', 'init');
+    const wt = path.join(c.dir, 'worktrees', 'acme-api', 'ana-plan');
+    git('worktree', 'add', '-q', '-b', 'auto/ana-plan', wt);
+    writeState(c.dir, 'acme-backend', 'watch.json', { met: { 'ana-plan': true }, checkedAt: new Date().toISOString() });
+    mkdirSync(path.join(c.dir, '.claude'), { recursive: true });
+    writeFileSync(path.join(c.dir, '.claude/pipeline-projects.json'), JSON.stringify({ projects: [{ name: 'acme-backend', root: c.repo }] }));
+    const met = planOf(runLanes({ ...c, repo: wt }), 'ana-plan').waits;
+    assert.equal(met.met, true, 'registry match through the main checkout');
+
+    // no registry entry: the folder name of the main checkout (acme-api), not of the worktree (ana-plan)
+    rmSync(path.join(c.dir, '.claude/pipeline-projects.json'));
+    writeState(c.dir, 'acme-api', 'watch.json', { met: { 'ana-plan': true }, checkedAt: new Date().toISOString() });
+    assert.equal(planOf(runLanes({ ...c, repo: wt }), 'ana-plan').waits.met, true);
+  } finally { rmSync(c.dir, { recursive: true, force: true }); }
+});
+
+test('plan-lanes says that the watcher does not start a waiting plan with a run report', () => {
+  const c = bootstrapRepo();
+  try {
+    writePlans(c.repo, { 'ana-plan': waitPlan('ana-plan', { header: [WAITS_PR12] }) });
+    mkdirSync(path.join(c.repo, '.plans/auto-runs'), { recursive: true });
+    writeFileSync(path.join(c.repo, '.plans/auto-runs/ana-plan.md'), '# Run\n\n## Status: FAILED\n');
+    writeState(c.dir, 'acme-api', 'watch.json', { met: {}, checkedAt: new Date().toISOString() });
+    const out = runLanes(c);
+    assert.ok(!inBatch(out, 'ana-plan'));
+    const w = out.waiting.find((x) => x.slug === 'ana-plan');
+    assert.ok(w, JSON.stringify(out.waiting));
+    assert.match(w.note, /run report \.plans\/auto-runs\/ana-plan\.md exists: the watcher does not check or start it/);
+
+    // a plan named like an Object.prototype key has no run report
+    writePlans(c.repo, { constructor: waitPlan('constructor', { header: [WAITS_PR12] }) });
+    const proto = runLanes(c).waiting.find((x) => x.slug === 'constructor');
+    assert.ok(proto, 'constructor waits');
+    assert.equal(proto.note, null);
+  } finally { rmSync(c.dir, { recursive: true, force: true }); }
+});
+
+test('plan-lanes reads only Waits for lines of the header, outside fences, without backticks', () => {
+  const c = bootstrapRepo();
+  try {
+    writePlans(c.repo, {
+      'ana-plan': waitPlan('ana-plan', { header: ['- **Waits for**: `acme-web PR #12 merged`', '- **Waits for**: submodule contracts contains 1a2b3c4'] }),
+      'cid-plan': waitPlan('cid-plan', { body: '\n- **Waits for**: acme-web PR #4 merged\n' }),
+      'dan-plan': waitPlan('dan-plan', { header: ['```', '- **Waits for**: acme-web PR #3 merged', '## Example', '```'] }),
+      'gus-plan': waitPlan('gus-plan', { header: ['```', '## Example', '```', WAITS_PR12] }),
+    });
+    const out = runLanes(c);
+    assert.deepEqual(planOf(out, 'ana-plan').waits.conditions, ['acme-web PR #12 merged', 'submodule contracts contains 1a2b3c4']);
+    for (const slug of ['cid-plan', 'dan-plan']) {
+      assert.ok(inBatch(out, slug), slug);
+      assert.equal(planOf(out, slug).waits, null, slug);
+    }
+    assert.ok(!inBatch(out, 'gus-plan'));
+    assert.deepEqual(out.waiting.find((w) => w.slug === 'gus-plan').conditions, ['acme-web PR #12 merged']);
+  } finally { rmSync(c.dir, { recursive: true, force: true }); }
+});
+
+test('plan-lanes warns on a batch plan that shares files with a waiting plan', () => {
+  const c = bootstrapRepo();
+  try {
+    const shared = ['src/shared-a.ts', 'src/shared-b.ts', 'src/shared-c.ts'];
+    writePlans(c.repo, {
+      'eva-plan': waitPlan('eva-plan', { header: [WAITS_PR12], files: shared }),
+      'fay-plan': waitPlan('fay-plan', { files: shared }),
+    });
+    const out = runLanes(c);
+    assert.ok(!inBatch(out, 'eva-plan'));
+    const fay = out.recommendedBatch.find((p) => p.slug === 'fay-plan');
+    assert.ok(fay, JSON.stringify(out.recommendedBatch));
+    assert.deepEqual(fay.sharesWithWaiting, [{ slug: 'eva-plan', conditions: ['acme-web PR #12 merged'], files: shared }]);
+    assert.match(runLanes(c, false), /!! shares 3 file\(s\) with waiting plan eva-plan \(acme-web PR #12 merged\), which can start by itself when met/);
+  } finally { rmSync(c.dir, { recursive: true, force: true }); }
+});
+
 test('plan-lanes counts Claude and Codex rounds with old and new names', () => {
   const a = bootstrapRepo();
   const b = bootstrapRepo();

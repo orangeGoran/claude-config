@@ -14,11 +14,12 @@
 //                  but does not force serialization: fix the merge conflict by hand.
 // Soft conflict  = shared append-only files (registrations, translations,
 //                  generated types, the version bump). Reported only.
+// Waiting       = the plan header has a "- **Waits for**:" line that the plans dashboard's watcher has not seen met. A waiting plan stays in its lane but is never in the batch: the watcher can start it by itself when it is met.
 //
 // Repo-specific settings are in the CONFIG block; the rest is the same in every
 // repo that has this script (template: claude-config skills/bootstrap-project).
 // Pure data, no judgment.
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -76,17 +77,48 @@ const DONE_DIR = path.join(REPO, '.plans', 'done');
 const RUNS_DIR = path.join(REPO, '.plans', 'auto-runs');
 const VALID_DIR = path.join(REPO, '.plans', '.validations');
 // The plans dashboard's central state for this repo: plan statuses and tags always,
-// summaries when the repo has no tracked copy (same as the dashboard's resolveProject).
-const CENTRAL_STATE = path.join(os.homedir(), '.claude', 'pipeline-dashboard', 'state', path.basename(REPO));
+// summaries when the repo has no tracked copy (same folder as the dashboard's resolveProject: the registry name).
+/**
+ * Returns the dashboard's name of this repo: the registry entry whose root is this repo or, in a linked worktree,
+ * its main checkout; else the folder name of the main checkout.
+ * It compares real paths, because Node starts the script by its real path (/private/var/… on macOS).
+ */
+function projectName() {
+  const real = (p) => { try { return realpathSync(p); } catch { return path.resolve(p); } };
+  // a linked worktree (../worktrees/<repo>/<slug>) belongs to the project of its main checkout
+  let main = REPO;
+  try {
+    const common = path.resolve(REPO, execFileSync('git', ['-C', REPO, 'rev-parse', '--git-common-dir'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim());
+    if (path.basename(common) === '.git') main = path.dirname(common);
+  } catch { /* not a git repo: use REPO */ }
+  try {
+    const list = JSON.parse(readFileSync(path.join(os.homedir(), '.claude', 'pipeline-projects.json'), 'utf8')).projects;
+    if (Array.isArray(list)) {
+      const roots = new Set([real(REPO), real(main)]);
+      const hit = list.find((x) => x && typeof x.name === 'string' && typeof x.root === 'string'
+        && roots.has(real(x.root.replace(/^~(?=\/|$)/, os.homedir()))));
+      if (hit) return hit.name;
+    }
+  } catch { /* no registry or bad JSON: use the folder name */ }
+  return path.basename(main);
+}
+const CENTRAL_STATE = path.join(os.homedir(), '.claude', 'pipeline-dashboard', 'state', projectName());
 const pick = (...files) => files.find((f) => existsSync(f)) ?? files[0];
 // statuses and tags: the dashboard keeps them centrally for every project, never in the repo
 const META_FILE = path.join(CENTRAL_STATE, 'plan-meta.json');
 const SUMMARY_CACHE = pick(path.join(RUNS_DIR, 'plan-summaries.json'), path.join(CENTRAL_STATE, 'plan-summaries.json'));
 const GENERIC_RUNS = path.join(CENTRAL_STATE, 'runs.json');
+// the dashboard watcher's result: met[slug] and checkedAt (server.mjs saveWatch)
+const WATCH_FILE = path.join(CENTRAL_STATE, 'watch.json');
 
 const MINOR_MAX_SHARED = 2;
+const WAIT_STALE_MS = 10 * 60 * 1000;   // ten watcher ticks of 60 s
 
-const readJson = (f) => { try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return {}; } };
+// a missing or bad file, and a file that holds null, a number or a string, read as {}
+const readJson = (f) => {
+  try { const v = JSON.parse(readFileSync(f, 'utf8')); return v && typeof v === 'object' ? v : {}; } catch { return {}; }
+};
 const readText = (f) => { try { return readFileSync(f, 'utf8'); } catch { return null; } };
 const gitLines = (args) => {
   try {
@@ -110,6 +142,23 @@ function sectionsOf(text) {
 // `- **Branch**: fix/x` style header fields (same pattern as the dashboard's planBranch)
 const field = (text, name) =>
   (text.match(new RegExp(String.raw`^\s*[-*]\s*\*\*${name}\*\*:\s*` + '`?([\\w./:-]+)`?\\s*$', 'm')) || [])[1] ?? null;
+/**
+ * Reads the `- **Waits for**:` lines of the plan header (the text before the first `## ` line).
+ * Lines inside a ``` fence do not count, and backticks are removed. Same rules as the dashboard's parseWaitsFor.
+ * Returns the condition texts in header order (an empty list when there is none).
+ */
+function waitsForLines(text) {
+  const out = [];
+  let fence = false;
+  for (const line of text.split('\n')) {
+    if (/^\s*```/.test(line)) { fence = !fence; continue; }
+    if (fence) continue;   // a `## ` line inside an example block does not end the header
+    if (line.startsWith('## ')) break;
+    const m = line.match(/^\s*[-*]\s*\*\*Waits for\*\*:\s*(.+?)\s*$/);
+    if (m) out.push(m[1].replace(/`/g, '').trim());
+  }
+  return out;
+}
 
 // --- file classification ----------------------------------------------------------
 const isSoft = (f) => SOFT_FILES.has(f) || SOFT_PATTERNS.some((r) => r.test(f));
@@ -195,6 +244,32 @@ function footprintOf(text) {
 
 const meta = readJson(META_FILE);
 const summaries = readJson(SUMMARY_CACHE);
+// a file that holds null or a number reads as no watcher state (readJson)
+const watch = readJson(WATCH_FILE);
+
+/**
+ * The one place that decides if a plan's conditions are met. It reads the dashboard watcher's result and never checks a condition itself.
+ * A stored met[slug] === true counts at any age: the conditions do not go back. Without it the plan waits (the safe side).
+ * Returns null when the plan has no condition, else { conditions, met, checkedAt, stale, note }.
+ */
+function waitStateOf(slug, conditions) {
+  if (!conditions.length) return null;
+  const met = watch.met?.[slug] === true;
+  const checkedAt = typeof watch.checkedAt === 'string' ? watch.checkedAt : null;
+  const age = checkedAt ? Date.now() - Date.parse(checkedAt) : NaN;
+  const stale = !(age >= 0 && age < WAIT_STALE_MS);   // no time, a bad time and a future time are stale
+  const when = Number.isFinite(age) && age >= 0 ? Math.round(age / 60000) + ' min ago' : 'at an unknown time';
+  const status = meta[slug]?.status;
+  const note = met ? null
+    : status === 'parked' || status === 'proposed' ? `status ${status}: the watcher does not start it by itself`
+    // the watcher skips a plan with a run report (server.mjs watchProject: `p.run`), so it never checks or starts it
+    : slug in runStatus ? `run report .plans/auto-runs/${slug}.md exists: the watcher does not check or start it; launch it by hand when the condition is met`
+    : !Object.keys(watch).length ? 'no watcher state: start the plans dashboard to check the conditions'
+    // checkedAt moves only when the watcher's PR read works (server.mjs watchProject step 1)
+    : stale ? `watcher last checked ${checkedAt ? when : 'never'}: start the plans dashboard, or check that its gh can read the PRs`
+    : null;
+  return { conditions, met, checkedAt, stale, note };
+}
 
 // --- collect plans -----------------------------------------------------------------
 const planFiles = (() => { try { return readdirSync(PLANS_DIR).filter((f) => f.endsWith('.md') && !f.startsWith('.')).sort(); } catch { return []; } })();
@@ -224,7 +299,7 @@ const branchSlug = (b) => slugOfBranch.get(b) ?? autoSlug(b);
 
 // --- auto-pipeline reports -----------------------------------------------------------
 const RUN_SIDE_REPORTS = ['-pr-body.md', '-codex.md', '-decision-sheet.md', '-test-review.md'];
-const runStatus = {};
+const runStatus = Object.create(null);   // no prototype: a plan named `constructor` has no report
 if (existsSync(RUNS_DIR)) {
   for (const f of readdirSync(RUNS_DIR)) {
     if (!f.endsWith('.md') || RUN_SIDE_REPORTS.some((x) => f.endsWith(x))) continue;
@@ -268,7 +343,7 @@ const pendingFiles = new Map();   // slug -> Set(repo paths held uncommitted)
 // squash-merged branch never does. Strongest evidence first:
 //   1. .plans/done/<slug>.md tracked on the base branch.
 //   2. every commit on the branch has an equivalent on its base (`git cherry`).
-const shippedCommit = {};   // slug -> landing commit (or null)
+const shippedCommit = Object.create(null);   // slug -> landing commit (or null); no prototype, as runStatus
 for (const base of new Set([BASE, ...Object.values(planBase)])) {
   for (const f of gitLines(['ls-tree', '-r', '--name-only', base, '.plans/done/'])) {
     const m = f.match(/\.plans\/done\/(.+)\.md$/);
@@ -277,7 +352,7 @@ for (const base of new Set([BASE, ...Object.values(planBase)])) {
     shippedCommit[m[1]] = c ?? null;
   }
 }
-const branchOwnCommits = {};
+const branchOwnCommits = Object.create(null);
 const candidateSlugs = new Set([...worktreePath.keys(), ...planFiles.map((f) => f.slice(0, -3)),
   ...[...localBranches].map(autoSlug).filter(Boolean)]);
 for (const slug of candidateSlugs) {
@@ -390,6 +465,7 @@ const plans = Object.entries(planText).map(([slug, text]) => {
     runState: state,
     shippedCommit: shippedCommit[slug] ?? null,
     hasUncommittedEdits: dirtyPlans.has(slug),
+    waits: waitStateOf(slug, waitsForLines(text)),
     // an active run holds edits not on base yet; a "conflict-free" plan can still land on them
     blockedByActiveRun: [...heldByRun].filter(([s]) => s !== slug).map(([s, held]) => {
       const shared = hard.filter((f) => held.all.has(f));
@@ -482,9 +558,12 @@ const score = (p) => (p.status === 'ready' ? 1000 : 0)
   + p.validation.rounds * 50
   - (p.blockedByActiveRun.length ? 300 : 0)
   - p.hardFileCount;
+// waiting = schedulable (not running, not shipped) and not seen met: a plan launched by hand is in inFlight instead
+const waitingPlans = schedulable.filter((p) => p.waits && !p.waits.met);
 const batch = [];
 for (const p of [...schedulable].sort((a, b) => score(b) - score(a))) {
   if (p.hasUncommittedEdits) continue;   // mid-edit — stays in its lane, not launchable now
+  if (p.waits && !p.waits.met) continue;   // the watcher can start it when its condition is met
   if (batch.some((q) => laneOf.get(q.slug) === laneOf.get(p.slug))) continue;
   batch.push(p);
 }
@@ -503,6 +582,10 @@ const recommendedBatch = batch.map((p) => ({
     .map((o) => ({ slug: o.a === p.slug ? o.b : o.a, files: o.files }))
     .filter((m) => batch.some((q) => q.slug === m.slug)),
   blockedByActiveRun: p.blockedByActiveRun,
+  // the watcher can start a waiting plan by itself while this plan runs
+  sharesWithWaiting: waitingPlans.filter((w) => w.slug !== p.slug)
+    .map((w) => ({ slug: w.slug, conditions: w.waits.conditions, files: p.hardFiles.filter((f) => w.hardFiles.includes(f)) }))
+    .filter((w) => w.files.length),
 }));
 
 const result = {
@@ -513,6 +596,8 @@ const result = {
   maxParallel: recommendedBatch.length,
   laneCount: lanes.length,
   inFlight,
+  waitingCount: waitingPlans.length,
+  waiting: waitingPlans.map((p) => ({ slug: p.slug, file: p.file, conditions: p.waits.conditions, checkedAt: p.waits.checkedAt, stale: p.waits.stale, note: p.waits.note })),
   awaitingReview,
   needsCleanup,
   staleReports,
@@ -545,7 +630,7 @@ if (process.argv.includes('--json')) {
   console.log(JSON.stringify(result, null, 2));
 } else {
   console.log(`plans: ${result.planCount}  schedulable: ${result.schedulableCount}  lanes: ${result.laneCount}`
-    + `  in flight/awaiting review: ${inFlight.length}  done/uncleaned: ${needsCleanup.length}`
+    + `  in flight/awaiting review: ${inFlight.length}  waiting: ${result.waitingCount}  done/uncleaned: ${needsCleanup.length}`
     + `  can launch in parallel now: ${result.maxParallel}  (base: ${BASE})\n`);
   if (configWarnings.length) {
     console.log('CONFIG CHECK (fine for a folder a future plan creates; else fix the CONFIG block or layout.* in .claude/bootstrap.json)');
@@ -562,6 +647,14 @@ if (process.argv.includes('--json')) {
     for (const r of needsCleanup) console.log(`  · ${r.slug}${r.shippedCommit ? ` (${r.shippedCommit})` : ''} — worktree still on disk`);
     console.log('');
   }
+  if (result.waiting.length) {
+    console.log('WAITING (the dashboard can start it by itself when its condition is met — not in the batch)');
+    for (const w of result.waiting) {
+      console.log(`  · ${w.slug} — ${w.conditions.join('; ')}`);
+      if (w.note) console.log(`      ${w.note}`);
+    }
+    console.log('');
+  }
   console.log('RECOMMENDED PARALLEL BATCH (one plan per lane)');
   for (const r of recommendedBatch) {
     const v = r.validation.rounds;
@@ -573,6 +666,9 @@ if (process.argv.includes('--json')) {
       const next = b.state === 'awaiting-review' ? 'review/commit it first' : 'let it finish and land first';
       console.log(`      !! ${b.files.length} file(s) also held by ${b.slug} (${b.state}) — ${next}: ${b.files.join(', ')}`);
     }
+    for (const w of r.sharesWithWaiting) {
+      console.log(`      !! shares ${w.files.length} file(s) with waiting plan ${w.slug} (${w.conditions.join('; ')}), which can start by itself when met: ${w.files.join(', ')}`);
+    }
   }
   console.log('');
   console.log('LANES (connected conflict components — one plan per lane at a time)');
@@ -580,7 +676,7 @@ if (process.argv.includes('--json')) {
     console.log(`LANE ${l.lane} — ${l.label}`);
     for (const s of l.members) {
       const p = plans.find((x) => x.slug === s);
-      console.log(`  · ${s}  files=${p.hardFileCount} (${p.footprintSource})${p.hasUncommittedEdits ? ' !MID-EDIT' : ''}`);
+      console.log(`  · ${s}  files=${p.hardFileCount} (${p.footprintSource})${p.hasUncommittedEdits ? ' !MID-EDIT' : ''}${waitingPlans.includes(p) ? ' ⏳WAITING' : ''}`);
       console.log(`      ${p.hardFiles.join('\n      ')}`);
       if (p.unresolvedNames.length) console.log(`      ? unresolved: ${p.unresolvedNames.join(', ')}`);
     }
