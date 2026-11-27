@@ -303,6 +303,7 @@
              box-shadow:-10px 0 34px rgba(0,0,0,.3);
              display:none; flex-direction:column; z-index:10; }
   #logpane.open { display:flex; }
+  #logpane > #lsplit { position:absolute; top:0; bottom:0; left:-4px; margin:0; }
   #logbody .logmd { white-space:normal; font:calc(13.5px * var(--fs))/1.6 -apple-system,system-ui,sans-serif; color:var(--fg); max-width:none; }
   #logbody { flex:1; overflow:auto; padding:16px; white-space:pre-wrap;
              font:calc(12px * var(--fs))/1.5 ui-monospace,monospace; color:var(--logfg); }
@@ -961,7 +962,7 @@
   .sc-hist .bad { color:var(--bad); } .sc-hist .okc { color:var(--ok); }
   .sc-pager { display:flex; gap:10px; align-items:center; justify-content:center; margin-top:8px; }
   .setup .hint code { color:var(--fg); }
-  @media (max-width: 440px) { #logpane { min-width:0; width:100%; } }
+  @media (max-width: 440px) { #logpane { min-width:0 !important; width:100% !important; } #lsplit { display:none; } }
   .sc-checks th { text-align:left; font-weight:600; color:var(--dim); padding:4px 6px; font-size:calc(11.5px * var(--fs)); }
   .sc-checks tr { cursor:default; } .sc-checks td[data-stag] { cursor:pointer; text-decoration:underline dotted; }
   .sc-checks tr.muted td { color:var(--dim); } .sc-mute { color:var(--warn); white-space:nowrap; }

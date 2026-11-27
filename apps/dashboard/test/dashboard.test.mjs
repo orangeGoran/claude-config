@@ -2414,6 +2414,16 @@ test('the page: the sticky note stays inside the window, and the page has its me
   assert.equal(noteDistrict(1100, 400, 240, 180, ds(), 'list'), null, 'a click in another district: the note stays');
   assert.deepEqual(noteDistrict(980, 400, 240, 180, ds(), 'main'), { x: 1040, y: 400 }, 'mostly in the chat, over the edge of the clicked page: fully into the chat');
   assert.equal(noteDistrict(40, 50, 240, 180, ds().slice(0, 1), 'list'), null, 'no other district: it stays');
+  // the side pane (logs, reports) is a district too: it lies over the right part and cuts the districts under it
+  const nb = src.match(/^const noteDistricts = [^\n]*\n[\s\S]*?^function noteDistrictBoxes\(\) \{[\s\S]*?\n\}$/m);
+  assert.ok(nb, 'app.js has noteDistricts and noteDistrictBoxes');
+  const rects = { '#logpane': [920, 0, 1440, 900], aside: [0, 50, 320, 900], '#detail': [320, 50, 1440, 900] };
+  const fakeDoc = { querySelector: (sel) => (rects[sel] ? { hidden: false, offsetWidth: 1, getBoundingClientRect: () => { const [l, t, r, b] = rects[sel]; return { left: l, top: t, right: r, bottom: b }; } } : null) };
+  const boxes = new Function('document', nb[0] + '\nreturn noteDistrictBoxes;')(fakeDoc);
+  assert.deepEqual(boxes().map((x) => [x.id, x.l, x.r]), [['pane', 920, 1440], ['list', 0, 320], ['main', 320, 920]], 'the open pane cuts the middle page at its left edge');
+  assert.deepEqual(noteDistrict(1000, 300, 240, 180, boxes(), 'pane'), { x: 23, y: 329 }, 'a scroll in the side pane: the note leaves the pane, never to a place under it');
+  rects['#logpane'] = null;
+  assert.deepEqual(boxes().map((x) => [x.id, x.l, x.r]), [['list', 0, 320], ['main', 320, 1440]], 'a closed pane: the districts are as before');
   // a new random tilt each time the note lands at a new place: after a move away and after a drag
   const rt = src.match(/^const noteRetilt = \(\) => \{[^\n]*\};$/m);
   assert.ok(rt, 'app.js has noteRetilt');
@@ -2453,6 +2463,27 @@ test('the page: the sticky note stays inside the window, and the page has its me
   // the round button drags (past 5 px) and keeps its place; a click without a drag opens the note
   assert.match(src, /byId\('notefab'\)\.addEventListener\('pointerdown'[\s\S]{0,400}?< 5\) return;[\s\S]{0,200}?note\.x = ev\.clientX - dx; note\.y = ev\.clientY - dy; placeFab\(\);[\s\S]{0,300}?if \(fabDragged\) saveNote\(\);/);
   assert.match(src, /byId\('notefab'\)\.addEventListener\('click', \(\) => \{ if \(fabDragged\) \{ fabDragged = false; return; \} showNote\(true\); \}\);/);
+});
+
+test('the page: the side pane (logs, reports) is resizable like the chat, and remembers its width', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const html = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'page.html'), 'utf8');
+  assert.match(html, /<div id="logpane">\n\s*<div class="csplit" id="lsplit" role="separator"/, 'the pane has a divider at its left edge');
+  const f = src.match(/^function setLogWidth\([\s\S]*?\n\}$/m);
+  assert.ok(f, 'app.js has setLogWidth');
+  const L = { style: {} }, store = {};
+  const ls = { setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } };
+  const setLogWidth = new Function('byId', 'window', 'localStorage', f[0] + '\nreturn setLogWidth;')(() => L, { innerWidth: 1000 }, ls);
+  setLogWidth(600, true);
+  assert.equal(L.style.width, '600px'); assert.equal(store['dash-log-w'], '600');
+  setLogWidth(100, false);
+  assert.equal(L.style.width, '320px', 'never narrower than 320 px'); assert.equal(store['dash-log-w'], '600', 'a drag move does not save');
+  setLogWidth(5000, true);
+  assert.equal(L.style.width, '900px', 'never wider than 90% of the window');
+  setLogWidth(0, true);
+  assert.equal(L.style.width, '', 'double-click: the default width'); assert.equal(store['dash-log-w'], undefined);
+  assert.match(src, /try \{ setLogWidth\(\+localStorage\.getItem\('dash-log-w'\) \|\| 0\); \} catch \{\}/, 'the saved width comes back on load');
+  assert.match(src, /byId\('lsplit'\)\.addEventListener\('dblclick', \(\) => setLogWidth\(0, true\)\);/);
 });
 
 test('the page: Ready for review in Files changed goes back to the plan when GitHub did it', () => {

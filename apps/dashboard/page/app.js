@@ -1732,6 +1732,33 @@ byId('csplit').addEventListener('keydown', (e) => {
   e.preventDefault();
   setChatWidth(byId('chat').offsetWidth + (e.key === 'ArrowLeft' ? 40 : -40), true);
 });
+// the side pane's width (logs, reports): dragged at its left edge and remembered, like the chat
+/** Sets the width of the side pane to px (320 px to 90% of the window); 0 gives the default width. save: true remembers it in this browser. */
+function setLogWidth(px, save) {
+  const L = byId('logpane');
+  const w = px ? Math.round(Math.max(320, Math.min(px, window.innerWidth * 0.9))) : 0;
+  L.style.width = w ? w + 'px' : ''; L.style.minWidth = w ? '0' : '';
+  if (save) try { w ? localStorage.setItem('dash-log-w', w) : localStorage.removeItem('dash-log-w'); } catch {}
+}
+try { setLogWidth(+localStorage.getItem('dash-log-w') || 0); } catch {}
+byId('lsplit').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  const bar = e.currentTarget;
+  const move = (ev) => setLogWidth(window.innerWidth - ev.clientX);
+  document.body.classList.add('dragging'); bar.classList.add('on');
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', () => {
+    document.removeEventListener('pointermove', move);
+    document.body.classList.remove('dragging'); bar.classList.remove('on');
+    setLogWidth(byId('logpane').offsetWidth, true);
+  }, { once: true });
+});
+byId('lsplit').addEventListener('dblclick', () => setLogWidth(0, true));
+byId('lsplit').addEventListener('keydown', (e) => {
+  if (!/^Arrow(Left|Right)$/.test(e.key)) return;
+  e.preventDefault();
+  setLogWidth(byId('logpane').offsetWidth + (e.key === 'ArrowLeft' ? 40 : -40), true);
+});
 // the plan list's width: --asw on the root, so the header's Plan / Files slot follows it. Dragged and remembered.
 function setSideWidth(px, save) {
   const R = document.documentElement.style;
@@ -5343,16 +5370,20 @@ byId('notegrip').addEventListener('pointerdown', (e) => {
   }, { once: true });
 });
 window.addEventListener('resize', () => { if (note.open) paintNote(); });
-// the note runs away from your focus: a click or a mouse-wheel scroll in the district the note is in (plan list, middle page, chat)
+// the note runs away from your focus: a click or a mouse-wheel scroll in the district the note is in (side pane, plan list, middle page, chat)
 // sends the note (or its round button) to another district (noteDistrict). A click outside the districts (the header) moves it off
 // the clicked part only (noteDodge); a scroll there does not move it. A click or a scroll on the note itself keeps it in place.
-const noteDistricts = [['list', 'aside'], ['main', '#detail'], ['main', '#board'], ['chat', '#chat']];
+// The side pane (#logpane: logs, reports) lies over the right part of the page, so it comes first and cuts the districts under it.
+const noteDistricts = [['pane', '#logpane'], ['list', 'aside'], ['main', '#detail'], ['main', '#board'], ['chat', '#chat']];
 const noteClickAt = {};
-/** Returns the visible districts of the page, with the time of the last click in each. */
+/** Returns the visible districts of the page, with the time of the last click in each. An open side pane cuts the districts under it at its left edge. */
 function noteDistrictBoxes() {
-  return noteDistricts.map(([id, sel]) => [id, document.querySelector(sel)])
+  const boxes = noteDistricts.map(([id, sel]) => [id, document.querySelector(sel)])
     .filter(([, el]) => el && !el.hidden && el.offsetWidth)
     .map(([id, el]) => { const r = el.getBoundingClientRect(); return { id, l: r.left, t: r.top, r: r.right, b: r.bottom, at: noteClickAt[id] || 0 }; });
+  const pane = boxes.find((d) => d.id === 'pane');
+  if (!pane) return boxes;
+  return boxes.map((d) => (d === pane ? d : { ...d, r: Math.min(d.r, pane.l) })).filter((d) => d.r - d.l >= 40);
 }
 /** Returns the focus box of a click: the clicked block (at least 160 × 28 px), cut to 640 × 400 px around the click. */
 function noteFocusBox(target, cx, cy) {
