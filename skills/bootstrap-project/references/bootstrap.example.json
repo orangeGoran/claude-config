@@ -126,7 +126,8 @@
     "post-edit-lint": true,
     "plans-parallel": true,
     "pr-feedback": true,
-    "run-skill": true
+    "run-skill": true,
+    "contracts-jump": false
   },
   "changelog": {
     "locales": [

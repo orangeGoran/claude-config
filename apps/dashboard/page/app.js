@@ -3521,6 +3521,7 @@ async function openSettings() {
         '<input type="text" data-f="client" data-i="' + i + '" value="' + escA(e.client || '') +
           '" placeholder="Client" size="12" aria-label="client">' +
         '<input type="text" data-f="group" data-i="' + i + '" value="' + escA(e.group || '') + '" placeholder="Group" size="12" maxlength="40" list="grplist" aria-label="group" title="group — repos that share work get one checklist">' +
+        '<input type="text" data-f="watchSubmodules" data-i="' + i + '" value="' + escA([].concat(e.watchSubmodules || []).join(', ')) + '" placeholder="Watch submodules" size="14" aria-label="watch submodules" title="submodule paths to watch, for example contracts — the ☑ Checklist proposes a jump when one is behind">' +
         '<button class="rmbtn" data-rm="' + i + '">Remove</button></div>';
       h += '<div class="pcard-body">' +
         '<span class="flabel">Repo root</span>' +
@@ -5313,6 +5314,74 @@ function groupBarHtml(group, info, on, fold = 'open', repos = 0) {
     (fold === 'hide' ? ' · ' + repos + ' repo' + (repos === 1 ? '' : 's') + ' hidden' : '') + '</span>' +
     (you ? '<span class="grpyou">' + you + ' needs you</span>' : '') + '</button></div>';
 }
+// the PR boxes of the Contracts jump card that the owner unticked ("<project>\n<path>#<n>"), for the open page only
+const ckJumpOff = new Set();
+/**
+ * Gives the HTML of the "Contracts jump" box for the `contracts` items of GET /api/ledger, or '' when there are none.
+ * `off` holds the unticked PR boxes. It has no side effects.
+ */
+function jumpCardHtml(items, off) {
+  if (!Array.isArray(items) || !items.length) return '';
+  const n7 = (x) => esc(String(x || '').slice(0, 7) || '—');
+  const prLink = (p) => (p.url ? '<a href="' + escA(p.url) + '" target="_blank">#' + esc(String(p.number)) + '</a>' : '#' + esc(String(p.number)));
+  const nums = (list) => list.map((p) => '#' + String(p.number)).join(', ');
+  let h = '<div class="ck-box"><h3>Contracts jump</h3>';
+  for (const it of items) {
+    const key = String(it.project) + '\n' + String(it.path);
+    const branch = esc(String(it.branch || '?'));
+    const confirm = '<button class="mini" data-jconfirm="' + escA(key) + '">Confirm</button>';
+    h += '<div class="ck-jump"><div class="ck-key">' + projPill(it.project) + ' <b>' + esc(String(it.path)) + '</b> <span class="dim">' +
+      n7(it.pin) + ' → ' + n7(it.tip) + ' (origin/' + branch + ')</span></div>';
+    const st = it.state;
+    // the drafts of the upstream are left out of a jump: say so, else "no open PR" is wrong while drafts are open
+    const draftNote = (it.drafts || []).length ? ' (' + esc(nums(it.drafts)) + (it.drafts.length === 1 ? ' is a draft' : ' are drafts') + ', left out)' : '';
+    if (st === 'unchecked') h += '<div class="dim">Not checked yet. The watcher checks once a minute.</div>';
+    else if (st === 'error') h += '<div class="bad">' + esc(String(it.error || 'error')) + '</div>';
+    else if (st === 'up-to-date') h += '<div class="dim">Not behind origin/' + branch + '. No open, non-draft PR upstream' + draftNote + '.</div>';
+    else if (st === 'diverged') h += '<div class="dim">The pin is ahead of origin/' + branch + ' or on another line. No jump is offered.</div>';
+    else if (st === 'blocked') {
+      h += '<div>A jump plan is on its way:</div>';
+      for (const b of it.blockers || []) {
+        if (!b.slug) { h += '<div class="bad">Cannot read the open PRs of this repo: ' + esc(String(b.error || '')) + '. No jump is offered until they can be read.</div>'; continue; }
+        h += '<div class="ck-row"><a href="#" data-sopen="' + escA(String(it.project) + '/' + b.slug) + '">' + esc(String(b.slug)) + '</a>' +
+          (b.pr ? ' ' + prLink(b.pr) + ' <span class="dim">' + esc(String(b.pr.state || '').toLowerCase()) + '</span>' : '') +
+          (b.pushed === true ? ' <span class="chip ok">pushed ✓</span>' : b.pushed === false ? ' <span class="chip warn">not on origin yet ✗</span>' : '') + '</div>' +
+          (b.pushed === false && b.push ? '<pre class="ck-push">' + esc(String(b.push)) + '</pre>' : '');
+      }
+      h += '<div class="dim">Archive the plan to get a new recommendation.</div>';
+    } else if (st === 'batch') {
+      h += '<div>Recommended: one jump after ' + esc(nums(it.recommended || [])) + draftNote + '</div>';
+      for (const p of it.recommended || []) {
+        const n = String(p.number);
+        h += '<label><input type="checkbox" data-jkey="' + escA(key) + '" data-jpr="' + escA(n) + '"' + (off && off.has(key + '#' + n) ? '' : ' checked') + '> ' +
+          prLink(p) + ' ' + esc(String(p.title || '')) + '</label>';
+      }
+      h += confirm;
+    } else if (st === 'now') h += '<div>No open, non-draft PR upstream' + draftNote + '. Jump now to ' + n7(it.tip) + '.</div>' + confirm;
+    h += '</div>';
+  }
+  return h + '</div>';
+}
+/** Binds the PR boxes and the Confirm buttons of the Contracts jump box in `body`, after each paint of the checklist. */
+function bindJumpCard(body) {
+  body.querySelectorAll('[data-jpr]').forEach((c) => c.addEventListener('change', () => {
+    const k = c.dataset.jkey + '#' + c.dataset.jpr;
+    if (c.checked) ckJumpOff.delete(k); else ckJumpOff.add(k);
+  }));
+  body.querySelectorAll('[data-jconfirm]').forEach((btn) => btn.addEventListener('click', async () => {
+    const [project, path] = btn.dataset.jconfirm.split('\n');
+    // the key holds a line end: compared here, not in an attribute selector
+    const prs = [...body.querySelectorAll('[data-jpr]')].filter((c) => c.dataset.jkey === btn.dataset.jconfirm && c.checked)
+      .map((c) => +c.dataset.jpr);
+    if (prs.length > 50) return alert('Pick at most 50 PRs.');
+    try {
+      const r = await post('/api/contracts/jump', { project, path, prs });
+      if (r && r.error) alert('⚠️ ' + r.error);
+    } catch (e) { alert('⚠️ Cannot write the jump plan: ' + String((e && e.message) || e)); }
+    body._ck = null;
+    renderChecklist(true);
+  }));
+}
 /**
  * Gives the HTML of the checklist for the GET /api/ledger answer `d`.
  * It changes nothing outside itself: CUR_ISSUES is empty while it runs (a bare #41 is not linked to the open plan's repo)
@@ -5352,6 +5421,7 @@ function checklistHtml(d) {
     if (C.untracked.length) h += '<div class="ck-ticket"><div class="ck-key"><b>No ticket</b> <span class="dim">· add <code>- **Tickets**: #41</code> to a plan header to link it</span></div>' +
       C.untracked.map(row).join('') + '</div>';
     h += '</div>';
+    h += jumpCardHtml(d.contracts, ckJumpOff);
     const L = d.ledger || {};
     const text = L.error ? '' : ledgerBody(L.text);
     h += '<div class="ck-box"><h3>Goals &amp; rules <button class="mini" id="ckEdit" title="Open ' + escA(L.path || 'ledger.md') +
@@ -5442,6 +5512,7 @@ async function renderChecklist(byUser) {
     if (drawer) closeLog();
     selected = a.dataset.sopen; renderList(); renderDetail(true);
   }));
+  bindJumpCard(body);
 }
 /**
  * Opens the "Group these repos" form for the projects of `client` that have no group: a name and one ticked box per project.
@@ -5834,6 +5905,12 @@ if (new URLSearchParams(location.search).get('settings')) openSettings();
 if (new URLSearchParams(location.search).get('scout')) {
   const scoutWhenPainted = () => (firstPaint ? openScout() : setTimeout(scoutWhenPainted, 200));
   scoutWhenPainted();
+}
+// a click on a "submodule behind" notification: the checklist of that group (the first group when it is gone)
+const ckq = new URLSearchParams(location.search).get('checklist');
+if (ckq) {
+  const checkWhenPainted = () => (firstPaint ? showChecklist(ckq) : setTimeout(checkWhenPainted, 200));
+  checkWhenPainted();
 }
 if (new URLSearchParams(location.search).get('tour')) {
   const tourWhenPainted = () => (firstPaint ? startTour() : setTimeout(tourWhenPainted, 200));

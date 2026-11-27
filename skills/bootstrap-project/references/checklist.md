@@ -4,7 +4,7 @@ TLDR: this file says what a bootstrapped repo contains, which questions the skil
 
 ## Target state
 
-After the bootstrap, the repo has these files. "Module" files exist only when the module is on (all modules are on by default).
+After the bootstrap, the repo has these files. "Module" files exist only when the module is on (all modules are on by default, except contracts-jump).
 
 | Path | Source | Notes |
 | --- | --- | --- |
@@ -31,6 +31,7 @@ After the bootstrap, the repo has these files. "Module" files exist only when th
 | `.claude/skills/plans-parallel` | plans-parallel | |
 | `.claude/skills/pr-feedback` | pr-feedback | |
 | `.claude/scripts/run-skill.sh` | run-skill | Manual launcher; the dashboard uses auto-pipeline.sh |
+| `.claude/skills/contracts-jump` | contracts-jump | Off by default. The rules of a jump plan that the plans dashboard writes for a watched submodule |
 
 Outside the repo (through `register.mjs`, after the owner's yes):
 
@@ -59,7 +60,7 @@ The owner is not a template expert. Ask only what the owner alone can decide. Fi
 | # | Ask in plain words | Fields | Ask only when |
 | --- | --- | --- | --- |
 | 1 | "Which rules must every change follow? I found these in your files: <list>. Add, remove or OK." (3–8 rules, each a short title + one sentence). Upgrade and adopt: the before/after table, one row per rule, including the checks and tests copied from the old skills | `rules.hard[]` | Always. It is the most important answer: the reviewer and the checks use these rules. |
-| 2 | Modules (decision format): which extra parts to add. Default: all on, Codex on (plan validation and each verify round; `pipeline.codexInVerify: false` keeps it out of verify). One line per module, in plain words (what it does for the owner) | `modules.*` | Always |
+| 2 | Modules (decision format): which extra parts to add. Default: all on except contracts-jump, Codex on (plan validation and each verify round; `pipeline.codexInVerify: false` keeps it out of verify). One line per module, in plain words (what it does for the owner) | `modules.*` | Always |
 | 3 | Branches and merge (decision format): which branch the work goes to, and squash or merge commit | `git.*` | The repo has no `develop` + `main`, or the merge style is unclear. Mention that a free private GitHub repo cannot protect branches (403). |
 | 4 | Contracts (decision format): where shared data shapes come from | `rules.contracts.*` | The repo has more than one app or package that shares data, and the files do not show the answer |
 | 5 | Public or private, when the repo has no remote yet | `project.visibility` | No remote. Check the big plan for names of people, machines or clients first: history cannot be un-leaked. |

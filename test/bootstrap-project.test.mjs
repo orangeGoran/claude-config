@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, realpathSync, statSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, realpathSync, statSync, readdirSync, symlinkSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -489,7 +489,7 @@ test('the validation skills write the report names of their author', () => {
     }
     assert.doesNotMatch(outArg, /codex-raw/);
     const stopRule = (s) => s.split('\n').find((l) => l.includes('**Continue.**'));
-    assert.match(stopRule(auto), /`k` < 4 → run round `k\+1`/);
+    assert.match(stopRule(auto), /`k` < `<max>` → run round `k\+1`/);
     assert.match(read(on.repo, '.claude/agents/plan-validator.md'), /-validation-claude-<n>\.md/);
     assert.match(read(on.repo, '.claude/skills/skill-validate-plan/SKILL.md'), /-validation-claude-<n>\.md/);
     assert.match(read(on.repo, '.claude/skills/apply-validation/SKILL.md'), /-validation-round-<n>\.md/);
@@ -498,7 +498,7 @@ test('the validation skills write the report names of their author', () => {
     const autoOff = read(off.repo, '.claude/skills/skill-auto-validate-plan/SKILL.md');
     assert.match(autoOff, /-validation-claude-<n>\.md/);
     assert.match(autoOff, /-validation-round-<n>\.md/);
-    assert.match(stopRule(autoOff), /`k` < 4 → run round `k\+1`/);
+    assert.match(stopRule(autoOff), /`k` < `<max>` → run round `k\+1`/);
     assert.match(read(off.repo, 'AGENTS.md'), /<plan-basename>-validation-claude-<n>\.md/);
     // one round number rule in the skill and the agent, so a new run never overwrites an earlier round
     const rule = /`<n>` is 1 plus the highest number at the end of any validator report or decision log of this plan in `\.plans\/\.validations\/` \(.*-codex-raw-<n>\.md`.*\), or 1 when there is none\./;
@@ -1047,8 +1047,8 @@ test('plan validation runs max 4 rounds with an early stop, with and without Cod
   try {
     for (const r of [def.repo, noCodex.repo]) {
       const v = skillOf(r, 'skill-auto-validate-plan');
-      assert.match(v, /^## Rounds \(max 4\)$/m);
-      for (const want of ['Never run a fifth round', 'RAISED BEFORE (round <m>, F<id>)', '### e. Final edits check', 'READY (round 4 edits self-checked)',
+      assert.match(v, /^## Rounds \(max `<max>`, default 4\)$/m);
+      for (const want of ['Never run a fifth round', 'RAISED BEFORE (round <m>, F<id>)', '### e. Final edits check', 'READY (round <max> edits self-checked)',
         '**Accepted fix.**', '**Continue.**', 'Do not set a status', 'Raised before:', 'The first rule that matches wins', 'must not break what was correct',
         'step e does not end the loop', 'do not try a third time', 'one the owner deferred or answered with no plan change',
         // a blocking finding counts as an accepted fix only when its fix reached the plan
@@ -1061,8 +1061,8 @@ test('plan validation runs max 4 rounds with an early stop, with and without Cod
       }
       // the stop rules live in step d itself, not only in the final report
       const stepD = between(v, '### d. Continue or stop', '### e. Final edits check');
-      for (const want of ['`k` = 4, round 4 had an accepted fix, and step e ran → `READY (round 4 edits self-checked)`',
-        '`k` < 4 → run round `k+1`. Do not set a status']) {
+      for (const want of ['`k` = `<max>`, round `<max>` had an accepted fix, and step e ran → `READY (round <max> edits self-checked)`',
+        '`k` < `<max>` → run round `k+1`. Do not set a status']) {
         assert.ok(stepD.includes(want), `${r}: step d: ${want}`);
       }
       assert.doesNotMatch(v, /@@/);
@@ -1071,11 +1071,11 @@ test('plan validation runs max 4 rounds with an early stop, with and without Cod
       assert.ok(!v.includes('`k` < 2'));
       assert.ok(skillOf(r, 'skill-1-plan').includes('all rounds (max 4; most plans stop earlier)'));
       const agents = readF(r, 'AGENTS.md');
-      assert.ok(agents.includes('(max 4 rounds; it stops after a round with no accepted fix and no open regression)'));
+      assert.ok(agents.includes('(max 4 rounds, or `--max-rounds <1-4>`; it stops after a round with no accepted fix and no open regression)'));
       assert.ok(!agents.includes('(max 2 rounds)'));
     }
     // only the Codex variant names an OFF validator in a READY status
-    assert.ok(skillOf(def.repo, 'skill-auto-validate-plan').includes('READY (round 4 edits self-checked; <Codex|Claude> OFF)'));
+    assert.ok(skillOf(def.repo, 'skill-auto-validate-plan').includes('READY (round <max> edits self-checked; <Codex|Claude> OFF)'));
     assert.ok(!skillOf(noCodex.repo, 'skill-auto-validate-plan').includes('<Codex|Claude> OFF'));
     const offRule = ['Never a plain `READY` then', 'Do not run one more round only to retry the OFF validator'];
     const defD = between(skillOf(def.repo, 'skill-auto-validate-plan'), '### d. Continue or stop', '### e. Final edits check');
@@ -1126,4 +1126,142 @@ test('a repo with submodules gets git -C <submodule> rules, and the checkout rul
     rmSync(path.join(dir, '.gitmodules'));
     assert.ok(!allowOf(dir).some((a) => a.startsWith('Bash(git -C ')));
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the contracts-jump module is off by default; turned on, it renders its skill and its AGENTS.md line and verify passes', () => {
+  const def = bootstrapRepo();
+  const on = bootstrapRepo((p) => { p.modules['contracts-jump'] = true; return p; });
+  try {
+    assert.equal(existsSync(path.join(def.repo, '.claude/skills/contracts-jump/SKILL.md')), false);
+    assert.ok(!readF(def.repo, 'AGENTS.md').includes('/contracts-jump'));
+    const u = node('render.mjs', ['.', '--unused', '--json'], def.repo);
+    assert.equal(u.status, 0, u.stderr);
+    const item = JSON.parse(u.stdout).find((i) => i.group === 'module' && i.key === 'contracts-jump');
+    assert.ok(item, 'listed as an unused module');
+    assert.equal(item.turnOn, 'modules["contracts-jump"] = true');
+
+    const skill = readF(on.repo, '.claude/skills/contracts-jump/SKILL.md');
+    assert.doesNotMatch(skill, /@@/);
+    assert.match(skill, /^name: contracts-jump$/m);
+    assert.match(skill, /origin\/develop/, 'the base branch of the example answers is rendered');
+    assert.ok(readF(on.repo, 'AGENTS.md').includes('- `/contracts-jump` holds the rules of a contracts jump plan.'));
+    const v = node('verify.mjs', ['.', '--registry', path.join(on.dir, 'none.json'), '--json'], on.repo);
+    assert.deepEqual(JSON.parse(v.stdout).failed, [], v.stdout);
+
+    assert.equal(render.moduleOn({ modules: {} }, 'contracts-jump'), false);
+    assert.equal(render.moduleOn({ modules: { 'contracts-jump': true } }, 'contracts-jump'), true);
+    assert.equal(render.moduleOn({ modules: {} }, 'codex'), true);
+    assert.deepEqual(render.DEFAULT_OFF, ['contracts-jump']);
+  } finally {
+    rmSync(def.dir, { recursive: true, force: true });
+    rmSync(on.dir, { recursive: true, force: true });
+  }
+});
+
+test('the step gate reads the worktree the commit runs in, and blocks a commit whose folder it cannot tell', () => {
+  const { dir, repo } = bootstrapRepo();
+  const g = (cwd, ...a) => execFileSync('git', ['-c', 'user.name=Ana Example', '-c', 'user.email=ana@example.test', ...a], { cwd, stdio: 'pipe' });
+  const wt = path.join(dir, 'wt'), wt2 = path.join(dir, 'wt2');
+  const other = path.join(dir, 'other repo'), other2 = path.join(dir, 'other2'), qa = path.join(dir, 'QA-tool');
+  try {
+    g(repo, 'add', '-A');
+    g(repo, 'commit', '-qm', 'init');
+    g(repo, 'worktree', 'add', '-q', '-b', 'auto/x', wt);
+    g(repo, 'worktree', 'add', '-q', '-b', 'feat/y', wt2);
+    for (const r of [other, other2, qa]) { mkdirSync(r); g(r, 'init', '-q', '-b', 'main'); }
+    for (const r of [wt, wt2, other, other2, qa]) {
+      writeFileSync(path.join(r, 'feature.js'), 'export const x = 1;\n');
+      g(r, 'add', 'feature.js');
+    }
+    const script = path.join(repo, '.claude/scripts/workflow-guard.sh');
+    const guard = (command, cwd, jsonCwd, env) => spawnSync('bash', [script], {
+      cwd, encoding: 'utf8', env: { ...process.env, ...(env || {}) },
+      input: JSON.stringify({ tool_input: { command }, ...(jsonCwd ? { cwd: jsonCwd } : {}) }),
+    });
+    const blocked = (r, re = /BLOCKED/) => { assert.equal(r.status, 2, r.stderr); assert.match(r.stderr, re); };
+    // a cd into the auto/* worktree reads that worktree (before: the hook's folder, main → blocked)
+    assert.equal(guard(`cd ${wt} && git commit -m "feat: x"`, repo).status, 0);
+    // a -C into a linked worktree of the same repo is checked (before: taken for another repo → passed)
+    blocked(guard(`git -C ${wt2} commit -m "feat: x"`, repo));
+    // a plain commit in a linked worktree, with the main checkout's guard
+    blocked(guard('git commit -m "feat: x"', wt2));
+    assert.equal(guard('git commit -m "feat: x"', wt).status, 0);
+    // the folder of the hook input wins over the hook process's own folder
+    assert.equal(guard('git commit -m "feat: x"', repo, wt).status, 0);
+    blocked(guard('git commit -m "feat: x"', repo, wt2));
+    // another repo still passes, also through cd with a quoted path that has a space
+    assert.equal(guard(`cd "${other}" && git commit -m x`, repo).status, 0);
+    // shell order: two relative cd's, two -C's
+    assert.equal(guard(`cd ${dir} && cd wt && git commit -m x`, repo).status, 0);
+    blocked(guard(`git -C ${dir} -C wt2 commit -m x`, repo));
+    // a separator inside quotes does not split the command
+    blocked(guard(`git commit -m "a; cd ${wt}"`, wt2));
+    // a folder the guard cannot read is blocked, never let through by the auto/* exemption of the folder it runs in
+    blocked(guard('cd $WT && git commit -m x', wt), /cannot tell which worktree/);
+    // two commits in two folders in one command
+    blocked(guard(`cd ${wt} && git commit -m a; cd ${wt2} && git commit -m b`, repo), /cannot tell which worktree/);
+    // a cd inside a subshell or a backtick ends with it: the commit runs in the folder before it
+    blocked(guard(`(cd ${wt} && git status); git commit -m x`, repo));
+    blocked(guard(`echo \`cd ${wt}\`; git commit -m x`, repo));
+    assert.equal(guard(`cd ${wt} && (cd ${wt2}) && git commit -m x`, repo).status, 0);
+    // pushd and popd: the guard cannot tell the folder
+    blocked(guard(`pushd ${wt} && git commit -m x`, repo), /cannot tell which worktree/);
+    // an escaped quote outside quotes opens no quoted text, so the commit after it is seen (here: in the feat/y worktree)
+    blocked(guard("echo \\' ; git commit -m x ; echo \\'", wt2));
+    blocked(guard('echo \\" ; git commit -m x ; echo \\"', wt2));
+    // a folder that does not exist, ~- and a symlink with .. are never taken for the folder of the hook (auto/x here)
+    blocked(guard(`cd ${repo}; cd /nope-cj-test; git commit -m x`, wt), /cannot tell which worktree/);
+    blocked(guard('cd ~- && git commit -m x', wt), /cannot tell which worktree/);
+    symlinkSync(path.join(repo, '.claude'), path.join(wt, 'lnk'));
+    blocked(guard('git -C lnk/.. commit -m x', wt));
+    // a real folder that is no git repo is never checked against the folder of the hook
+    blocked(guard(`git -C ${dir} commit -m x`, wt), /not a worktree of a git repo/);
+    // --git-dir, --work-tree and GIT_DIR-style variables move the commit: the folder is unknown
+    blocked(guard(`git --git-dir=${repo}/.git --work-tree=${repo} commit -m x`, wt), /cannot tell which worktree/);
+    blocked(guard(`GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} git commit -m x`, wt), /cannot tell which worktree/);
+    blocked(guard(`export GIT_WORK_TREE=${repo}; git commit -m x`, wt), /cannot tell which worktree/);
+    // a cd that may not run makes the folder unknown: after a keyword, after ||, or after && with a ; before the commit
+    blocked(guard(`if false; then cd ${wt}; fi; git commit -m x`, wt2), /cannot tell which worktree/);
+    blocked(guard(`true || cd ${wt} && git commit -m x`, wt2), /cannot tell which worktree/);
+    blocked(guard(`false && cd ${wt}; git commit -m x`, wt2), /cannot tell which worktree/);
+    assert.equal(guard(`git status && cd ${wt} && git commit -m x`, wt2).status, 0, 'a cd in the && chain of the commit counts');
+    // a cd in a pipeline part or a background part runs in a subshell: the folder does not move
+    blocked(guard(`cd ${wt} | cat; git commit -m x`, repo));
+    blocked(guard(`cd ${wt} & git commit -m x`, repo));
+    // a cd after a background part runs in this shell; a redirection with & is no background part
+    blocked(guard(`true & cd ${wt2} && git commit -m x`, wt, wt));
+    blocked(guard(`cd ${wt2} >/dev/null 2>&1 && git commit -m x`, wt, wt), /cannot tell which worktree/);
+    // a cd or a commit after a shell word (then, do, !) runs in this shell too
+    blocked(guard(`if true; then cd ${wt2}; fi; git commit -m x`, wt, wt));
+    blocked(guard('if true; then git commit -m x; fi', wt2, wt2));
+    blocked(guard(`sudo cd ${wt2}; git commit -m x`, wt, wt), /cannot tell which worktree/);
+    // a nested commit runs in the hook input's folder; one that can move the folder is blocked
+    assert.equal(guard('bash -c "git commit -m x"', repo, wt).status, 0);
+    blocked(guard('bash -c "git commit -m x"', repo, wt2));
+    blocked(guard(`bash -c "git -C ${wt2} commit -m x"`, wt, wt), /cannot tell which worktree/);
+    blocked(guard(`bash -c "cd ${wt2} && git commit -m x"`, wt, wt), /cannot tell which worktree/);
+    // a ~ folder of -C is HOME
+    assert.equal(guard('git -C ~/other2 commit -m x', repo, null, { HOME: dir }).status, 0);
+    // a folder name with a Q resolves to that folder (another repo here)
+    assert.equal(guard('cd QA-tool && git commit -m x', dir, dir).status, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('--max-rounds: the auto-validate skill takes 1-4 rounds, default 4, with and without Codex', () => {
+  const def = bootstrapRepo();
+  const noCodex = bootstrapRepo((p) => { p.modules.codex = false; return p; });
+  try {
+    for (const r of [def.repo, noCodex.repo]) {
+      const v = skillOf(r, 'skill-auto-validate-plan');
+      for (const want of ['argument-hint: "[plan file] [--max-rounds <1-4>]"', '--max-rounds <value> is not 1-4 — using 4',
+        '`k` = 1 … `<max>`', 'Never run more than `<max>` rounds. Never run a fifth round.', 'Max 4 rounds (`--max-rounds` sets fewer)'])
+        assert.ok(v.includes(want), `${r}: ${want}`);
+      assert.ok(!v.includes('`k` < 4'), r);
+      assert.ok(!v.includes('`k` = 4'), r);
+      assert.ok(readF(r, 'AGENTS.md').includes('or `--max-rounds <1-4>`'), r);
+    }
+  } finally {
+    rmSync(def.dir, { recursive: true, force: true });
+    rmSync(noCodex.dir, { recursive: true, force: true });
+  }
 });

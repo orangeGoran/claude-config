@@ -1,12 +1,12 @@
 ---
 name: skill-auto-validate-plan
 @@IF MOD_CODEX@@
-description: Automated validation loop for a .plans/ file — runs the Claude plan-validator agent and the repo's Codex validate-plan skill (through codex exec) in parallel, checks all findings against the repo and @@PARENT_PLAN@@, applies the valid fixes to the plan, and validates again. When one validator is not available, it continues with the other and says so. Each round leaves the raw reports and one decision log. Max 4 rounds; it stops after the first round with no accepted fix and no open regression. Ends with READY + a commit message, or a list of open items. /skill-1-plan runs it after saving a plan.
+description: Automated validation loop for a .plans/ file — runs the Claude plan-validator agent and the repo's Codex validate-plan skill (through codex exec) in parallel, checks all findings against the repo and @@PARENT_PLAN@@, applies the valid fixes to the plan, and validates again. When one validator is not available, it continues with the other and says so. Each round leaves the raw reports and one decision log. Max 4 rounds (`--max-rounds` sets fewer); it stops after the first round with no accepted fix and no open regression. Ends with READY + a commit message, or a list of open items. /skill-1-plan runs it after saving a plan.
 @@END@@
 @@IFNOT MOD_CODEX@@
-description: Automated validation loop for a .plans/ file — runs the plan-validator agent, checks its findings against the repo and @@PARENT_PLAN@@, applies the valid fixes to the plan, and validates again. Each round leaves the raw report and one decision log. Max 4 rounds; it stops after the first round with no accepted fix and no open regression. Ends with READY + a commit message, or a list of open items. /skill-1-plan runs it after saving a plan.
+description: Automated validation loop for a .plans/ file — runs the plan-validator agent, checks its findings against the repo and @@PARENT_PLAN@@, applies the valid fixes to the plan, and validates again. Each round leaves the raw report and one decision log. Max 4 rounds (`--max-rounds` sets fewer); it stops after the first round with no accepted fix and no open regression. Ends with READY + a commit message, or a list of open items. /skill-1-plan runs it after saving a plan.
 @@END@@
-argument-hint: "[plan file]"
+argument-hint: "[plan file] [--max-rounds <1-4>]"
 ---
 
 Auto-validate plan: $ARGUMENTS
@@ -25,6 +25,7 @@ The Codex command in step b is the one exception: it keeps its `</dev/null`.
 
 ## Step 0 — Resolve the plan and preflight
 
+- Read `--max-rounds <n>` from `$ARGUMENTS` and take it out of the plan argument. `<max>` is `n` when it is 1, 2, 3 or 4; else (missing) 4. A value that is there but not 1–4: say `--max-rounds <value> is not 1-4 — using 4` and use 4.
 @@IF MOD_STEP_GATE@@
 - Resolve the plan file as `/skill-validate-plan` does (named in `$ARGUMENTS`, else the most recent `.plans/*.md` outside `.plans/done/` and `.plans/.workflow-state/`). Say which plan you resolved.
 @@END@@
@@ -47,9 +48,9 @@ Either validator can be unavailable: Codex (CLI missing, not logged in, network,
 - Both OFF in the same round → stop with status `BLOCKED` and the two reasons.
 @@END@@
 
-## Rounds (max 4)
+## Rounds (max `<max>`, default 4)
 
-Count the rounds of this run with `k` = 1 … 4: round `k` = 1, then each next round only when step d says so.
+Count the rounds of this run with `k` = 1 … `<max>`: round `k` = 1, then each next round only when step d says so.
 
 At the start of each round, list `.plans/.validations/` and take the round number `<n>`: `<n>` is 1 plus the highest number at the end of any validator report or decision log of this plan in `.plans/.validations/` (`<plan-base>-validation-claude-<n>.md`, `-validation-codex-<n>.md`, `-validation-round-<n>.md`, and the older `-validation-<n>.md`, `-codex-raw-<n>.md`, `-round-<n>.md`), or 1 when there is none. A file of a longer plan name does not count: when `.plans/` or `.plans/done/` has a plan whose base starts with `<plan-base>-` (for example `<plan-base>-validation`) and the file name starts with that longer base plus `-`, the file belongs to that plan. Never write over a file that exists: when the name is taken, take the next free number. Use this `<n>` for the snapshot, the reports and the decision log of the round. A new run never overwrites an earlier round. The snapshot `-pre-round-<n>.md` does not count. Inside one run the rounds take consecutive numbers, so the previous round of this run has the number `<n-1>`.
 
@@ -129,18 +130,18 @@ Do the parts in this order. Each part runs only when the part before it did not 
 @@IFNOT MOD_CODEX@@
 1. **Accepted fix.** This round has an accepted fix when any of these is true: a finding from the "Blocking issues" section of the report is VALID or PARTIALLY VALID and you applied its fix to the plan (a finding that went to the owner counts only through the owner answer below); step a of this round found a `REGRESSION`; an owner answer to a blocking finding changed the plan this round.
 @@END@@
-2. **Continue.** An accepted fix, or a `REGRESSION` that is still open, and `k` < 4 → run round `k+1`. Do not set a status.
+2. **Continue.** An accepted fix, or a `REGRESSION` that is still open, and `k` < `<max>` → run round `k+1`. Do not set a status.
 3. **Final edits check.** You did not continue and this round edited the plan → do step e.
 4. **Status.** The first rule that matches wins:
-   1. An open `REGRESSION` or an unresolved problem from step e: `k` < 4 → run round `k+1` (step e does not end the loop); `k` = 4 → `OPEN ITEMS`.
+   1. An open `REGRESSION` or an unresolved problem from step e: `k` < `<max>` → run round `k+1` (step e does not end the loop); `k` = `<max>` → `OPEN ITEMS`.
    2. The owner deferred a decision in any round (also when it came back as `RAISED BEFORE`) → `OPEN ITEMS`.
-   3. `k` = 4, round 4 had an accepted fix, and step e ran → `READY (round 4 edits self-checked)`.
+   3. `k` = `<max>`, round `<max>` had an accepted fix, and step e ran → `READY (round <max> edits self-checked)`.
    4. Else → `READY`.
 @@IF MOD_CODEX@@
-- A validator was OFF in the last round → a READY status names it: `READY (<Codex|Claude> OFF)` or `READY (round 4 edits self-checked; <Codex|Claude> OFF)`. Never a plain `READY` then. Do not run one more round only to retry the OFF validator.
+- A validator was OFF in the last round → a READY status names it: `READY (<Codex|Claude> OFF)` or `READY (round <max> edits self-checked; <Codex|Claude> OFF)`. Never a plain `READY` then. Do not run one more round only to retry the OFF validator.
 @@END@@
 
-Never run a fifth round.
+Never run more than `<max>` rounds. Never run a fifth round.
 
 ### e. Final edits check
 
@@ -149,12 +150,12 @@ Run `diff -u .plans/.validations/<plan-base>-pre-round-<n>.md <plan-file>`. Read
 ## Final report
 
 @@IF MOD_CODEX@@
-- **Status:** `READY`, `READY (<Codex|Claude> OFF)`, `READY (round 4 edits self-checked)`, `READY (round 4 edits self-checked; <Codex|Claude> OFF)`, `OPEN ITEMS` (each with its evidence and the validator that raised it), or `BLOCKED`.
+- **Status:** `READY`, `READY (<Codex|Claude> OFF)`, `READY (round <max> edits self-checked)`, `READY (round <max> edits self-checked; <Codex|Claude> OFF)`, `OPEN ITEMS` (each with its evidence and the validator that raised it), or `BLOCKED`.
 - **Validators:** per round, `Claude ON|OFF` and `Codex ON|OFF`, with the reason for each OFF. When one was OFF in the last round, say that one validator only checked the plan, and suggest a new run when it is back.
 - **Files**, one path per line, per round: the raw reports (`-validation-codex-<n>.md`, `-validation-claude-<n>.md`), the decision log (`-validation-round-<n>.md`) and the snapshot.
 @@END@@
 @@IFNOT MOD_CODEX@@
-- **Status:** `READY`, `READY (round 4 edits self-checked)`, `OPEN ITEMS` (each with its evidence), or `BLOCKED`.
+- **Status:** `READY`, `READY (round <max> edits self-checked)`, `OPEN ITEMS` (each with its evidence), or `BLOCKED`.
 - **Files**, one path per line, per round: the raw report (`-validation-claude-<n>.md`), the decision log (`-validation-round-<n>.md`) and the snapshot.
 @@END@@
 - **What changed in the plan:** short bullets per round, or "no changes".
