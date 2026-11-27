@@ -2722,7 +2722,7 @@ test('the page: ledgerBody, groupNameFor and the group bar', () => {
   const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
   const t = new Function([pick(/^const esc = .*$/m), pick(/^const escA = .*$/m), pick(/^const groupNameFor = [\s\S]*?;$/m),
     pick(/^function ledgerBody\(text\) \{[\s\S]*?\n\}$/m), pick(/^const groupFold = [\s\S]*?;$/m),
-    pick(/^function groupFoldNext\(g, names, closed\) \{[\s\S]*?\n\}$/m), pick(/^const GROUP_FOLD = \{[\s\S]*?\n\};$/m),
+    pick(/^function groupFoldNext\(g, names, closed\) \{[\s\S]*?\n\}$/m), pick(/^const FOLD_SVG = [\s\S]*?;$/m), pick(/^const GROUP_FOLD = \{[\s\S]*?\n\};$/m),
     pick(/^function groupBarHtml\(group, info, on, fold = 'open', repos = 0\) \{[\s\S]*?\n\}$/m),
     'return { ledgerBody, groupNameFor, groupBarHtml, groupFold, groupFoldNext };'].join('\n'))();
   assert.equal(t.ledgerBody(''), '');
@@ -2743,12 +2743,12 @@ test('the page: ledgerBody, groupNameFor and the group bar', () => {
   assert.ok(off.includes('1 ticket<') && !off.includes('needs you</span>') && off.includes('data-ckgroup="a&quot;b"') && off.includes('aria-pressed="false"'));
   assert.ok(t.groupBarHtml('g', undefined, false).includes('0 tickets'), 'a state from an older server has no groupInfo');
   // the fold button is its own button beside the checklist button (a button in a button is not valid HTML)
-  assert.ok(on.includes('<button class="grpfold" data-grpfold="acme-product"') && on.includes('>▾</button><button class="grpopen"'));
+  assert.ok(on.includes('<button class="grpfold" data-grpfold="acme-product"') && on.includes('data-fold="open"') && on.includes('</svg></button><button class="grpopen"'));
   assert.ok(!/<button[^>]*>[^<]*<button/.test(on));
   const hidden = t.groupBarHtml('acme-product', { tickets: 2, needsYou: 0 }, false, 'hide', 3);
-  assert.ok(hidden.includes('>▹</button>') && hidden.includes('2 tickets · 3 repos hidden'));
-  assert.ok(t.groupBarHtml('g', null, false, 'min', 1).includes('>▸</button>'));
-  assert.ok(!on.includes('hidden'), 'an open group says nothing about hidden repos');
+  assert.ok(hidden.includes('data-fold="hide"') && hidden.includes('M8.5 3.5 13 8') && hidden.includes('2 tickets · 3 repos hidden'));
+  assert.ok(t.groupBarHtml('g', null, false, 'min', 1).includes('data-fold="min"'));
+  assert.ok(!on.includes('repos hidden'), 'an open group says nothing about hidden repos');
 
   // one click folds the plans, the next hides the projects, the next shows all again
   const names = ['acme-api', 'acme-web'];
@@ -2778,9 +2778,46 @@ test('the page: the group form, the group bar and the ⋯ Checklist all show the
   assert.match(src, /const cards = fold === 'hide' && !filtering \? '' :/);
   assert.match(src, /if \(g\) folds\.push\('grp:' \+ g\);/);
   // the form saves through the Settings save, and a shortcut does nothing while it is open
-  assert.match(src, /for \(const entry of reg\) if \(picked\.includes\(entry\.name\)\) entry\.group = name;/);
+  assert.match(src, /for \(const entry of reg\) if \(names\.includes\(entry\.name\)\) entry\.group = group;/);
   assert.match(src, /byId\('seldlg'\)\.open \|\| byId\('grpdlg'\)\.open;/);
   // ⚙ Settings suggests the existing groups
   assert.match(src, /list="grplist"/);
   assert.match(src, /'<datalist id="grplist">'/);
+});
+
+test('the page: drag a project onto a group box to join it, or onto a client name to leave its group', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const css = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.css'), 'utf8');
+  const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
+  const t = new Function([pick(/^const groupOffer = .*$/m), pick(/^function projDropGroup\(el, proj\) \{[\s\S]*?\n\}$/m),
+    pick(/^const FOLD_SVG = [\s\S]*?;$/m), pick(/^const GROUP_FOLD = \{[\s\S]*?\n\};$/m),
+    'return { groupOffer, projDropGroup, GROUP_FOLD };'].join('\n'))();
+  // a fake element: closest() finds the first ancestor that the selector names
+  const node = (chain) => ({ closest: (sel) => chain.find((n) => sel.split(',').some((s) => n.is(s.trim()))) || null });
+  const box = (g) => ({ is: (s) => s === '[data-grp]', dataset: { grp: g } });
+  const head = { is: (s) => s === '.ghead[data-client]', dataset: { client: 'Acme' } };
+  const plain = { is: () => false };
+  const api = { name: 'acme-api', group: 'acme-product' }, e2e = { name: 'acme-e2e', group: '' };
+  assert.equal(t.projDropGroup(node([plain, box('acme-product')]), e2e), 'acme-product', 'a project without a group joins the box');
+  assert.equal(t.projDropGroup(node([box('beta')]), api), 'beta', 'a project moves to another group');
+  assert.equal(t.projDropGroup(node([box('acme-product')]), api), null, 'its own group: nothing changes');
+  assert.equal(t.projDropGroup(node([head]), api), '', 'a client name takes the project out of its group');
+  assert.equal(t.projDropGroup(node([head]), e2e), null, 'a project without a group: the client name changes nothing');
+  assert.equal(t.projDropGroup(node([plain]), e2e), null);
+  assert.equal(t.projDropGroup(null, e2e), null);
+  assert.equal(t.projDropGroup(node([box('g')]), null), null, 'no drag on its way');
+
+  const st = [{ client: 'Acme', group: '' }, { client: 'Acme', group: '' }, { client: 'Beta', group: '' }, { client: 'Beta', group: 'b' }];
+  assert.equal(t.groupOffer('Acme', st), true, 'two projects without a group: the link shows');
+  assert.equal(t.groupOffer('Beta', st), false, 'one project without a group: no link');
+
+  // the three fold drawings share one 16 × 16 box, so each sits in the middle of its button
+  for (const [svg] of Object.values(t.GROUP_FOLD)) assert.match(svg, /^<svg viewBox="0 0 16 16"/);
+  assert.match(css, /\.grpfold \{[^}]*display:inline-flex; align-items:center; justify-content:center;[^}]*padding:0;/);
+
+  // the project header is the handle; the form and the drop save the same way
+  assert.match(src, /data-toggle="' \+ esc\(pr\) \+ '" draggable="true" data-drag-proj="'/);
+  assert.match(src, /const r = await saveGroups\(picked, name\);/);
+  assert.match(src, /const r = await saveGroups\(\[proj\.name\], g\);/);
+  assert.match(src, /'<div class="grpbox' \+ \(cards \? '' : ' folded'\) \+ '" data-grp="' \+ escA\(g\) \+ '">'/);
 });

@@ -36,8 +36,7 @@ try { collapsedProjects = new Set(JSON.parse(localStorage.getItem('dash-collapse
 catch { collapsedProjects = new Set(); }
 const saveCollapsed = () => {
   try { localStorage.setItem('dash-collapsed', JSON.stringify([...collapsedProjects])); } catch {}
-};
-const modes = {};         // per key: a mode id from the project's modes (pipeline) or launcher index (generic)
+};const modes = {};         // per key: a mode id from the project's modes (pipeline) or launcher index (generic)
 // per project: the last mode picked in this browser, so a new plan starts on it
 let lastModes = {};
 try { lastModes = JSON.parse(localStorage.getItem('dash-modes') || '{}'); } catch {}
@@ -540,8 +539,8 @@ function renderList() {
     const groupOf = (pr) => (state.find((s) => s.name === pr) || {}).group || '';
     // the checklist shows in the right area when no plan is open; its group bar is then marked
     const ckOn = !selected && !boardOn ? ckPick(ckGroups(state)) : null;
-    const ungrouped = state.filter((s) => s.client === c && !s.group).length;
-    const head = '<div class="ghead">' + esc(c) + (!filtering && ungrouped >= 2
+    // the client name is also where a dragged project leaves its group (see the drag code after renderList)
+    const head = '<div class="ghead" data-client="' + escA(c) + '"><span class="gname">' + esc(c) + '</span>' + (!filtering && groupOffer(c, state)
       ? ' <button class="grpadd" data-grpadd="' + escA(c) + '" title="Put repos of ' + escA(c) +
         ' in one group: they get one checklist together">＋ Group these repos</button>' : '') + '</div>';
     // the projects of one group sit in one box under its bar, at the place of the group's first project
@@ -556,7 +555,7 @@ function renderList() {
       const fold = groupFold(g, all, collapsedProjects);
       // a search shows its matches in a hidden group too
       const cards = fold === 'hide' && !filtering ? '' : projNames.filter((n) => groupOf(n) === g).map(card).join('');
-      return '<div class="grpbox' + (cards ? '' : ' folded') + '">' + groupBarHtml(g, sp.groupInfo, ckOn === g, fold, all.length) + cards + '</div>';
+      return '<div class="grpbox' + (cards ? '' : ' folded') + '" data-grp="' + escA(g) + '">' + groupBarHtml(g, sp.groupInfo, ckOn === g, fold, all.length) + cards + '</div>';
     }).join('');
     function card(pr) {
       const items = vis.filter((p) => p.project === pr);
@@ -571,7 +570,8 @@ function renderList() {
         (liveN ? '<span class="chip live">● ' + liveN + ' running</span>' : '') +
         (flightN ? '<span class="chip warn">⏳ ' + flightN + '</span>' : '');
       // one card per project: header, plans and worktrees end together at its bottom edge
-      return '<div class="pgrp pcx"' + projStyle(pr) + '><div class="phead pcx" data-toggle="' + esc(pr) + '"' + projStyle(pr) + '><span class="chev">' +
+      return '<div class="pgrp pcx"' + projStyle(pr) + '><div class="phead pcx" data-toggle="' + esc(pr) + '" draggable="true" data-drag-proj="' +
+        escA(pr) + '"' + projStyle(pr) + '><span class="chev">' +
         (closed ? '▸' : '▾') + '</span><span class="pname">' + esc(pr) + '</span>' +
         (hasLanes ? '<button class="pbtn" data-suggest="' + esc(pr) +
           '" title="Suggest a parallel launch batch" aria-label="Suggest a parallel launch batch">⚡</button>' : '') +
@@ -632,8 +632,7 @@ function renderList() {
       saveCollapsed(); renderList();
     }));
   byId('side').querySelectorAll('[data-grpadd]').forEach((el) =>
-    el.addEventListener('click', (e) => { e.stopPropagation(); openGroupForm(el.dataset.grpadd); }));
-  byId('side').querySelectorAll('[data-suggest]').forEach((el) =>
+    el.addEventListener('click', (e) => { e.stopPropagation(); openGroupForm(el.dataset.grpadd); }));  byId('side').querySelectorAll('[data-suggest]').forEach((el) =>
     el.addEventListener('click', (e) => { e.stopPropagation(); openSuggest(el.dataset.suggest); }));
   byId('side').querySelectorAll('[data-pull]').forEach((el) =>
     el.addEventListener('click', async (e) => {
@@ -3856,7 +3855,7 @@ function renderEmptyDetail(byUser) {
   }
   d._ck = null;
   // two or more projects of one client without a group: say what a group is for and where to make one
-  const canGroup = state.some((s) => !s.group && state.filter((o) => o.client === s.client && !o.group).length >= 2);
+  const canGroup = state.some((s) => groupOffer(s.client, state));
   d.innerHTML = state.length ? '<span class="dim">Select a plan on the left.</span>' + (canGroup
     ? '<div class="ck-tip"><b>Tip:</b> repos that work on one product can share one checklist: what needs you, what waits, ' +
       'and the goals of the product. Click <b>＋ Group these repos</b> next to a client name on the left.</div>' : '')
@@ -5287,10 +5286,13 @@ function groupFoldNext(g, names, closed) {
   else { closed.delete('grp:' + g); names.forEach((n) => closed.delete(n)); }
   return groupFold(g, names, closed);
 }
+// one 16 × 16 drawing per fold, so each sits in the middle of its button (text arrows have other sizes and baselines)
+const FOLD_SVG = (d) => '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="' + d +
+  '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const GROUP_FOLD = {
-  open: ['▾', 'Projects and plans shown. Click to show only the projects'],
-  min: ['▸', 'Only the projects shown. Click to hide them'],
-  hide: ['▹', 'Projects hidden. Click to show the projects and their plans'],
+  open: [FOLD_SVG('M3.5 6 8 10.5 12.5 6'), 'Projects and plans shown. Click to show only the projects'],
+  min: [FOLD_SVG('M6 3.5 10.5 8 6 12.5'), 'Only the projects shown. Click to hide them'],
+  hide: [FOLD_SVG('M3.5 3.5 8 8 3.5 12.5M8.5 3.5 13 8 8.5 12.5'), 'Projects hidden. Click to show the projects and their plans'],
 };
 /**
  * Gives the HTML of the group bar of `group` in the sidebar: the fold button (fold `fold`, `repos` projects) and the
@@ -5299,7 +5301,7 @@ const GROUP_FOLD = {
 function groupBarHtml(group, info, on, fold = 'open', repos = 0) {
   const n = (info && info.tickets) || 0, you = (info && info.needsYou) || 0;
   const [icon, tip] = GROUP_FOLD[fold] || GROUP_FOLD.open;
-  return '<div class="grpbar' + (on ? ' on' : '') + '"><button class="grpfold" data-grpfold="' + escA(group) + '" title="' + tip +
+  return '<div class="grpbar' + (on ? ' on' : '') + '"><button class="grpfold" data-grpfold="' + escA(group) + '" data-fold="' + fold + '" title="' + tip +
     '" aria-label="' + escA(group) + ': ' + tip + '">' + icon + '</button>' +
     '<button class="grpopen" data-ckgroup="' + escA(group) + '" aria-pressed="' + !!on +
     '" title="Open the checklist of ' + escA(group) + ': what needs you, each ticket across its repos, and the goals">' +
@@ -5460,10 +5462,7 @@ function openGroupForm(client) {
     const errEl = byId('grperr');
     if (!picked.length) { errEl.textContent = 'Tick at least one repo.'; errEl.hidden = false; return; }
     try {
-      const reg = await (await fetch('/api/registry')).json();
-      for (const entry of reg) if (picked.includes(entry.name)) entry.group = name;
-      const r = await answer(await fetch('/api/registry', { method: 'POST',
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projects: reg }) }));
+      const r = await saveGroups(picked, name);
       if (!r.ok) { errEl.textContent = r.error || r.output || 'Cannot save the group.'; errEl.hidden = false; return; }
       // a warning of another project (for example a root that is gone) is shown, but the group is saved
       if (r.warnings && r.warnings.length) alert('⚠️ ' + r.warnings.join('\n'));
@@ -5478,6 +5477,59 @@ function openGroupForm(client) {
   byId('grpname').select();
 }
 byId('grpdlg').addEventListener('click', (e) => { if (e.target.id === 'grpdlg') e.currentTarget.close(); });
+/** Tells if the sidebar offers "＋ Group these repos" for `client`: two or more of its projects in `projects` have no group. */
+const groupOffer = (client, projects) => projects.filter((s) => s.client === client && !s.group).length >= 2;
+/**
+ * Puts the registered projects `names` in group `group` ('' takes them out of their group) through POST /api/registry,
+ * the save of ⚙ Settings, so the same name rules apply. Gives the answer: { ok, output, warnings } or { error }.
+ */
+async function saveGroups(names, group) {
+  const reg = await (await fetch('/api/registry')).json();
+  for (const entry of reg) if (names.includes(entry.name)) entry.group = group;
+  return answer(await fetch('/api/registry', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projects: reg }) }));
+}
+// drag a project header onto a group box to put the project in that group, or onto a client name to take it out
+let dragProj = null;
+/**
+ * Gives the group that the project `proj` (a /api/state project) joins when it is dropped on `el`: the group of the
+ * group box under it, or '' (no group) on a client name when the project has a group. Gives null when the drop changes nothing.
+ */
+function projDropGroup(el, proj) {
+  if (!el || !el.closest || !proj) return null;
+  const box = el.closest('[data-grp]');
+  if (box) return box.dataset.grp === (proj.group || '') ? null : box.dataset.grp;
+  return el.closest('.ghead[data-client]') && proj.group ? '' : null;
+}
+const dragClear = () => byId('side').querySelectorAll('.dropok').forEach((el) => el.classList.remove('dropok'));
+byId('side').addEventListener('dragstart', (e) => {
+  const h = e.target.closest && e.target.closest('[data-drag-proj]');
+  dragProj = h ? state.find((s) => s.name === h.dataset.dragProj) || null : null;
+  if (!dragProj) return;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', dragProj.name);
+  document.body.classList.toggle('pdrag-out', !!dragProj.group);   // the client names say "drop here to take it out"
+});
+byId('side').addEventListener('dragover', (e) => {
+  dragClear();
+  if (projDropGroup(e.target, dragProj) === null) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.target.closest('[data-grp], .ghead[data-client]').classList.add('dropok');
+});
+byId('side').addEventListener('drop', async (e) => {
+  const g = projDropGroup(e.target, dragProj), proj = dragProj;
+  dragClear(); document.body.classList.remove('pdrag-out'); dragProj = null;
+  if (g === null) return;
+  e.preventDefault();
+  try {
+    const r = await saveGroups([proj.name], g);
+    if (!r.ok) alert('⚠️ ' + (r.error || r.output || 'Cannot save the group.'));
+    else if (r.warnings && r.warnings.length) alert('⚠️ ' + r.warnings.join('\n'));
+  } catch (err) { alert('⚠️ Cannot save the group: ' + String((err && err.message) || err)); }
+  refresh();
+});
+byId('side').addEventListener('dragend', () => { dragClear(); document.body.classList.remove('pdrag-out'); dragProj = null; });
 byId('checkBtn').addEventListener('click', () => showChecklist());
 scoutPeek();
 setInterval(scoutPeek, 60000);
