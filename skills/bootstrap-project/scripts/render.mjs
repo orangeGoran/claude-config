@@ -382,14 +382,17 @@ export function buildVars(p, now = new Date(), { submodules = [] } = {}) {
   // allow rules: one prefix rule per real command
   const allowCmds = [...new Set([st.installCmd, ...Object.values(cmd)].map((c) => str(c)).filter(Boolean)
     .map((c) => c.replace(/\s*<[^>]*>.*$/, '').replace(/\s+"?\{?file\}?"?$/, '')))];
-  // never a push or PR rule here (gh pr view/diff too): PR rules live only in the
-  // "to PR" overlay of auto-pipeline.sh (lesson 1; verify.mjs checks it)
+  // never a push or a PR write rule here: those live only in the "to PR" overlay of
+  // auto-pipeline.sh (lesson 1; verify.mjs checks it). The read-only PR and git commands
+  // stay, so a chat that continues a run (/pr-feedback, /merge-parent) does not ask for each one.
   const allow = [
     'Read(./**)', 'Edit(./**)',
     'Bash(git status*)', 'Bash(git diff*)', 'Bash(git log*)', 'Bash(git show*)',
     'Bash(git branch --show-current)', 'Bash(git ls-files*)', 'Bash(git merge-base*)', 'Bash(git check-ignore*)',
     // the test-review revert check compares file hashes before and after (every mode)
     'Bash(git hash-object*)',
+    'Bash(git fetch*)', 'Bash(git ls-tree*)', 'Bash(git rev-parse*)', 'Bash(git cat-file*)',
+    'Bash(gh pr view*)', 'Bash(gh pr diff*)', 'Bash(gh pr list*)',
     'Bash(grep *)', 'Bash(ls *)', 'Bash(diff *)', 'Bash(cp .plans/*)', 'Bash(mkdir -p .plans/*)',
     'Bash(gh issue view*)', 'Bash(gh run view*)',
     'Bash(node .claude/scripts/run-usage.mjs *)', 'Bash(node --test .claude/scripts/run-usage.selftest.mjs)',

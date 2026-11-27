@@ -93,6 +93,21 @@ test('verify fails on a deny rule that blocks the "to PR" overlay', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('verify accepts the read-only PR rules and fails on a PR write rule in the shared allow list', () => {
+  const { dir, repo } = bootstrapRepo();
+  try {
+    const f = path.join(repo, '.claude/settings.json');
+    const verify = () => JSON.parse(node('verify.mjs', ['.', '--registry', path.join(dir, 'none.json'), '--json'], repo).stdout);
+    assert.ok(!verify().failed.includes('push-allow'));
+    for (const rule of ['Bash(gh pr create*)', 'Bash(gh pr *)', 'Bash(git push*)']) {
+      const s = JSON.parse(readFileSync(f, 'utf8'));
+      s.permissions.allow = s.permissions.allow.filter((a) => !/^Bash\((gh pr (create|\*)|git push)/.test(a)).concat(rule);
+      writeFileSync(f, JSON.stringify(s));
+      assert.ok(verify().failed.includes('push-allow'), rule);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 // a web UI with the browser test on and one preflight command
 const webUi = (p) => {
   p.registry = { ...p.registry, browserTest: true, role: 'frontend', appUrl: 'http://localhost:3000' };
@@ -251,14 +266,16 @@ test('dedupeRules drops exact duplicates and rules that a broader prefix rule co
   ['Bash(pnpm format:check*)', 'Bash(pnpm lint*)', 'Bash(npx oxlint)', 'Bash(npx oxlint *)', 'Read(./**)', 'Bash(git hash-object*)']);
 });
 
-test('settings.json: deny holds only destructive rules (force push yes, plain push no), and the shared allow list has no PR rule', () => {
+test('settings.json: deny holds only destructive rules (force push yes, plain push no), and the shared allow list has no PR write rule', () => {
   const { dir, repo } = bootstrapRepo((p) => { p.rules.extraAllow = ['Bash(pnpm lint:check)', 'Bash(git hash-object*)']; return p; });
   try {
     const s = JSON.parse(readFileSync(path.join(repo, '.claude/settings.json'), 'utf8'));
     // a plain push is never denied (lesson 1); a force push and a new repo are
     assert.ok(!s.permissions.deny.some((d) => /^Bash\(git push(\*)?\)$/.test(d)), s.permissions.deny.join(', '));
     for (const d of ['Bash(git push --force*)', 'Bash(git push -f*)', 'Bash(gh repo create*)']) assert.ok(s.permissions.deny.includes(d), d);
-    assert.ok(!s.permissions.allow.some((a) => /^Bash\(gh pr /.test(a)));
+    // read-only PR and git commands are allowed, so a chat that continues a run does not ask; no PR write rule
+    for (const a of ['Bash(gh pr view*)', 'Bash(gh pr diff*)', 'Bash(gh pr list*)', 'Bash(git fetch*)', 'Bash(git ls-tree*)', 'Bash(git rev-parse*)', 'Bash(git cat-file*)']) assert.ok(s.permissions.allow.includes(a), a);
+    assert.deepEqual(s.permissions.allow.filter((a) => /^Bash\((git push|gh pr )/.test(a) && !/^Bash\(gh pr (view|diff|list)\*\)$/.test(a)), []);
     assert.equal(s.permissions.allow.filter((a) => a.startsWith('Bash(git hash-object')).length, 1);
     assert.ok(!s.permissions.allow.includes('Bash(pnpm lint:check)'), 'covered by Bash(pnpm lint*)');
   } finally { rmSync(dir, { recursive: true, force: true }); }

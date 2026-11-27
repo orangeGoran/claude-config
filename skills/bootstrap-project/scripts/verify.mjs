@@ -147,9 +147,9 @@ check('claudemd', 'dash-tip', 'CLAUDE.md', existsSync(R('CLAUDE.md')));
   const blocked = overlay.filter((c) => deny.some((d) => glob(d)?.test(c)));
   check('deny-overlay', 'required', 'No deny rule blocks the run or "to PR" overlay', !blocked.length,
     blocked.length ? 'blocked: ' + blocked.join('; ') : `${deny.length} deny rule(s)`);
-  // every gh pr rule (also view and diff): PR rules live only in the "to PR" overlay
-  const pushAllow = allow.filter((a) => /^Bash\((git push|gh pr\b)/.test(a));
-  check('push-allow', 'required', 'No push or PR rule in the shared allow list', !pushAllow.length, pushAllow.join(', '));
+  // push and PR write rules live only in the "to PR" overlay; gh pr view, diff and list read only
+  const pushAllow = allow.filter((a) => /^Bash\((git push|gh pr\b)/.test(a) && !/^Bash\(gh pr (view|diff|list)\b/.test(a));
+  check('push-allow', 'required', 'No push or PR write rule in the shared allow list', !pushAllow.length, pushAllow.join(', '));
   const localAllow = readJson(R('.claude', 'settings.local.json'))?.permissions?.allow || [];
   const localPush = localAllow.filter((a) => /^Bash\((git push|gh pr create)/.test(a));
   check('push-local', 'tip', 'No push rule in settings.local.json (the launcher replays it)', !localPush.length, localPush.join(', '));
