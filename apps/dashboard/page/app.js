@@ -1404,7 +1404,11 @@ function chatItemHtml(it, c) {
     '<span>' + esc(it.sum) + '</span>' + (it.done ? '' : ' <i class="dim">running…</i>') +
     (/^(Edit|MultiEdit|Write|NotebookEdit)$/.test(it.name) && it.sum && it.sum[0] !== '/' && c.p.pr
       ? '<button class="cjump" data-jump="' + escA(it.sum) + '" title="Open this file in Files changed">view in diff</button>' : '') + '</summary>' +
-    (it.input ? '<pre>' + esc(it.input) + '</pre>' : '') + (it.out ? '<pre class="out">' + esc(it.out) + '</pre>' : '') + '</details>';
+    (it.input ? '<pre>' + esc(it.input) + '</pre>' : '') + (it.out ? '<pre class="out">' + esc(it.out) + '</pre>' : '') + '</details>' +
+    // a picture the tool gave back shows under its row, also when the row is closed
+    (it.img && it.imgTool ? '<div class="cimgs ctimgs">' + Array.from({ length: it.imgs }, (_, n) => '<span class="cimg"><img loading="lazy" src="/api/chat/image?project=' +
+      encodeURIComponent(c.p.project) + '&slug=' + encodeURIComponent(c.p.slug) + '&uuid=' + it.img + '&tool=' + encodeURIComponent(it.imgTool) + '&n=' + n +
+      '" alt="' + escA(it.sum || 'Tool image') + '"></span>').join('') + '</div>' : '');
   if (it.report) return '<details class="cnote report" data-i="' + it.i + '"' + open + '><summary' + atTitle(it) + '>' + esc(it.text) + '</summary><div class="mdc">' + md(it.body) + '</div></details>';
   const err = it.err ? ' err' : '';
   return it.body ? '<details class="cnote' + err + '" data-i="' + it.i + '"' + open + '><summary' + atTitle(it) + '>' + esc(it.text) + '</summary><pre>' + esc(it.body) + '</pre></details>'
@@ -3755,7 +3759,7 @@ document.addEventListener('keydown', (e) => {
 });
 // a click on a picture in a chat message, or on one waiting to be sent, shows it full size; a click or Esc closes it
 document.addEventListener('click', (e) => {
-  const im = e.target.closest && e.target.closest('.amsg .cimg img, #cimgs .cimg img');
+  const im = e.target.closest && e.target.closest('.amsg .cimg img, #cimgs .cimg img, .ctimgs .cimg img');
   if (!im) return;
   e.preventDefault(); e.stopPropagation();
   const v = document.createElement('div');

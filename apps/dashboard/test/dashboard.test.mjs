@@ -1069,6 +1069,27 @@ test("the chat shows a subagent's report as one folded row, whichever way it arr
   assert.ok(!items[1].body.includes('other Claude session'), 'what the harness adds after the report is left out');
 });
 
+test('the chat shows the picture that a Read of an image gave back', async () => {
+  const q = 'project=demo&slug=demo-plan';
+  const { session } = await (await get('/api/chat?' + q)).json();
+  const file = path.join(home, '.claude', 'projects', repo.replace(/[^a-zA-Z0-9]/g, '-'), session + '.jsonl');
+  const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'), line = '0000000a-0000-4000-8000-00000000000a';
+  const before = (await (await get('/api/chat/history?' + q)).json()).total;
+  appendFileSync(file, [
+    { type: 'assistant', message: { id: 'm-img', content: [{ type: 'tool_use', id: 'toolu_img1', name: 'Read', input: { file_path: '/tmp/shot.png' } }] } },
+    { type: 'user', uuid: line, message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_img1',
+      content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png.toString('base64') } }] }] } },
+  ].map((o) => JSON.stringify(o) + '\n').join(''));
+
+  const [tool] = (await (await get('/api/chat/history?' + q)).json()).items.filter((it) => it.i >= before);
+  assert.deepEqual([tool.k, tool.out, tool.img, tool.imgs, tool.imgTool], ['tool', '[image]', line, 1, 'toolu_img1']);
+  const res = await get('/api/chat/image?' + q + '&uuid=' + line + '&tool=toolu_img1&n=0');
+  assert.equal(res.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await res.arrayBuffer()), png);
+  assert.equal((await get('/api/chat/image?' + q + '&uuid=' + line + '&tool=toolu_other&n=0')).status, 404, 'only the named call');
+  assert.equal((await get('/api/chat/image?' + q + '&uuid=' + line + '&n=0')).status, 404, 'not a picture of the message itself');
+});
+
 test('archives a plan and puts it back', async () => {
   assert.equal((await post('/api/clear-run', { project: 'demo', slug: 'demo-plan' })).ok, true);
   assert.equal((await post('/api/archive', { project: 'demo', slug: 'demo-plan' })).ok, true);

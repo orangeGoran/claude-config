@@ -2653,7 +2653,12 @@ const userItems = (t, j, cwd) => {
   for (const b of blocks) {
     if (b.type === 'tool_result') {
       const it = t.tools.get(b.tool_use_id);
-      if (it) { it.out = clip(resultText(b.content), 4000); it.err = !!b.is_error; it.done = true; it.end = j.timestamp; }
+      if (it) {
+        it.out = clip(resultText(b.content), 4000); it.err = !!b.is_error; it.done = true; it.end = j.timestamp;
+        // a picture the tool gave back (a Read of a PNG): the page loads it from this line by the call's id
+        const n = Array.isArray(b.content) ? b.content.filter((x) => x.type === 'image').length : 0;
+        if (n && j.imgLine) Object.assign(it, { img: j.imgLine, imgs: n, imgTool: b.tool_use_id });
+      }
       continue;
     }
     if (b.type === 'image') { imgs++; continue; }
@@ -2786,17 +2791,19 @@ const chatHistory = (proj, slug, q) => {
   return { session: tr.id, landed: ch ? ch.landed : chatLandSeq, ...itemsPage(items, q) };
 };
 // a pasted picture of a message in the chat's transcript: the transcript keeps it as an image
-// block of the line with this uuid (a message sent during a turn keeps it in its attachment)
-const chatImage = (proj, slug, uuid, n) => {
+// block of the line with this uuid (a message sent during a turn keeps it in its attachment).
+// With `tool`, the picture is in the result of that tool call on the line (a Read of a PNG).
+const chatImage = (proj, slug, uuid, n, tool = '') => {
   const tr = chatTranscript(proj, slug);
-  if (!tr || !/^[0-9a-f-]{36}$/.test(uuid) || !/^\d{1,2}$/.test(n)) return null;
+  if (!tr || !/^[0-9a-f-]{36}$/.test(uuid) || !/^\d{1,2}$/.test(n) || !/^[\w-]{0,100}$/.test(tool)) return null;
   let all;
   try { all = readFileSync(tr.file, 'utf8'); } catch { return null; }
   const at = all.indexOf('"uuid":"' + uuid + '"');
   if (at < 0) return null;
   let j;
   try { j = JSON.parse(all.slice(all.lastIndexOf('\n', at) + 1, (all.indexOf('\n', at) + 1 || all.length + 1) - 1)); } catch { return null; }
-  const c = j.message?.content || j.attachment?.prompt;
+  let c = j.message?.content || j.attachment?.prompt;
+  if (tool) c = (Array.isArray(c) ? c : []).find((x) => x.type === 'tool_result' && x.tool_use_id === tool)?.content;
   const b = (Array.isArray(c) ? c : []).filter((x) => x.type === 'image')[+n];
   const type = b?.source?.media_type;
   if (b?.source?.type !== 'base64' || !CHAT_IMG_TYPES.has(type)) return null;
@@ -3458,7 +3465,7 @@ const server = http.createServer(async (req, res) => {
         Object.fromEntries(['from', 'before', 'limit'].map((k) => [k, url.searchParams.get(k)]))));
       if (url.pathname === '/api/chat/meta') return json(res, 200, await chatMeta(proj, slug));
       if (url.pathname === '/api/chat/image') {
-        const im = chatImage(proj, slug, url.searchParams.get('uuid') || '', url.searchParams.get('n') || '');
+        const im = chatImage(proj, slug, url.searchParams.get('uuid') || '', url.searchParams.get('n') || '', url.searchParams.get('tool') || '');
         if (!im) return json(res, 404, { error: 'image not found' });
         res.writeHead(200, { 'Content-Type': im.type, 'Cache-Control': 'private, max-age=604800' });
         return res.end(im.data);
