@@ -321,7 +321,7 @@
              font:calc(11px * var(--fs)) ui-monospace,monospace; }
   .pcard { border:1px solid var(--line); border-radius:12px; margin:12px 0;
              background:var(--card); overflow:hidden; }
-  .pcard-head { display:flex; gap:10px; align-items:center; padding:10px 14px;
+  .pcard-head { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:10px 14px;
              border-bottom:1px solid var(--line); background:var(--thbg); }
   .pcard-head input { font-weight:600; }
   .pcard-body { padding:12px 14px 4px; display:grid; grid-template-columns:96px 1fr;
@@ -1014,6 +1014,11 @@
   .ck-row > a { overflow-wrap:anywhere; }
   .ck-row .chip { flex:none; }
   .ck-waits { color:var(--dim); font-size:calc(11.5px * var(--fs)); overflow-wrap:anywhere; }
+  .ck-jump { margin-top:8px; padding-top:8px; border-top:1px solid var(--line); overflow-wrap:anywhere; }
+  .ck-box h3 + .ck-jump { border-top:0; padding-top:0; margin-top:0; }
+  .ck-jump label { display:block; margin:4px 0; }
+  .ck-jump .mini { margin-top:6px; }
+  .ck-push { margin:4px 0; white-space:pre-wrap; overflow-wrap:anywhere; font-size:calc(11.5px * var(--fs)); }
   .sc-steps > li[data-stag] { cursor:pointer; border-radius:6px; }
   .sc-steps > li[data-stag]:hover { background:var(--sel); }
   .sc-skip.res summary { color:var(--ok); }

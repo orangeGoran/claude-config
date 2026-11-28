@@ -87,6 +87,7 @@ Projects live in `~/.claude/pipeline-projects.json`. Copy [`scripts/pipeline-pro
 | `root` | yes | repo root |
 | `client` | no | grouping header in the sidebar (default `Default`) |
 | `group` | no | repos that share work: each group gets one ledger and one ☑ Checklist (see [Groups and the checklist](#groups-and-the-checklist)) |
+| `watchSubmodules` | no | submodule paths that the watcher checks once a minute (see [Contracts jump](#contracts-jump)) |
 | `plansDir` | no | folder holding the `*.md` plans (default `<root>/.plans`) |
 | `doneDir` | no | where archived plans move (default `<plansDir>/done`) |
 | `launchers` | no | shell commands the ▶ Launch button can run — see below |
@@ -363,6 +364,8 @@ Events are written at most once: a crash can lose an event, but never repeats on
 | `wait-error` | `slug`, `text`, `reason` |
 | `auto-launch` | `slug`, `mode` |
 | `auto-launch-failed` | `slug`, `output` |
+| `submodule-behind` | `path`, `branch`, `pin`, `tip`, `upstream` |
+| `submodule-error` | `path`, `reason` |
 
 Text that comes from a command (`gh`, `git`, the launcher) has its secrets removed and is cut to 500 characters.
 
@@ -376,7 +379,7 @@ To make a group, click **＋ Group these repos** next to a client name in the si
 
 In the sidebar, the projects of a group sit in one box under the group bar, for example **☑ acme-product · 2 tickets · 1 needs you**. "Tickets" counts the tickets that are not done. "Needs you" counts the plans whose step is `needs-you`. The arrow at the left of the bar folds the group, one step for each click: an arrow down shows the projects and their plans, an arrow right shows only the project headers, a double arrow hides the projects (the bar says how many). The page remembers the fold in this browser. A search shows its matches in a hidden group, and a plan that you open from a tab or the palette shows its group again. Click the bar to show the checklist in the big right area. With no plan open, the right area shows the checklist of the group you picked last. **☑ Checklist** in the **⋯** menu (or "Checklist" in the ⌘K palette) shows it too. On a screen of 600 px or less, the checklist opens in the side pane. It updates at each refresh (5 s).
 
-The checklist has four parts, from the top: "Needs you now" (only when a plan needs you), "Tickets", "Goals & rules" and "Questions". Click a plan to open it; click the group bar to go back.
+The checklist has four parts, from the top: "Needs you now" (only when a plan needs you), "Tickets", "Goals & rules" and "Questions". Click a plan to open it; click the group bar to go back. When a project of the group watches a submodule, a "Contracts jump" box shows after "Tickets" (see [Contracts jump](#contracts-jump)).
 
 The ledger is one Markdown file per group: `~/.claude/pipeline-dashboard/groups/<group>/ledger.md`. People and agents write the goals, holds and notes of the group in it, under `## Goals`, `## Holds` and `## Notes`. "Goals & rules" shows the sections that have text. **✎ Edit** opens the file in VS Code; when the file is missing, it makes it from an empty template first. It never overwrites a file. The dashboard shows at most the first 256 KB. When you rename a group, the dashboard starts a new ledger; the old `groups/<old name>/` folder stays on disk.
 
@@ -399,6 +402,42 @@ A report that `auto-pipeline.sh --cleanup` marked `CLEANED` counts as no run.
 `GET /api/ledger?group=<group>` gives the same data as JSON: `group`, `projects`, `ledger` (`path`, `exists`, `text`, `truncated`, and `error` when the file cannot be read), `chain` (`tickets` and `untracked`) and `questions`. Example: `curl -s 'http://127.0.0.1:4899/api/ledger?group=acme-product'`. A group that no project has gives 400 `{ "error": "bad group" }`. `POST /api/ledger/open` with `{ "group": "<group>" }` makes the file when it is missing and opens it in VS Code; it gives `{ ok, path, created }`. In `/api/state`, each project of a group has `groupInfo`: `{ tickets, needsYou }`, the counts of the group bar.
 
 The "Questions" part stays empty ("None yet.") until a question source exists.
+
+## Contracts jump
+
+A contracts jump moves a submodule (for example the `contracts` repo that the backend publishes) to its newest upstream commit, and makes the code build with the new types. The dashboard tells you when a watched submodule is behind, and proposes one jump in the ☑ Checklist. It never jumps without your Confirm.
+
+To watch a submodule, give the project `watchSubmodules` in the registry (an array of paths, at most 8), or type the paths in the **Watch submodules** field in ⚙ Settings (comma-separated). No project is watched by default. A path that is not good is dropped, and the save tells you.
+
+Once a minute, for each watched path, the watcher compares the pin with the upstream tip:
+
+- The base branch is the `BASE_BRANCH="<x>"` line of the project's `.claude/scripts/auto-pipeline.sh`. A project without it gets an error.
+- The pin is the submodule commit on `origin/<base>` of the project.
+- The branch is the `branch = <name>` line of the path in `.gitmodules` on `origin/<base>` (`.` means the base branch), else the submodule's `origin/HEAD`.
+- The tip is `origin/<branch>` of the submodule after a `git fetch`. The submodule must be initialized in the main checkout.
+- The upstream project is the registered project whose `origin` is the same repo as the submodule's `origin`.
+
+A pin that is behind the tip gives one `submodule-behind` event and one notification per new tip. A click on the notification opens the checklist of the project's group (`/?checklist=<group>`). A check that fails gives one `submodule-error` event per new reason. A project without a group gets the event and the notification, but has no card.
+
+The "Contracts jump" box shows one card per watched path, with the pin, the tip and one of these states:
+
+| State | When | What you can do |
+| --- | --- | --- |
+| `unchecked` | the watcher did not check the path yet, or did not read the upstream PRs yet | wait one minute |
+| `error` | a check failed, or the upstream PRs cannot be read | fix the reason |
+| `diverged` | the pin is ahead of the tip, or on another line | nothing: a jump never moves a pin backwards |
+| `blocked` | a jump plan of this path is in `.plans/`, or a jump PR is open, or the open PRs of the project cannot be read | finish or archive that plan |
+| `batch` | the upstream has open, non-draft PRs on the branch (drafts are left out) | untick PRs, then **Confirm** |
+| `now` | the pin is behind and the upstream has no open, non-draft PR | **Confirm** ("jump now") |
+| `up-to-date` | the pin is the tip and the upstream has no open, non-draft PR | nothing |
+
+**Confirm** writes one jump plan, `.plans/<YYYYMMDD-HHMMSS>-contracts-jump-<path>.md`. Its header has `- **Contracts jump**: <path>` and one `- **Waits for**: <upstream> PR #<n> merged` line per ticked PR. The dashboard does not commit or push the plan: the answer shows the three commands (`git add`, `git commit`, `git push origin <base>`), and the card shows `pushed ✓` or `not on origin yet ✗` with the commands. Push the plan: the launcher starts only plans that are on `origin/<base>`. When all its PRs are merged, the watcher starts the plan. A plan that was not pushed in time does not start: push it, then launch it by hand. A "jump now" plan has no `Waits for:` line: launch it by hand after the push.
+
+While a jump plan of the path waits, runs or has an open PR, the card offers no new jump. A jump plan whose PR was closed, or that waits for a closed PR, blocks too: archive it to get a new recommendation. The run moves the pin to the newest commit of `origin/<branch>` at run time, not to the tip of the Confirm. It stops when the pin is not an ancestor of that commit.
+
+`GET /api/ledger` has the cards in `contracts`. `POST /api/contracts/jump` with `{ "project": "acme-web", "path": "contracts", "prs": [41, 42] }` gives `{ ok: true, slug, file, output }`, or `{ ok: false, output }` when the card does not allow the jump. Example: `curl -s -X POST -H 'Content-Type: application/json' -d '{"project":"acme-web","path":"contracts","prs":[41]}' http://127.0.0.1:4899/api/contracts/jump`.
+
+Projects made with `/bootstrap-project` can turn on the module `contracts-jump` (off by default). It adds the `/contracts-jump` skill with the rules of a jump plan, and the jump plan follows it.
 
 ## Environment
 

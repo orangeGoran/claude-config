@@ -8,12 +8,13 @@ import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import {
   mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, rmSync, realpathSync,
-  utimesSync, statSync, readdirSync, unlinkSync, chmodSync,
+  utimesSync, statSync, readdirSync, unlinkSync, chmodSync, renameSync,
 } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { jumpSlug, planStamp } from '../contracts-jump.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'server.mjs');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1165,4 +1166,308 @@ test('group ledger: an archived plan shows under a ticket that still has an acti
     assert.equal(r.body.chain.tickets[0].done, false);
     assert.deepEqual((await plan('gl-arch', '20261120-140000-done-41')).tickets, [{ repo: null, number: 41 }]);
   } finally { unregister(['gl-arch']); }
+});
+
+// ---- contracts jump: watchSubmodules, submodule-behind, /api/ledger contracts, POST /api/contracts/jump ----
+const BASE_SCRIPT = 'BASE_BRANCH="main"\n' + PIPE_SCRIPT;
+/**
+ * Builds a contracts world: a bare `<prefix>-contracts.git`, the upstream clone `<prefix>-api` (origin = the bare repo,
+ * one commit c1), and the downstream `<prefix>-web` with its own bare origin and the submodule `contracts` pinned at c1
+ * on origin/main. `push(text)` makes a new upstream commit, pushes it and gives its sha; `addWeb(name)` makes one more
+ * downstream repo with the same submodule.
+ */
+const subWorld = (prefix) => {
+  const bare = path.join(tmp, prefix + '-contracts.git');
+  git(tmp, 'init', '-q', '--bare', '-b', 'main', bare);
+  const api = makeRepo(prefix + '-api', { pipeline: false });
+  git(api, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(api, 'schema.txt'), 'v1');
+  git(api, 'add', 'schema.txt'); git(api, 'commit', '-qm', 'c1');
+  git(api, 'remote', 'add', 'origin', bare); git(api, 'push', '-q', 'origin', 'main');
+  const c1 = git(api, 'rev-parse', 'HEAD');
+  let n = 1;
+  const push = (text) => {
+    writeFileSync(path.join(api, 'schema.txt'), text || 'v' + ++n);
+    git(api, 'commit', '-qam', 'c' + n); git(api, 'push', '-q', 'origin', 'main');
+    return git(api, 'rev-parse', 'HEAD');
+  };
+  const addWeb = (name) => {
+    const web = makeRepo(name, { script: BASE_SCRIPT });
+    const origin = path.join(tmp, name + '-origin.git');
+    git(tmp, 'init', '-q', '--bare', '-b', 'main', origin);
+    git(web, 'init', '-q', '-b', 'main');
+    git(web, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', bare, 'contracts');
+    git(path.join(web, 'contracts'), 'checkout', '-q', c1);
+    git(web, 'add', 'contracts', '.gitmodules'); git(web, 'commit', '-qm', 'pointer at c1');
+    git(web, 'remote', 'add', 'origin', origin); git(web, 'push', '-q', '-u', 'origin', 'main');
+    return web;
+  };
+  return { api, web: addWeb(prefix + '-web'), bare, work: api, c1, push, addWeb };
+};
+const jumpPost = async (data, headers = {}) => {
+  const r = await fetch(`http://127.0.0.1:${port}/api/contracts/jump`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(data),
+  });
+  const t = await r.text();
+  let body = null;
+  try { body = JSON.parse(t); } catch {}
+  return { status: r.status, body };
+};
+const jumpFiles = (root) => readdirSync(path.join(root, '.plans')).filter((f) => f.includes('-contracts-jump-'));
+const cardOf = async (group) => { const r = await getLedger(group); return r.status === 200 && r.body.contracts && r.body.contracts[0]; };
+const cardIn = (group, state) => until(async () => { const c = await cardOf(group); return c && c.state === state && c; }, group + ' card ' + state);
+const jumpEntries = (p) => [{ name: p + '-api', root: path.join(tmp, p + '-api') },
+  { name: p + '-web', root: path.join(tmp, p + '-web'), group: p + '-group', watchSubmodules: ['contracts'] }];
+
+test('contracts jump: opt-in, one submodule-behind event per new tip, and one notification that opens the checklist', async () => {
+  const w = subWorld('cj1');
+  const web2 = w.addWeb('cj1-web2');
+  const c2 = w.push();
+  try {
+    register([...jumpEntries('cj1'), { name: 'cj1-web2', root: web2, group: 'cj1-group' }]);
+    const ev = await until(async () => { const e = ofType(await events('cj1-web'), 'submodule-behind'); return e.length && e; }, 'submodule-behind');
+    assert.equal(ev.length, 1);
+    assert.deepEqual({ ...ev[0], at: undefined, project: undefined }, { at: undefined, project: undefined, type: 'submodule-behind',
+      path: 'contracts', branch: 'main', pin: w.c1, tip: c2, upstream: 'cj1-api' });
+    await until(() => notes().some((l) => l.includes('cj1-web · submodule behind')
+      && (l.includes('checklist%3Dcj1-group') || l.includes('checklist=cj1-group'))
+      // the path makes the notifier group key unique, so a second watched path does not replace this one
+      && l.includes('plans-?checklist=cj1-group&sub=cj1-web%2Fcontracts')), 'the notification');
+    await ticks(3);
+    assert.equal(ofType(await events('cj1-web'), 'submodule-behind').length, 1, 'the same tip gives no second event');
+    assert.equal(ofType(await events('cj1-web2'), 'submodule-behind').length, 0, 'not watched: no event');
+    assert.deepEqual(watchJson('cj1-web2').subs, {});
+    const c3 = w.push();
+    const ev2 = await until(async () => { const e = ofType(await events('cj1-web'), 'submodule-behind'); return e.length === 2 && e; }, 'the second event');
+    assert.equal(ev2[1].tip, c3);
+    const sub = await until(() => watchJson('cj1-web')?.subs?.contracts?.notedTip === c3 && watchJson('cj1-web').subs.contracts, 'notedTip c3');
+    assert.equal(sub.behind, true);
+  } finally { unregister(['cj1-api', 'cj1-web', 'cj1-web2']); }
+});
+
+test('contracts jump: the card recommends one batch after the open, non-draft PRs on the branch', async () => {
+  const w = subWorld('cj2');
+  setPrs('cj2-api', [prRow(41, 'OPEN', { headRefName: 'f/41' }), prRow(42, 'OPEN', { headRefName: 'f/42' }),
+    prRow(44, 'OPEN', { headRefName: 'f/44', isDraft: true }), prRow(45, 'OPEN', { headRefName: 'f/45', baseRefName: 'other' })]);
+  w.push();
+  try {
+    register(jumpEntries('cj2'));
+    const c = await cardIn('cj2-group', 'batch');
+    assert.deepEqual(c.recommended.map((p) => p.number), [41, 42]);
+    assert.deepEqual(c.drafts.map((p) => p.number), [44]);
+    assert.equal(c.behind, true);
+    assert.equal(c.upstream, 'cj2-api');
+    assert.equal(c.project, 'cj2-web');
+    assert.equal(c.path, 'contracts');
+    // one PR: "is merged"
+    const one = await jumpPost({ project: 'cj2-web', path: 'contracts', prs: [41] });
+    assert.equal(one.body.ok, true, JSON.stringify(one.body));
+    assert.match(one.body.output, /It starts by itself when #41 is merged\./);
+  } finally { unregister(['cj2-api', 'cj2-web']); }
+});
+
+test('contracts jump: Confirm writes one jump plan, refuses bad input, and blocks the next jump', async () => {
+  const w = subWorld('cj3');
+  setPrs('cj3-api', [prRow(41, 'OPEN', { headRefName: 'f/41' }), prRow(42, 'OPEN', { headRefName: 'f/42' }),
+    prRow(44, 'OPEN', { headRefName: 'f/44', isDraft: true })]);
+  w.push();
+  try {
+    register(jumpEntries('cj3'));
+    await cardIn('cj3-group', 'batch');
+    const draft = await jumpPost({ project: 'cj3-web', path: 'contracts', prs: [44] });
+    assert.equal(draft.status, 200);
+    assert.equal(draft.body.ok, false);
+    assert.match(draft.body.output, /#44/);
+    assert.deepEqual(jumpFiles(w.web), []);
+    assert.deepEqual((await jumpPost({ project: 'cj3-web', path: 'contracts', prs: [41, 'x'] })).body, { error: 'bad prs' });
+    assert.equal((await jumpPost({ project: 'cj3-web', path: 'contracts', prs: [41, 'x'] })).status, 400);
+    const nope = await jumpPost({ project: 'cj3-web', path: 'nope', prs: [41] });
+    assert.deepEqual([nope.status, nope.body], [400, { error: 'not a watched submodule' }]);
+    const nobody = await jumpPost({ project: 'nobody', path: 'contracts', prs: [41] });
+    assert.deepEqual([nobody.status, nobody.body], [400, { error: 'bad project' }]);
+    const evil = await jumpPost({ project: 'cj3-web', path: 'contracts', prs: [41] }, { Origin: 'https://evil.example' });
+    assert.equal(evil.status, 403);
+    assert.deepEqual(jumpFiles(w.web), []);
+
+    const ok = await jumpPost({ project: 'cj3-web', path: 'contracts', prs: [42, 41] });
+    assert.equal(ok.body.ok, true, JSON.stringify(ok.body));
+    assert.match(ok.body.slug, /^\d{8}-\d{6}-contracts-jump-contracts$/);
+    const text = readFileSync(path.join(w.web, '.plans', ok.body.slug + '.md'), 'utf8');
+    assert.ok(text.includes('- **Contracts jump**: contracts'));
+    const i41 = text.indexOf('- **Waits for**: cj3-api PR #41 merged'), i42 = text.indexOf('- **Waits for**: cj3-api PR #42 merged');
+    assert.ok(i41 > 0 && i42 > i41, 'one Waits for line per PR, in number order');
+    assert.match(ok.body.output, /git push origin main/);
+    assert.match(ok.body.output, /It starts by itself when #41, #42 are merged\./);
+    const p = await until(async () => { const x = await plan('cj3-web', ok.body.slug); return x && x.waits && x.waits.length === 2 && x; }, 'the plan waits');
+    assert.deepEqual(p.waits.map((x) => x.met), [false, false]);
+    const blocked = await cardIn('cj3-group', 'blocked');
+    assert.equal(blocked.blockers[0].slug, ok.body.slug);
+    assert.equal(blocked.blockers[0].pushed, false);
+    assert.match(blocked.blockers[0].push, /git push origin main/);
+    const again = await jumpPost({ project: 'cj3-web', path: 'contracts', prs: [41] });
+    assert.equal(again.body.ok, false);
+    assert.equal(jumpFiles(w.web).length, 1);
+    // more than 50 PRs is a bad request
+    const many = await jumpPost({ project: 'cj3-web', path: 'contracts', prs: Array.from({ length: 51 }, (_, i) => i + 1) });
+    assert.deepEqual([many.status, many.body], [400, { error: 'bad prs' }]);
+    // the owner pushes the plan: the card says pushed
+    git(w.web, 'add', '--', '.plans/' + ok.body.slug + '.md');
+    git(w.web, 'commit', '-qm', 'docs(plans): add contracts jump plan for contracts');
+    git(w.web, 'push', '-q', 'origin', 'main');
+    await until(async () => { const c = await cardOf('cj3-group'); return c && c.blockers[0] && c.blockers[0].pushed === true && c; }, 'pushed ✓');
+
+    // archived, but its PR is open: still blocked (by the open jump PR, not by the file)
+    mkdirSync(path.join(w.web, '.plans', 'done'), { recursive: true });
+    renameSync(path.join(w.web, '.plans', ok.body.slug + '.md'), path.join(w.web, '.plans', 'done', ok.body.slug + '.md'));
+    setPrs('cj3-web', [prRow(9, 'OPEN', { headRefName: 'auto/' + ok.body.slug })]);
+    await until(async () => { const c = await cardOf('cj3-group'); return c && c.state === 'blocked' && c.blockers.some((b) => b.archived && b.pr && b.pr.number === 9) && c; },
+      'blocked by the open jump PR');
+    // the open PRs of this repo cannot be read: an unknown PR state blocks
+    writeFileSync(path.join(ghData('cj3-web'), 'fail-list'), 'HTTP 502');
+    await until(async () => { const c = await cardOf('cj3-group'); return c && c.state === 'blocked' && c.blockers.some((b) => b.slug === null && b.error) && c; },
+      'blocked by an unknown PR state');
+    await ticks(2);
+    assert.deepEqual(argsOf(w.web), [], 'no auto-launch: the PRs are not merged');
+  } finally {
+    try { unlinkSync(path.join(ghData('cj3-web'), 'fail-list')); } catch {}
+    unregister(['cj3-api', 'cj3-web']);
+  }
+});
+
+test('contracts jump: with no open upstream PR the card offers "jump now", and its plan has no Waits for line', async () => {
+  const w = subWorld('cj4');
+  setPrs('cj4-api', []);
+  // an open PR of the project that is not a jump PR does not block
+  setPrs('cj4-web', [prRow(7, 'OPEN', { headRefName: 'feat/other' }), prRow(8, 'OPEN', { headRefName: 'auto/20261101-000000-other-plan' })]);
+  w.push();
+  const stamps = [];
+  try {
+    register(jumpEntries('cj4'));
+    await cardIn('cj4-group', 'now');
+    const r = await jumpPost({ project: 'cj4-web', path: 'contracts', prs: [] });
+    assert.equal(r.body.ok, true, JSON.stringify(r.body));
+    const f = path.join(w.web, '.plans', r.body.slug + '.md');
+    assert.doesNotMatch(readFileSync(f, 'utf8'), /Waits for/);
+    assert.match(r.body.output, /Launch it by hand after the push/);
+    await cardIn('cj4-group', 'blocked');
+    unlinkSync(f);
+    await cardIn('cj4-group', 'now');
+    // Confirm never overwrites: files with the names of the next seconds exist (empty, so they block nothing)
+    for (let s = 0; s < 6; s++) {
+      const name = jumpSlug('contracts', planStamp(new Date(Date.now() + s * 1000))) + '.md';
+      writeFileSync(path.join(w.web, '.plans', name), 'kept');
+      stamps.push(path.join(w.web, '.plans', name));
+    }
+    const exists = await jumpPost({ project: 'cj4-web', path: 'contracts', prs: [] });
+    assert.equal(exists.body.ok, false);
+    assert.match(exists.body.output, /A plan with this name exists/);
+    for (const s of stamps) assert.equal(readFileSync(s, 'utf8'), 'kept', 'the file is not overwritten');
+  } finally {
+    for (const s of stamps) try { unlinkSync(s); } catch {}
+    unregister(['cj4-api', 'cj4-web']);
+  }
+});
+
+test('contracts jump: a pin that is not behind gives no event and nothing to jump; setup errors give one submodule-error', async () => {
+  subWorld('cj5');
+  setPrs('cj5-api', []);
+  const bad = makeRepo('cj5-bad', { script: BASE_SCRIPT });
+  const nobase = makeRepo('cj5-nobase');
+  try {
+    register([...jumpEntries('cj5'),
+      { name: 'cj5-bad', root: bad, group: 'cj5-group', watchSubmodules: ['nothere'] },
+      { name: 'cj5-nobase', root: nobase, group: 'cj5-group', watchSubmodules: ['contracts'] }]);
+    const c = await until(async () => { const r = await getLedger('cj5-group');
+      return r.status === 200 && r.body.contracts.find((x) => x.project === 'cj5-web' && x.state === 'up-to-date'); }, 'up-to-date');
+    assert.equal(c.behind, false);
+    assert.equal(c.relation, 'equal');
+    const r = await jumpPost({ project: 'cj5-web', path: 'contracts', prs: [] });
+    assert.equal(r.body.ok, false);
+    assert.match(r.body.output, /Nothing to jump/);
+    await ticks(3);
+    assert.equal(ofType(await events('cj5-web'), 'submodule-behind').length, 0);
+    const be = ofType(await events('cj5-bad'), 'submodule-error');
+    assert.deepEqual(be.map((e) => [e.path, e.reason]), [['nothere', 'submodule not initialized in the main checkout']]);
+    const ne = ofType(await events('cj5-nobase'), 'submodule-error');
+    assert.deepEqual(ne.map((e) => e.reason), ['no BASE_BRANCH in auto-pipeline.sh']);
+    const all = (await getLedger('cj5-group')).body.contracts;
+    assert.deepEqual(all.map((x) => [x.project, x.path]), [['cj5-bad', 'nothere'], ['cj5-nobase', 'contracts'], ['cj5-web', 'contracts']], 'sorted by project and path');
+    assert.equal(all[0].state, 'error');
+    assert.equal(all[0].error, 'submodule not initialized in the main checkout');
+    // Confirm on an error card is refused, with the reason, and writes nothing
+    const onErr = await jumpPost({ project: 'cj5-bad', path: 'nothere', prs: [] });
+    assert.equal(onErr.body.ok, false);
+    assert.match(onErr.body.output, /^Cannot jump: submodule not initialized in the main checkout$/);
+    assert.deepEqual(jumpFiles(bad), []);
+    // a path that is no longer watched leaves watch.json
+    assert.ok('nothere' in watchJson('cj5-bad').subs);
+    unregister(['cj5-bad']);
+    register([{ name: 'cj5-bad', root: bad, group: 'cj5-group' }]);
+    await until(() => watchJson('cj5-bad') && !('nothere' in watchJson('cj5-bad').subs), 'the path leaves subs');
+  } finally { unregister(['cj5-api', 'cj5-web', 'cj5-bad', 'cj5-nobase']); }
+});
+
+test('contracts jump: a pin on another upstream branch, pushed from another clone, gives the diverged card, not an error', async () => {
+  const w = subWorld('cj7');
+  setPrs('cj7-api', []);
+  const clone = path.join(tmp, 'cj7-clone');
+  try {
+    // the upstream gets a side branch; another clone of the web repo pins it and pushes, so the main checkout's
+    // submodule gets the pinned commit only through the watcher's fetches
+    git(w.api, 'checkout', '-q', '-b', 'side');
+    writeFileSync(path.join(w.api, 'schema.txt'), 'side');
+    git(w.api, 'commit', '-qam', 'side'); git(w.api, 'push', '-q', 'origin', 'side');
+    const side = git(w.api, 'rev-parse', 'HEAD');
+    git(w.api, 'checkout', '-q', 'main');
+    git(tmp, 'clone', '-q', path.join(tmp, 'cj7-web-origin.git'), clone);
+    git(clone, '-c', 'protocol.file.allow=always', 'submodule', 'update', '-q', '--init');
+    git(path.join(clone, 'contracts'), 'fetch', '-q', 'origin', 'side');
+    git(path.join(clone, 'contracts'), 'checkout', '-q', side);
+    git(clone, '-c', 'user.name=Ana Example', '-c', 'user.email=ana@example.test', 'commit', '-qam', 'pointer at side');
+    git(clone, 'push', '-q', 'origin', 'main');
+    register(jumpEntries('cj7'));
+    const c = await cardIn('cj7-group', 'diverged');
+    assert.equal(c.relation, 'ahead', 'the side commit is one ahead of main');
+    assert.equal(c.pin, side);
+    assert.equal(ofType(await events('cj7-web'), 'submodule-error').length, 0);
+    // Confirm on a diverged card is refused and writes nothing
+    const r = await jumpPost({ project: 'cj7-web', path: 'contracts', prs: [] });
+    assert.equal(r.body.ok, false);
+    assert.match(r.body.output, /ahead of origin\/main or on another line/);
+    assert.deepEqual(jumpFiles(w.web), []);
+  } finally { unregister(['cj7-api', 'cj7-web']); }
+});
+
+test('contracts jump: Confirm refuses a project whose plans folder is not <root>/.plans', async () => {
+  const w = subWorld('cj8');
+  setPrs('cj8-api', []);
+  w.push();
+  const elsewhere = path.join(tmp, 'cj8-plans');
+  mkdirSync(elsewhere, { recursive: true });
+  try {
+    register([{ name: 'cj8-api', root: w.api },
+      { name: 'cj8-web', root: w.web, group: 'cj8-group', watchSubmodules: ['contracts'], plansDir: elsewhere }]);
+    await cardIn('cj8-group', 'now');
+    const r = await jumpPost({ project: 'cj8-web', path: 'contracts', prs: [] });
+    assert.equal(r.body.ok, false);
+    assert.match(r.body.output, /A jump plan must go into .*\/\.plans\/: the launcher reads only that folder on origin\/main\./);
+    assert.deepEqual(readdirSync(elsewhere).filter((f) => f.includes('-contracts-jump-')), []);
+    assert.deepEqual(jumpFiles(w.web), []);
+  } finally { unregister(['cj8-api', 'cj8-web']); }
+});
+
+test('contracts jump: Settings keep the good submodule paths and name the dropped ones', async () => {
+  const oldText = readFileSync(regFile(), 'utf8');
+  const root = makeRepo('cj6-set');
+  const root2 = makeRepo('cj6-set2');
+  try {
+    const r = await post('/api/registry', { projects: [...registry(),
+      { name: 'cj6-set', root, watchSubmodules: 'contracts, ../x, libs/api' },
+      { name: 'cj6-set2', root: root2, watchSubmodules: '../y' }] });
+    assert.equal(r.ok, true);
+    assert.ok(r.warnings.some((w) => /^cj6-set: submodule path not kept: \.\.\/x$/.test(w)), JSON.stringify(r.warnings));
+    const saved = registry();
+    assert.deepEqual(saved.find((e) => e.name === 'cj6-set').watchSubmodules, ['contracts', 'libs/api']);
+    assert.equal('watchSubmodules' in saved.find((e) => e.name === 'cj6-set2'), false);
+  } finally { writeFileSync(regFile(), oldText); }
 });

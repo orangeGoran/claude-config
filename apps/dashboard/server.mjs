@@ -39,6 +39,7 @@ import { olderVersions } from '../../scripts/page-versions.mjs';
 import { plistScript } from './restart.mjs';
 import { parseWaitsFor, prMap, prEvents, outcomeEvents, runningCount, canAutoLaunch, capLines, redact } from './watch.mjs';
 import { safeGroup, parseTickets, buildChain, groupSummary, ledgerTemplate } from './groups.mjs';
+import { parseSubPaths, launcherBase, submoduleBranch, repoKey, parseJumpLine, jumpPathPart, jumpSlug, planStamp, recommendJump, jumpPlanText } from './contracts-jump.mjs';
 import { NOTIFIERS, notifyFirst } from '../scout/scout.mjs';
 import { QA_ICON, QA_ICON_URI } from '../../skills/browser-usability-test/scripts/qa-icon.mjs';
 
@@ -202,6 +203,7 @@ const resolveProject = (p) => {
     name: p.name, client: p.client || 'Default', root, plansDir,
     color: /^#[0-9a-f]{3,8}$/i.test(p.color || '') ? p.color : '', short: p.short ? String(p.short).slice(0, 12) : '',
     group: safeGroup(p.group) ? p.group.toLowerCase() : '',
+    watchSubmodules: parseSubPaths(p.watchSubmodules).paths,
     launchers: Array.isArray(p.launchers) ? p.launchers : [],
     hasPipeline: existsSync(launcherScript), launcherScript,
     hasLanes: existsSync(path.join(root, '.claude/scripts/plan-lanes.mjs')),
@@ -950,6 +952,11 @@ const cleanEntry = (e) => {
   // a typed group that is not a good name is not kept: say so, else "Settings saved" hides the loss
   if (g && !entry.group)
     warning = (warning ? warning + '\n' : '') + entry.name + ': group not kept (use 1 to 40 of A-Z a-z 0-9 . _ -): ' + g.slice(0, 60);
+  // optional watched submodules (docs/plans-dashboard.md, "Contracts jump"): bad paths are dropped with a warning
+  const ws = parseSubPaths(e.watchSubmodules);
+  if (ws.paths.length) entry.watchSubmodules = ws.paths;
+  if (ws.dropped.length)
+    warning = (warning ? warning + '\n' : '') + entry.name + ': submodule path not kept: ' + ws.dropped.join(', ').slice(0, 120);
   return { entry, warning };
 };
 
@@ -1418,6 +1425,7 @@ const ledgerState = async (group) => {
     ledger,
     chain: buildChain(projs, Date.now(), STALE_RUN_MS),
     questions: { source: null, items: [], note: 'No question source is set up yet.' },
+    contracts: await jumpCards(projs),
   };
 };
 
@@ -1440,6 +1448,137 @@ const ledgerOpen = (group) => {
   }
   openFolderInVsCode(f);
   return { ok: true, path: tilde(f), created };
+};
+
+// ---------- contracts jump: one jump plan for a watched submodule that is behind ----------
+// Guide: docs/plans-dashboard.md, "Contracts jump". Pure helpers: contracts-jump.mjs. The watcher (step 5b) writes
+// watch.json `subs`; the checklist shows one card per watched path; Confirm writes one jump plan, never commits it.
+
+/**
+ * Gives the jump plans and jump PRs that block a new recommendation for `subPath` of `proj`:
+ * each plan in `plansDir` whose `- **Contracts jump**:` line is `subPath` (`{ slug, archived: false, pr, file }`),
+ * and each open jump PR that the watcher read (`{ slug, archived: true, pr }`). Open jump PRs that cannot be read
+ * give one `{ slug: null, error }`, so an unknown PR state also blocks.
+ */
+const jumpBlockers = (proj, subPath, sub) => {
+  const out = [];
+  let names = [];
+  try { names = readdirSync(proj.plansDir).filter((n) => n.endsWith('.md')); } catch {}
+  const allPrs = (prLists[proj.root] || {}).allByBranch || {};
+  for (const n of names) {
+    const file = path.join(proj.plansDir, n);
+    let text = '';
+    try { text = readFileSync(file, 'utf8'); } catch { continue; }
+    if (parseJumpLine(text) !== subPath) continue;
+    const slug = n.slice(0, -3);
+    const p = allPrs[planBranch(text) || 'auto/' + slug];
+    out.push({ slug, archived: false, pr: p ? { number: p.number, state: p.state, url: p.url } : null, file });
+  }
+  const jp = sub && sub.jumpPrs;
+  if (jp && jp.error) out.push({ slug: null, error: jp.error });
+  else for (const r of (jp && jp.rows) || []) {
+    const slug = String(r.headRefName).replace(/^auto\//, '');
+    if (out.some((b) => b.slug === slug)) continue;   // the plan file is still there: one blocker
+    out.push({ slug, archived: true, pr: { number: r.number, state: 'OPEN', url: r.url } });
+  }
+  return out;
+};
+
+/** Gives the three commands that push a jump plan file of `proj` to origin/<base>, one per line. */
+const jumpPushText = (proj, base, file, subPath) => [
+  'git add -- ' + path.relative(proj.root, file),
+  'git commit -m "docs(plans): add contracts jump plan for ' + subPath + '"',
+  'git push origin ' + base,
+].join('\n');
+
+/**
+ * Gives the Contracts jump card of `subPath` of `proj`: the watcher's last check (watch.json `subs`) and the
+ * recommendation of recommendJump(). The fields of the check are null when the path was not checked yet.
+ */
+const jumpCard = (proj, subPath) => {
+  const sub = (loadWatch(proj).subs || {})[subPath] || null;
+  const s = sub || {};
+  const rec = recommendJump(sub, jumpBlockers(proj, subPath, sub));
+  return {
+    project: proj.name, path: subPath, base: s.base ?? null, branch: s.branch ?? null, pin: s.pin ?? null, tip: s.tip ?? null,
+    relation: s.relation ?? null, behind: !!s.behind, upstream: s.upstream ?? null, checkedAt: s.checkedAt ?? null,
+    ...rec, error: rec.error || s.error || null,
+  };
+};
+
+/**
+ * Gives the `contracts` field of GET /api/ledger: one card per watched path of each project in `stateProjects`,
+ * sorted by project and path. Each blocker with a plan file gets `pushed` (origin/<base> has the file; null when
+ * the file is outside the root) and `push` (the push commands).
+ */
+const jumpCards = async (stateProjects) => {
+  const cards = [];
+  for (const item of stateProjects) {
+    const proj = projByName(item.name);
+    if (!proj) continue;
+    for (const subPath of proj.watchSubmodules) {
+      const card = jumpCard(proj, subPath);
+      for (const b of card.blockers) {
+        const file = b.file;
+        delete b.file;
+        if (!file) continue;
+        const rel = path.relative(proj.root, file);
+        if (rel.startsWith('..') || path.isAbsolute(rel)) { b.pushed = null; b.push = ''; continue; }
+        b.pushed = card.base ? (await gitIn(proj.root, ['cat-file', '-e', 'origin/' + card.base + ':' + rel])).ok : false;
+        b.push = card.base ? jumpPushText(proj, card.base, file, subPath) : '';
+      }
+      cards.push(card);
+    }
+  }
+  return cards.sort((a, b) => (a.project < b.project ? -1 : a.project > b.project ? 1 : a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+};
+
+/**
+ * Handles POST /api/contracts/jump for `proj` with `b = { path, prs }`. Sync from the card check to the write,
+ * so two Confirms cannot both write. Returns null for a path that is not watched, 'bad prs' for a bad `prs`,
+ * `{ ok: false, output }` when the card does not allow a jump, else `{ ok: true, slug, file, output }`.
+ */
+const jumpConfirm = (proj, b) => {
+  const subPath = String(b.path || '');
+  if (!proj.watchSubmodules.includes(subPath)) return null;
+  const raw = b.prs;
+  if (!Array.isArray(raw) || raw.length > 50 || !raw.every((n) => Number.isInteger(n) && n >= 1 && n <= 9999999)) return 'bad prs';
+  const prs = [...new Set(raw)].sort((x, y) => x - y);
+  const card = jumpCard(proj, subPath);
+  if (card.state === 'unchecked') return { ok: false, output: 'Not checked yet. The watcher checks once a minute.' };
+  if (card.state === 'error') return { ok: false, output: 'Cannot jump: ' + card.error };
+  if (card.state === 'diverged') return { ok: false, output: 'The pin is ahead of origin/' + card.branch + ' or on another line. No jump is offered.' };
+  if (card.state === 'blocked') {
+    const bl = card.blockers[0];
+    return { ok: false, output: bl.slug ? 'A jump plan is on its way: ' + bl.slug + '. Archive it to get a new recommendation.'
+      : 'Cannot read the open PRs of this repo: ' + bl.error + '. No jump is offered until they can be read.' };
+  }
+  if (!card.base) return { ok: false, output: 'no BASE_BRANCH in auto-pipeline.sh' };
+  if (path.resolve(proj.plansDir) !== path.join(proj.root, '.plans'))
+    return { ok: false, output: 'A jump plan must go into ' + tilde(path.join(proj.root, '.plans')) + '/: the launcher reads only that folder on origin/' + card.base + '.' };
+  const bad = prs.find((n) => !card.recommended.some((p) => p.number === n));
+  if (bad !== undefined) return { ok: false, output: 'PR #' + bad + ' is not an open, non-draft PR of ' + (card.upstream || 'the upstream') + ' on ' + card.branch + '.' };
+  if (!prs.length && !card.behind) return { ok: false, output: 'Nothing to jump: the pin is not behind origin/' + card.branch + '.' };
+  const now = new Date();
+  const slug = jumpSlug(subPath, planStamp(now));
+  const date = planStamp(now).replace(/^(\d{4})(\d\d)(\d\d)-.*$/, '$1-$2-$3');
+  const text = jumpPlanText({ subPath, branch: card.branch, base: card.base, upstream: card.upstream, prs, pin: card.pin, tip: card.tip, date });
+  const file = path.join(proj.plansDir, slug + '.md');
+  try {
+    mkdirSync(proj.plansDir, { recursive: true });
+    writeFileSync(file, text, { flag: 'wx' });
+  } catch (e) {
+    if (e && e.code === 'EEXIST') return { ok: false, output: 'A plan with this name exists. Try again in one second.' };
+    return { ok: false, output: 'Cannot write ' + tilde(file) + ': ' + ((e && e.code) || 'unknown') };
+  }
+  const output = [
+    'Wrote ' + path.relative(proj.root, file) + '. ' + (prs.length && card.upstream
+      ? 'It starts by itself when ' + prs.map((n) => '#' + n).join(', ') + (prs.length === 1 ? ' is' : ' are') + ' merged.'
+      : 'Launch it by hand after the push.'),
+    'Push it to origin/' + card.base + ' first, in ' + tilde(proj.root) + ', on branch ' + card.base + ':',
+    jumpPushText(proj, card.base, file, subPath),
+  ].join('\n');
+  return { ok: true, slug, file: tilde(file), output };
 };
 const archivePlan = async (proj, slug) => {
   const live = proj.hasPipeline ? await pipelineLive(proj, slug) : genericRunInfo(proj, slug).live;
@@ -1948,7 +2087,7 @@ const watchFile = (proj) => path.join(proj.stateDir, 'watch.json');
 const eventsFile = (proj) => path.join(proj.stateDir, 'events.jsonl');
 const loadWatch = (proj) => {
   const w = loadJson(watchFile(proj), null);
-  const blank = { prs: null, outcomes: null, launched: {}, met: {}, errors: {}, since: new Date().toISOString(), checkedAt: null };
+  const blank = { prs: null, outcomes: null, launched: {}, met: {}, errors: {}, subs: {}, since: new Date().toISOString(), checkedAt: null };
   return w && typeof w === 'object' ? { ...blank, ...w, since: w.since || blank.since } : blank;
 };
 
@@ -2118,6 +2257,112 @@ const checkCondition = async (proj, planText, cond, cache, projects) => {
   if (r.code === 1) return { met: false, error: null };
   return fail('cannot compare the commits', false);
 };
+/**
+ * Reads the open PRs of `proj` in full (not the 200-PR cache): at most 5 pages of 100, with `&base=<branch>`
+ * when `branch` is given. Returns `{ error, rows }`: `error` is '' or a short, redacted reason (then `rows` is empty).
+ */
+const openPrsOf = async (proj, branch, cache) => {
+  const rows = [];
+  for (let n = 1; n <= 5; n++) {
+    const q = 'repos/{owner}/{repo}/pulls?state=open' + (branch ? '&base=' + encodeURIComponent(branch) : '') + '&per_page=100&page=' + n;
+    const r = await once(cache, 'openprs ' + proj.root + ' ' + (branch || '*') + ' ' + n, () => gh(proj, ['api', q, '--jq', PR_JQ]));
+    if (!r.ok) return { error: redact(ghProblem(r.output)), rows: [] };
+    let list;
+    try { list = JSON.parse(r.out); } catch { list = null; }
+    if (!Array.isArray(list)) return { error: 'gh gave no PR data', rows: [] };
+    rows.push(...list);
+    if (list.length < 100) return { error: '', rows };
+  }
+  return { error: '500 or more open PRs', rows: [] };
+};
+/** Tells if `head` is the branch of a jump plan of `subPath` (`auto/<stamp>-contracts-jump-<path part>`). */
+const isJumpBranch = (head, subPath) => {
+  const h = String(head || '');
+  return h.startsWith('auto/') && h.endsWith('-contracts-jump-' + jumpPathPart(subPath));
+};
+/**
+ * Checks one watched submodule of `proj` (registry `watchSubmodules`): the pin on origin/<base> against the tip of
+ * the upstream branch, the upstream project (same origin repo), its open PRs on that branch and the open jump PRs
+ * of `proj`. Returns `{ base, branch, pin, tip, relation, behind, upstream, remote, prs, jumpPrs, error }`;
+ * a failure gives `error` (a short, redacted reason) and null in the other fields.
+ */
+const checkSubmodule = async (proj, subPath, cache, projects) => {
+  const fail = (reason) => ({ base: null, branch: null, pin: null, tip: null, relation: null, behind: false,
+    upstream: null, remote: null, prs: null, jumpPrs: null, error: redact(reason) });
+  if (!proj.hasPipeline) return fail('needs .claude/scripts/auto-pipeline.sh');
+  let script = '';
+  try { script = readFileSync(proj.launcherScript, 'utf8'); } catch {}
+  const base = launcherBase(script);
+  if (!base) return fail('no BASE_BRANCH in auto-pipeline.sh');
+  const sub = path.join(proj.root, subPath);
+  if (!existsSync(path.join(sub, '.git'))) return fail('submodule not initialized in the main checkout');
+  if (!(await once(cache, 'fetch ' + proj.root + ' ' + base, () => gitIn(proj.root, ['fetch', '-q', 'origin', base]))).ok)
+    return fail('cannot fetch origin/' + base);
+  const tree = await gitIn(proj.root, ['ls-tree', 'origin/' + base, '--', subPath]);
+  const pin = (tree.out.match(/^160000 commit ([0-9a-f]{40})\t/) || [])[1];
+  if (!tree.ok || !pin) return fail('not a submodule');
+  // the pin and the branch come from the same commit
+  const gm = await gitIn(proj.root, ['show', 'origin/' + base + ':.gitmodules']);
+  let branch = submoduleBranch(gm.ok ? gm.out : '', subPath);
+  if (branch === '.') branch = base;
+  if (branch == null) {
+    const h = await gitIn(sub, ['rev-parse', '--abbrev-ref', 'origin/HEAD']);
+    branch = h.ok ? h.out.replace(/^origin\//, '') : '';
+  }
+  // the name goes into a plan that an agent runs
+  if (!branch || !/^[\w.][\w./-]*$/.test(branch)) return fail('cannot find the upstream branch');
+  if (!(await once(cache, 'subfetch ' + sub + ' ' + branch,
+    () => gitIn(sub, ['fetch', '-q', 'origin', '+refs/heads/' + branch + ':refs/remotes/origin/' + branch]))).ok)
+    return fail('cannot fetch the submodule');
+  const t = await gitIn(sub, ['rev-parse', '--verify', '-q', 'origin/' + branch + '^{commit}']);
+  const tip = t.ok && /^[0-9a-f]{40}$/.test(t.out) ? t.out : null;
+  if (!tip) return fail('no origin/' + branch + ' in the submodule');
+  let relation;
+  if (tip === pin) relation = 'equal';
+  else {
+    const a = await gitRaw(sub, ['merge-base', '--is-ancestor', pin, tip]);
+    if (a.code === 0) relation = 'behind';
+    else {
+      const b = a.code === 1 ? await gitRaw(sub, ['merge-base', '--is-ancestor', tip, pin]) : { code: -1 };
+      if (b.code === 0) relation = 'ahead';
+      else if (a.code === 1 && b.code === 1) relation = 'diverged';
+      else return fail('cannot compare the commits');
+    }
+  }
+  const remote = repoKey((await gitIn(sub, ['remote', 'get-url', 'origin'])).out);
+  let up = null;
+  if (remote) for (const p of projects) {
+    if (p.name === proj.name) continue;
+    const u = await once(cache, 'remote ' + p.root, () => gitIn(p.root, ['remote', 'get-url', 'origin']));
+    if (u.ok && repoKey(u.out) === remote) { up = p; break; }
+  }
+  const own = await openPrsOf(proj, null, cache);
+  const jumpPrs = { error: own.error, rows: own.rows.filter((r) => r && isJumpBranch(r.headRefName, subPath))
+    .map((r) => ({ number: r.number, headRefName: r.headRefName, url: r.url })) };
+  const prs = up ? await openPrsOf(up, branch, cache) : null;
+  return { base, branch, pin, tip, relation, behind: relation === 'behind', upstream: up ? up.name : null,
+    remote, prs, jumpPrs, error: null };
+};
+/**
+ * Watcher step 5b: checks each watched submodule of `proj` and writes `next.subs`. A new error gives one
+ * `submodule-error` event; a pin that is behind gives one `submodule-behind` event per new upstream tip.
+ */
+const checkWatchedSubs = async (proj, saved, next, events, cache, projects, tickAt) => {
+  next.subs = {};
+  for (const subPath of proj.watchSubmodules || []) {
+    const old = (saved.subs || {})[subPath] || {};
+    let r;
+    try { r = await checkSubmodule(proj, subPath, cache, projects); }
+    catch (e) { if (e === LOST_LOCK) throw e; r = { error: redact(e.message || e) }; }
+    next.subs[subPath] = { ...r, checkedAt: tickAt, notedTip: old.notedTip || null };
+    if (r.error) {
+      if (r.error !== old.error) events.push({ type: 'submodule-error', path: subPath, reason: r.error });
+    } else if (r.behind && r.tip !== old.notedTip) {
+      events.push({ type: 'submodule-behind', path: subPath, branch: r.branch, pin: r.pin, tip: r.tip, upstream: r.upstream });
+      next.subs[subPath].notedTip = r.tip;
+    }
+  }
+};
 // an auto-start only merges with the owner: "to PR" when the project has it, else its default mode
 const autoMode = (proj) => {
   const modes = pipelineModes(proj);
@@ -2236,6 +2481,8 @@ const watchProject = async (proj, projects, cache) => {
     }
   }
   for (const ek of Object.keys(next.errors)) if (!errorsNow.has(ek)) delete next.errors[ek];
+  // 5b. watched submodules (registry watchSubmodules): one fetch per path, one event per new upstream tip
+  await checkWatchedSubs(proj, saved, next, events, cache, projects, tickAt);
   // 6. auto-starts, at most WATCH_LIMIT runs at the same time
   if (proj.hasPipeline) {
     const now = Date.now(), running = runningCount(plans, now, STALE_RUN_MS), startedNow = new Set();
@@ -2286,6 +2533,12 @@ const watchProject = async (proj, projects, cache) => {
     }
   }
   for (const n of newErrors) note(n.slug, 'cannot start by itself', n.reason);
+  // a click opens the checklist of the project's group, where the Contracts jump card is
+  for (const e of events) if (e.type === 'submodule-behind')
+    notifyMac({ title: [proj.short || proj.name, 'submodule behind'].join(' · '), subtitle: e.path,
+      message: e.path + ' pin ' + e.pin.slice(0, 7) + ' is behind origin/' + e.branch + ' ' + e.tip.slice(0, 7) },
+    // `sub` only makes the notifier's group key unique per path, so a second path does not replace the first
+    '?checklist=' + encodeURIComponent(proj.group || '') + '&sub=' + encodeURIComponent(proj.name + '/' + e.path));
 };
 let watching = false, lockNoted = false;
 /** One watcher tick over every project. Only the server that holds watcher.lock does the work. */
@@ -3676,6 +3929,13 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === '/api/ledger/open') {
         const r = ledgerOpen(String(b.group || '').toLowerCase());
         return r ? json(res, 200, r) : json(res, 400, { error: 'bad group' });
+      }
+      // Confirm of the Contracts jump card: writes one jump plan (docs/plans-dashboard.md, "Contracts jump")
+      if (url.pathname === '/api/contracts/jump') {
+        if (!proj) return json(res, 400, { error: 'bad project' });
+        const r = jumpConfirm(proj, b);
+        return r === null ? json(res, 400, { error: 'not a watched submodule' })
+          : r === 'bad prs' ? json(res, 400, { error: 'bad prs' }) : json(res, 200, r);
       }
       if (!proj || !safeName(b.slug)) return json(res, 400, { error: 'bad request' });
       if (url.pathname === '/api/launch-generic')

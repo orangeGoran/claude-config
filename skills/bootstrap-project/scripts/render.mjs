@@ -54,7 +54,7 @@ const SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const TEMPLATES = path.join(SKILL_DIR, 'templates');
 
 export const MODULES = ['codex', 'changelog', 'decision-sheet', 'test-review', 'step-gate',
-  'post-edit-lint', 'plans-parallel', 'pr-feedback', 'run-skill'];
+  'post-edit-lint', 'plans-parallel', 'pr-feedback', 'run-skill', 'contracts-jump'];
 export const MODES = ['verify', 'commit', 'pr'];
 // the plan headings the skills, validators and plan-lanes.mjs read (rules.planSections)
 export const PLAN_SECTION_KEYS = ['goal', 'context', 'steps', 'tests', 'verify'];
@@ -184,8 +184,14 @@ export function checkParams(p) {
  */
 export const KEEP_TRACKABLE = ['.plans/.workflow-state/', '.plans/.test-review/', '.plans/.decision-sheets/', '.plans/.code-reviews/'];
 
-/** Returns true when a module is on. Every module is on unless the answers turn it off. */
-export const moduleOn = (p, m) => p.modules?.[m] !== false;
+/** The modules that are off unless the answers turn them on. */
+export const DEFAULT_OFF = ['contracts-jump'];
+
+/**
+ * Returns true when a module is on. Every module is on unless the answers turn it off, except the DEFAULT_OFF
+ * modules, which are on only when the answers turn them on.
+ */
+export const moduleOn = (p, m) => (DEFAULT_OFF.includes(m) ? p.modules?.[m] === true : p.modules?.[m] !== false);
 
 // What each module does for the owner, in plain words (the "not used" list of the hand-off)
 const MODULE_INFO = {
@@ -198,6 +204,7 @@ const MODULE_INFO = {
   'plans-parallel': 'a report of which plans can run at the same time and which must wait (plans-parallel skill)',
   'pr-feedback': 'applies your review comments on an open PR, tests again, pushes and replies to each comment (pr-feedback skill)',
   'run-skill': 'a manual launcher that runs one plan skill headless in the current checkout (run-skill.sh)',
+  'contracts-jump': 'a project rule and a skill for the contracts jump plans that the plans dashboard proposes for a watched submodule (contracts-jump skill)',
 };
 const COMMAND_INFO = {
   test: 'run all tests', testScoped: 'run the tests of one file', testE2e: 'run the end-to-end tests',
@@ -688,6 +695,7 @@ export function buildVars(p, now = new Date(), { submodules = [] } = {}) {
     MOD_PLANS_PARALLEL: moduleOn(p, 'plans-parallel'),
     MOD_PR_FEEDBACK: moduleOn(p, 'pr-feedback'),
     MOD_RUN_SKILL: moduleOn(p, 'run-skill'),
+    MOD_CONTRACTS_JUMP: moduleOn(p, 'contracts-jump'),
     HAS_SERVICES: services.length > 0,
     SERVICES_CHECKS: servicesMd,
     HAS_BROWSER_TEST: hasBrowserTest,

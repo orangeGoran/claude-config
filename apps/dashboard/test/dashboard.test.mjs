@@ -2572,6 +2572,7 @@ test('the page: renderChecklist paints only the newest answer and never a remove
     ${pick(/^const ckGroups = .*$/m)}
     ${pick(/^const ckPick = .*$/m)}
     const checklistHtml = (d) => 'G:' + d.group + '/' + d.n;
+    const bindJumpCard = () => {};
     const calls = [];
     const fetch = (url) => new Promise((res) => calls.push({ url, answer: (n) => res({ ok: true, status: 200,
       text: async () => JSON.stringify({ group: decodeURIComponent(url.split('group=')[1]), n }) }) }));
@@ -2657,6 +2658,8 @@ test('the page: checklistHtml shows what needs you first, escapes every value, l
     'const seenIssues = [];',
     'const md = (s) => { seenIssues.push(CUR_ISSUES); return "<div class=\\"md\\">" + inline(s) + "</div>"; };',
     inlineFn, pick(/^const CK_CHIP = .*$/m), pick(/^function ledgerBody\(text\) \{[\s\S]*?\n\}$/m),
+    'const ckJumpOff = new Set();',
+    pick(/^function jumpCardHtml\(items, off\) \{[\s\S]*?\n\}$/m),
     pick(/^function checklistHtml\(d\) \{[\s\S]*?\n\}$/m),
   ].join('\n');
   const t = new Function('projPill', body + '\nreturn { checklistHtml, seen: () => seenIssues, cur: () => CUR_ISSUES };')(
@@ -2736,6 +2739,60 @@ test('the page: checklistHtml shows what needs you first, escapes every value, l
   assert.ok(err.includes('Cannot read the ledger: &lt;EACCES&gt;'));
   assert.match(t.checklistHtml(goal({ ledger: { path: '~/x', exists: true, text: '## Goals\n\nA\n', truncated: true } })), /larger than 256 KB/);
   assert.equal(t.cur(), OTHER, 'CUR_ISSUES is back after each call');
+  // the Contracts jump box sits after Tickets and before Goals, only when the answer has watched paths
+  assert.ok(!h.includes('Contracts jump'), 'no contracts: no box');
+  const j = t.checklistHtml(goal({ contracts: [{ project: 'acme-web', path: 'contracts', branch: 'main', pin: 'a'.repeat(40), tip: 'b'.repeat(40),
+    state: 'now', recommended: [], drafts: [], blockers: [] }] }));
+  assert.ok(j.indexOf('<h3>Tickets</h3>') < j.indexOf('<h3>Contracts jump</h3>') && j.indexOf('<h3>Contracts jump</h3>') < j.indexOf('Goals &amp; rules'));
+});
+
+test('the page: jumpCardHtml shows each state, keeps the unticked boxes and escapes every value', () => {
+  const src = readFileSync(path.join(path.dirname(SCRIPT), 'page', 'app.js'), 'utf8');
+  const pick = (re) => { const m = src.match(re); assert.ok(m, 'app.js has ' + re); return m[0]; };
+  const body = [pick(/^const BT = .*$/m), pick(/^const esc = .*$/m), pick(/^const escA = .*$/m),
+    pick(/^function jumpCardHtml\(items, off\) \{[\s\S]*?\n\}$/m)].join('\n');
+  const t = new Function('projPill', body + '\nreturn { jumpCardHtml };')((name) => '<span class="ppill">' + name + '</span>');
+  const pin = 'a'.repeat(40), tip = 'b'.repeat(40);
+  const card = (over) => ({ project: 'acme-web', path: 'contracts', branch: 'main', pin, tip, relation: 'behind', behind: true,
+    upstream: 'acme-api', error: null, state: 'batch', recommended: [], drafts: [], blockers: [], ...over });
+  const batch = card({ recommended: [{ number: 41, title: 'Add invoice fields', url: 'https://example.test/pull/41' },
+    { number: 42, title: 'Rename total', url: 'https://example.test/pull/42' }], drafts: [{ number: 44, title: 'WIP', url: 'https://example.test/pull/44' }] });
+  const h = t.jumpCardHtml([batch], new Set());
+  assert.ok(h.includes('Contracts jump'));
+  assert.ok(h.includes('Recommended: one jump after #41, #42 (#44 is a draft, left out)'));
+  assert.equal((h.match(/data-jpr=/g) || []).length, 2);
+  assert.equal((h.match(/ checked>/g) || []).length, 2);
+  assert.equal((h.match(/data-jconfirm=/g) || []).length, 1);
+  assert.ok(h.includes('aaaaaaa → bbbbbbb'));
+  const off = t.jumpCardHtml([batch], new Set(['acme-web\ncontracts#42']));
+  assert.match(off, /data-jpr="41" checked>/);
+  assert.match(off, /data-jpr="42">/, 'the unticked #42 has no checked');
+  const two = t.jumpCardHtml([card({ recommended: batch.recommended, drafts: [{ number: 44 }, { number: 45 }] })], new Set());
+  assert.ok(two.includes('(#44, #45 are drafts, left out)'));
+  const now = t.jumpCardHtml([card({ state: 'now' })], new Set());
+  assert.ok(now.includes('Jump now to bbbbbbb'));
+  assert.ok(now.includes('data-jconfirm'));
+  // open drafts are named: "no open PR" would be wrong while they are open
+  const nowDraft = t.jumpCardHtml([card({ state: 'now', drafts: [{ number: 44 }] })], new Set());
+  assert.ok(nowDraft.includes('No open, non-draft PR upstream (#44 is a draft, left out). Jump now to bbbbbbb'), nowDraft);
+  assert.ok(t.jumpCardHtml([card({ state: 'up-to-date', drafts: [{ number: 44 }, { number: 45 }] })], new Set())
+    .includes('(#44, #45 are drafts, left out)'));
+  const slug = '20261128-091500-contracts-jump-contracts';
+  const blocked = t.jumpCardHtml([card({ state: 'blocked', blockers: [{ slug, archived: false, pr: null, pushed: false, push: 'git push origin main' }] })], new Set());
+  assert.ok(blocked.includes('data-sopen="acme-web/' + slug + '"'));
+  assert.ok(blocked.includes('not on origin yet ✗'));
+  assert.ok(blocked.includes('git push origin main'));
+  assert.ok(!blocked.includes('data-jconfirm'), 'no Confirm while a jump plan is on its way');
+  const unread = t.jumpCardHtml([card({ state: 'blocked', blockers: [{ slug: null, error: 'HTTP 502' }] })], new Set());
+  assert.ok(unread.includes('Cannot read the open PRs of this repo: HTTP 502'));
+  assert.ok(!t.jumpCardHtml([card({ state: 'diverged' })], new Set()).includes('data-jconfirm'));
+  const bad = '<img src=x onerror=alert(1)>';
+  const e = t.jumpCardHtml([card({ state: 'error', error: bad })], new Set());
+  assert.ok(!e.includes('<img') && e.includes('&lt;img src=x'));
+  const tb = t.jumpCardHtml([card({ recommended: [{ number: 41, title: bad, url: 'https://example.test/pull/41' }] })], new Set());
+  assert.ok(!tb.includes('<img') && tb.includes('&lt;img src=x'));
+  assert.equal(t.jumpCardHtml([], new Set()), '');
+  assert.equal(t.jumpCardHtml(undefined, new Set()), '');
 });
 
 test('the page: ledgerBody, groupNameFor and the group bar', () => {
